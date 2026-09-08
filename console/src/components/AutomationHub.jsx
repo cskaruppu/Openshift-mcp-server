@@ -1253,7 +1253,9 @@ function MigrationAgent({ clusters, activeCluster }) {
   const createPlans = async () => {
     setBusy("plan");
     try {
-      const d = await post("/api/migration/plans", { selection, targetProvider: target.targetProvider });
+      // The AI record travels with the plan so the change request can state
+      // what a model touched, even when raised days later from a fresh session.
+      const d = await post("/api/migration/plans", { selection, targetProvider: target.targetProvider, ai: analysis?.ai || null });
       if (d.ok) { setPlans(d.created || []); showToast(`${d.created.length} plan(s) created — nothing has moved yet`, "ok"); }
       else showToast(d.errors?.[0]?.message || d.error || "Could not create plans", "err");
       if (d.created?.length) refreshStatus(d.created.map((p) => p.planName));

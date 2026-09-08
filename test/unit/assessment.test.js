@@ -133,3 +133,34 @@ test("the pack separates 'can never schedule' from 'no room today'", () => {
   const never = html.slice(html.indexOf("can never schedule"), html.indexOf("no room today"));
   assert.ok(never.includes("too-big") && !never.includes("no-room"));
 });
+
+test("the evidence pack states what the AI did and what it did not", () => {
+  const ai = {
+    consulted: true, calls: 2, succeeded: 2, failed: 0, provider: "openai", model: "gpt-4o",
+    promptTokens: 2700, completionTokens: 712, totalTokens: 3412, durationMs: 1740, corrections: 1,
+    advisedByAI: ["Warm or cold per VM"], decidedByCode: ["Guest OS support level", "Target capacity"],
+    touchpoints: [],
+  };
+  const html = toHtml(analysis([vm("a")]), { reportId: "ASM-1", ai });
+  assert.match(html, /AI provenance/);
+  assert.match(html, /gpt-4o/);
+  assert.match(html, /3412/);
+  assert.match(html, /overruled by policy/i);
+  assert.match(html, /Decided by code, with no model involved/);
+  assert.match(html, /no cluster access and no tools/);
+
+  const csv = toCsv(analysis([vm("a")]), { reportId: "ASM-1", ai });
+  assert.match(csv, /"AI provider \/ model","openai \/ gpt-4o"/);
+  assert.match(csv, /"AI recommendations overruled","1"/);
+  assert.match(csv, /"Decided by code, not AI"/);
+});
+
+test("with no model consulted the pack says so rather than omitting the section", () => {
+  const ai = { consulted: false, calls: 0, corrections: 0, advisedByAI: [], decidedByCode: ["Guest OS support level"], touchpoints: [] };
+  const html = toHtml(analysis([vm("a")]), { reportId: "ASM-1", ai });
+  assert.match(html, /No language model was consulted/);
+  assert.ok(!html.includes("Provider and model"), "no model table for a run that used none");
+
+  const csv = toCsv(analysis([vm("a")]), { reportId: "ASM-1", ai });
+  assert.match(csv, /"AI consulted","no"/);
+});

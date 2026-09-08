@@ -895,3 +895,80 @@ test("Windows 11 names the cluster prerequisite it depends on", async () => {
   assert.equal(os.level, "supported");
   assert.match(os.note, /vmStateStorageClass/, "certified is not the same as 'will boot without configuration'");
 });
+
+// ── AI provenance ───────────────────────────────────────────────────────────
+// A change board approving a migration is entitled to know which parts of the
+// assessment a model touched. These numbers end up in a change record, so they
+// are tested rather than trusted.
+
+test("AI provenance sums the calls and names what code decided", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const call = (touchpoint, tokens, ms) => ({
+    ok: true, provider: "openai", model: "gpt-4o", touchpoint,
+    promptTokens: tokens - 400, completionTokens: 400, totalTokens: tokens, durationMs: ms,
+  });
+  const p = aiProvenance([call("method-advice", 2400, 1100), call("wave-sequencing", 1012, 640)], { overrides: 1 });
+
+  assert.equal(p.consulted, true);
+  assert.equal(p.calls, 2);
+  assert.equal(p.totalTokens, 3412);
+  assert.equal(p.durationMs, 1740);
+  assert.equal(p.corrections, 1);
+  assert.equal(p.model, "gpt-4o");
+  assert.match(p.note, /1 AI recommendation overruled/);
+  // The half a reviewer actually needs: what the model was NOT allowed to do.
+  assert.ok(p.decidedByCode.some((x) => /support level/i.test(x)));
+  assert.ok(p.decidedByCode.some((x) => /capacity/i.test(x)));
+  assert.equal(p.advisedByAI.length, 2);
+});
+
+test("with no model consulted the record says so, and claims nothing", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([], {});
+  assert.equal(p.consulted, false);
+  assert.equal(p.calls, 0);
+  assert.deepEqual(p.advisedByAI, [], "nothing may be attributed to a model that never ran");
+  assert.match(p.note, /No model was consulted/);
+  // The deterministic list is still stated — it is true either way.
+  assert.ok(p.decidedByCode.length > 0);
+});
+
+test("a failed call is counted, not hidden", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([
+    { ok: true, provider: "openai", model: "gpt-4o", totalTokens: 900, durationMs: 500, touchpoint: "method-advice" },
+    { ok: false, provider: "openai", model: "gpt-4o", totalTokens: null, durationMs: 30000, touchpoint: "wave-sequencing", error: "timeout" },
+  ], {});
+  assert.equal(p.calls, 2);
+  assert.equal(p.succeeded, 1);
+  assert.equal(p.failed, 1);
+  assert.equal(p.touchpoints.find((t) => t.touchpoint === "wave-sequencing").error, "timeout");
+});
+
+test("tokens a provider never reported are null, never a silent zero", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([
+    { ok: true, provider: "ollama", model: "llama3", totalTokens: null, promptTokens: null, completionTokens: null, durationMs: 800, touchpoint: "method-advice" },
+  ], {});
+  assert.equal(p.totalTokens, null, "0 would read as a free call");
+  assert.equal(p.tokensReported, false);
+});
+
+test("the AI record travels with the plan, so a later change request still has it", async () => {
+  const { planGroups, buildPlanManifest } = await import("../../src/services/vm-migration.js");
+  const ai = { consulted: true, model: "gpt-4o", calls: 2, corrections: 1, advisedByAI: ["x"], decidedByCode: ["y"] };
+  const { groups } = planGroups([{
+    vm: { id: "i1", name: "a", diskGiB: 10 }, strategy: "cold",
+    sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace: "prod",
+  }], { ai });
+  const ann = buildPlanManifest(groups[0], { targetProvider: "h" }).metadata.annotations;
+  assert.ok(ann["tcs.agentic-ai/ai-provenance"], "the CR is raised from the Plan, possibly days later");
+  assert.equal(JSON.parse(ann["tcs.agentic-ai/ai-provenance"]).model, "gpt-4o");
+
+  // No AI record → no annotation, rather than an empty one that looks recorded.
+  const plain = planGroups([{
+    vm: { id: "i1", name: "a", diskGiB: 10 }, strategy: "cold",
+    sourceProvider: "vsphere", storageMap: "sm", networkMap: "nm", targetNamespace: "prod",
+  }]).groups[0];
+  assert.equal(buildPlanManifest(plain, { targetProvider: "h" }).metadata.annotations["tcs.agentic-ai/ai-provenance"], undefined);
+});

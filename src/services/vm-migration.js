@@ -26,7 +26,7 @@ import { nodeFit } from "./target-capacity.js";
 import { runSourceChecks } from "./source-readiness.js";
 import { resourceFindings } from "./resource-fidelity.js";
 import { recordChange } from "./change-ledger.js";
-import { classifyJSON, llmEnabled } from "./llm.js";
+import { classifyJSON, classifyJSONWithMeta, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
 
 const FORKLIFT = "apis/forklift.konveyor.io/v1beta1";
@@ -1176,11 +1176,67 @@ export function fleetRemediation(analysis) {
 }
 
 /**
+ * What the AI cost, and what it was allowed to decide.
+ *
+ * A change board approving a migration is entitled to know which parts of the
+ * assessment a model touched, and an auditor asking a year later needs the same
+ * answer. This is that record: the model consulted, how many times, at what
+ * token cost, how many of its recommendations policy overruled — and, stated
+ * explicitly, the things it did NOT decide.
+ *
+ * Pure, so the number quoted in a change record is tested.
+ *
+ * @param {Array} usages  the `usage` objects from adviseMigration / adviseFleet
+ * @param {{overrides:number, source:string}} extra
+ */
+export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, suggestionSource = null } = {}) {
+  const used = usages.filter(Boolean);
+  const ok = used.filter((u) => u.ok);
+  const sum = (k) => used.reduce((n, u) => n + (u[k] || 0), 0);
+  // Tokens are only summed where the provider actually reported them; a null
+  // total is reported as unknown rather than silently counted as zero.
+  const reported = used.filter((u) => u.totalTokens != null);
+
+  const consulted = ok.length > 0;
+  return {
+    consulted,
+    calls: used.length,
+    succeeded: ok.length,
+    failed: used.length - ok.length,
+    provider: used[0]?.provider || null,
+    model: used[0]?.model || null,
+    promptTokens: reported.length ? sum("promptTokens") : null,
+    completionTokens: reported.length ? sum("completionTokens") : null,
+    totalTokens: reported.length ? sum("totalTokens") : null,
+    tokensReported: reported.length === used.length,
+    durationMs: sum("durationMs"),
+    corrections: overrides,
+    touchpoints: used.map((u) => ({ touchpoint: u.touchpoint, ok: u.ok, error: u.error || null })),
+    // The half that matters most to a reviewer: what the model was NOT allowed
+    // to do. Stated as fact, not as reassurance.
+    decidedByCode: [
+      "Guest OS support level and tier (Red Hat's certified list)",
+      "All 15 source-side readiness checks",
+      "Target capacity and per-VM node schedulability",
+      "Resource guarantees lost on migration",
+      "Move-together grouping, drift, and the transfer estimate",
+    ],
+    advisedByAI: consulted
+      ? ["Warm or cold per VM, with a reason", "Wave sequencing and risk suggestions (at most 3)"]
+      : [],
+    note: consulted
+      ? `${overrides} AI recommendation${overrides === 1 ? "" : "s"} overruled by policy before being shown.`
+      : "No model was consulted. Every value in this assessment came from rules.",
+    sources: { advice: adviceSource, suggestions: suggestionSource },
+  };
+}
+
+/**
  * Fleet-level suggestions. The deterministic set above is always returned; the
  * LLM may add sequencing/wave advice on top, but it cannot remove or contradict
  * a finding — same "model advises, code decides" contract as adviseMigration().
  */
-export async function adviseFleet(analysis) {
+export async function adviseFleet(analysis, { reportId = null } = {}) {
   const base = fleetRemediation(analysis);
   if (!llmEnabled() || !analysis?.total) return { source: "heuristic", suggestions: base };
 
@@ -1193,7 +1249,9 @@ export async function adviseFleet(analysis) {
     })),
   };
   try {
-    const r = await classifyJSON({
+    const { data: r, meta } = await classifyJSONWithMeta({
+      conversationId: reportId || undefined,
+      metadata: { useCase: "UC-10", touchpoint: "wave-sequencing" },
       system: `You advise a platform team planning a VMware-to-OpenShift Virtualization migration wave.
 You are given an ALREADY COMPUTED analysis. Do not re-classify support levels and do not contradict them.
 Add at most 3 suggestions about SEQUENCING and RISK that the numbers imply — which group to move first, what to pilot, what to hold back.
@@ -1211,7 +1269,11 @@ Respond ONLY with JSON: {"suggestions":[{"severity":"good|warning|serious|critic
         action: String(s.action).slice(0, 300),
         vms: [], ai: true,
       }));
-    return { source: extra.length ? "ai" : "heuristic", suggestions: [...base, ...extra] };
+    return {
+      source: extra.length ? "ai" : "heuristic",
+      suggestions: [...base, ...extra],
+      usage: { ...meta, touchpoint: "wave-sequencing", added: extra.length },
+    };
   } catch (e) {
     return { source: "heuristic", suggestions: base, note: `AI suggestions unavailable: ${e.message}` };
   }
@@ -1336,7 +1398,7 @@ export function heuristicAdvice(vms = []) {
  * Recommend a strategy per VM. Returns the source of the advice so the console
  * can say whether a person is reading a model's opinion or a fixed rule.
  */
-export async function adviseMigration(vms = [], { window: maintenanceWindow = null } = {}) {
+export async function adviseMigration(vms = [], { window: maintenanceWindow = null, reportId = null } = {}) {
   const shortlist = vms.slice(0, 40).map((v) => ({
     name: v.name, poweredOn: v.poweredOn, diskGiB: v.diskGiB, diskCount: v.diskCount,
     guestOS: v.guestOS, cpu: v.cpuCount, memoryMB: v.memoryMB,
@@ -1347,9 +1409,13 @@ export async function adviseMigration(vms = [], { window: maintenanceWindow = nu
   if (!llmEnabled()) return { source: "heuristic", advice: heuristicAdvice(vms) };
 
   try {
-    const r = await classifyJSON({
+    const { data: r, meta } = await classifyJSONWithMeta({
       system: ADVISOR_SYSTEM,
       maxTokens: 1200,
+      // Correlates every model call with the assessment that made it, so the
+      // evidence pack and the change record can state what the AI cost.
+      conversationId: reportId || undefined,
+      metadata: { useCase: "UC-10", touchpoint: "method-advice", vms: shortlist.length },
       prompt: `Advise on migrating these VMs${maintenanceWindow ? ` within this maintenance window: ${maintenanceWindow}` : ""}.\n\n`
         + fenceUntrusted("VM_INVENTORY", JSON.stringify(shortlist)),
     });
@@ -1361,6 +1427,7 @@ export async function adviseMigration(vms = [], { window: maintenanceWindow = nu
       source: advice.length ? "ai" : "heuristic",
       advice: [...advice, ...missing],
       overrides: advice.filter((a) => a.overridden).length,
+      usage: { ...meta, touchpoint: "method-advice", vmsSent: shortlist.length },
     };
   } catch (e) {
     return { source: "heuristic", advice: heuristicAdvice(vms), note: `AI advice unavailable: ${e.message}` };
@@ -1380,7 +1447,7 @@ export async function adviseMigration(vms = [], { window: maintenanceWindow = nu
  * @param {Array} selection  [{ vm, strategy:"warm"|"cold", storageMap, networkMap, targetNamespace, sourceProvider }]
  * @returns {{groups:Array, errors:Array}}
  */
-export function planGroups(selection = []) {
+export function planGroups(selection = [], { ai = null } = {}) {
   const errors = [];
   const byKey = new Map();
 
@@ -1427,6 +1494,7 @@ export function planGroups(selection = []) {
 
   const groups = [...byKey.values()].map((g, i) => ({
     ...g,
+    ai,
     planName: planNameFor(g, i),
     totalVMs: g.vms.length,
     totalGiB: g.vms.reduce((n, v) => n + (v.diskGiB || 0), 0),
@@ -1465,6 +1533,10 @@ export function buildPlanManifest(group, { targetProvider }) {
       annotations: {
         "tcs.agentic-ai/total-gib": String(group.totalGiB ?? 0),
         "tcs.agentic-ai/vm-count": String(group.vms.length),
+        // Which assessment produced this plan, and what the AI did in it. The
+        // change request is raised from the Plan — possibly days later, from a
+        // fresh session — so the record has to travel with it.
+        ...(group.ai ? { "tcs.agentic-ai/ai-provenance": JSON.stringify(group.ai).slice(0, 4000) } : {}),
       },
     },
     spec: {
@@ -1703,6 +1775,8 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
   const warm = plan.spec?.warm === true;
   const osFamily = plan.metadata?.labels?.["tcs.agentic-ai/os-family"] || null;
+  let ai = null;
+  try { ai = JSON.parse(plan.metadata?.annotations?.["tcs.agentic-ai/ai-provenance"] || "null"); } catch { /* not recorded */ }
   // The CAB is approving an outage, so the change record carries the numbers
   // they actually need: how long these machines are down, not only how long the
   // copy runs — and computed from THIS plan's footprint, not the wave's.
@@ -1731,6 +1805,22 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
         `Virtual machines: ${vms.join(", ")}`,
         "",
         window,
+        "",
+        // A change board approving a migration is entitled to know which parts
+        // of the assessment behind it a model touched.
+        "AI involvement in the assessment that produced this plan:",
+        ai?.consulted
+          ? `  Consulted    : ${ai.provider || "?"} / ${ai.model || "?"}, ${ai.calls} call(s)${ai.totalTokens != null ? `, ${ai.totalTokens} tokens` : ""}`
+          : "  Consulted    : no model was consulted; every value came from rules",
+        ai?.consulted ? `  Advised      : ${ai.advisedByAI.join("; ")}` : null,
+        ai?.consulted ? `  Overruled    : ${ai.corrections} AI recommendation(s) corrected by policy before being shown` : null,
+        `  Decided by code : ${(ai?.decidedByCode || [
+          "Guest OS support level and tier",
+          "Source-side readiness checks",
+          "Target capacity and node schedulability",
+          "Transfer estimate",
+        ]).join("; ")}`,
+        "  The model has no cluster access and no tools. It advises; code decides; a person approves.",
         "",
         "The source VMs are NOT deleted by this migration.",
       ].filter(Boolean).join("\n"),

@@ -48,6 +48,21 @@ export function toCsv(analysis, meta = {}) {
   lines.push(csvRow(["Target cluster", meta.cluster || ""]));
   lines.push(csvRow(["Guest matrix", analysis?.matrix?.asOf || ""]));
   lines.push(csvRow(["Assessed by", meta.actor || ""]));
+  // What the AI was and was not allowed to decide, in the same block as the
+  // rest of the provenance — a register read in a year needs this on the page,
+  // not in a system nobody kept.
+  const ai = meta.ai || analysis?.ai || null;
+  if (ai) {
+    lines.push(csvRow(["AI consulted", ai.consulted ? "yes" : "no"]));
+    if (ai.consulted) {
+      lines.push(csvRow(["AI provider / model", `${ai.provider || "?"} / ${ai.model || "?"}`]));
+      lines.push(csvRow(["AI calls", `${ai.calls}${ai.failed ? ` (${ai.failed} failed)` : ""}`]));
+      lines.push(csvRow(["AI tokens", ai.totalTokens == null ? "not reported by the provider" : String(ai.totalTokens)]));
+      lines.push(csvRow(["AI recommendations overruled", String(ai.corrections)]));
+      lines.push(csvRow(["Advised by AI", ai.advisedByAI.join(" | ")]));
+    }
+    lines.push(csvRow(["Decided by code, not AI", ai.decidedByCode.join(" | ")]));
+  }
   lines.push("");
 
   lines.push(csvRow([
@@ -147,6 +162,32 @@ export function toHtml(analysis, meta = {}) {
       <ul>${cap.perVm.filter((p) => p.fits === false && !p.permanent).map((p) => `<li><b>${esc(p.name)}</b> — ${esc(p.reason)}</li>`).join("")}</ul>` : ""}
     <ul class="muted small">${(cap.notes || []).map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : "";
 
+  // The section a change board and an auditor both go looking for.
+  const ai = meta.ai || analysis?.ai || null;
+  const aiBlock = ai ? `
+    <h2>AI provenance</h2>
+    <!-- Neutral, deliberately: consulting a model is neither a warning nor an
+         achievement. The verdict colours belong to capacity, not to this. -->
+    <p class="verdict">${ai.consulted
+      ? `A language model was consulted ${esc(ai.calls)} time${ai.calls === 1 ? "" : "s"} during this assessment. It advised; it did not decide.`
+      : "No language model was consulted. Every value in this assessment came from rules."}</p>
+    ${ai.consulted ? `
+    <table class="kv">
+      <tr><th>Provider and model</th><td>${esc(ai.provider || "—")} / ${esc(ai.model || "—")}</td></tr>
+      <tr><th>Calls</th><td>${esc(ai.calls)}${ai.failed ? ` — ${esc(ai.failed)} failed and fell back to rules` : ""}</td></tr>
+      <tr><th>Tokens</th><td>${ai.totalTokens == null
+        ? "not reported by the provider"
+        : `${esc(ai.totalTokens)} total (${esc(ai.promptTokens)} prompt, ${esc(ai.completionTokens)} completion)`}</td></tr>
+      <tr><th>Model time</th><td>${esc(Math.round((ai.durationMs || 0) / 100) / 10)} s</td></tr>
+      <tr><th>Recommendations overruled by policy</th><td>${esc(ai.corrections)}</td></tr>
+    </table>
+    <p><b>Advised by the model:</b></p>
+    <ul>${ai.advisedByAI.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    <p><b>Decided by code, with no model involved:</b></p>
+    <ul>${ai.decidedByCode.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
+    <p class="muted small">The model is given no cluster access and no tools. Every recommendation passes
+    through a deterministic clamp before it is shown, and anything irreversible requires a person.</p>` : "";
+
   const driftBlock = drift ? `
     <h2>Change since the previous assessment</h2>
     <p>${esc(drift.headline)} <span class="muted">(baseline ${esc(drift.sinceReportId)}, ${esc(drift.since)})</span></p>
@@ -206,6 +247,8 @@ ${capacityBlock}
 
 <h2>Findings</h2>
 <ul>${findings || "<li>No findings recorded.</li>"}</ul>
+
+${aiBlock}
 
 ${driftBlock}
 

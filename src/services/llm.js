@@ -350,9 +350,30 @@ function _classifyErr(err) {
 
 // ---------------------------------------------------------------------------
 // JSON classification helper — used by NLU→LLM fallback.
-// Returns the parsed object, or null if unable to parse.
 // ---------------------------------------------------------------------------
-export async function classifyJSON({ prompt, system, ...opts }) {
+/**
+ * classifyJSON, plus what the call actually cost.
+ *
+ * Callers that need to REPORT their AI usage — a migration assessment whose
+ * evidence pack and change record must state which model was consulted and
+ * what it cost — need more than the parsed object. This returns both.
+ *
+ * classifyJSON() below is this function with the metadata dropped, so there is
+ * one parser and the two cannot drift.
+ *
+ * @returns {{data: object|null, meta: object}}
+ *   meta: { ok, provider, model, promptTokens, completionTokens, totalTokens,
+ *           durationMs, error }
+ */
+export async function classifyJSONWithMeta({ prompt, system, ...opts }) {
+  const t0 = Date.now();
+  // Resolved the same way callLLM resolves it, so the metadata names the model
+  // that was actually used rather than the one that was asked for.
+  const o = resolveOpts(opts);
+  const base = {
+    provider: o.provider || null,
+    model: o.azureDeployment || o.model || null,
+  };
   try {
     const r = await callLLM({
       messages: [{ role: "user", content: prompt }],
@@ -361,16 +382,39 @@ export async function classifyJSON({ prompt, system, ...opts }) {
       maxTokens: 400,
       ...opts,
     });
+    const meta = {
+      ok: true, ...base,
+      promptTokens: r?.usage?.prompt_tokens ?? null,
+      completionTokens: r?.usage?.completion_tokens ?? null,
+      totalTokens: r?.usage?.total_tokens ?? null,
+      durationMs: Date.now() - t0,
+      error: null,
+    };
     const text = (r.text || "").trim();
     // Strip ```json fences if present
     const unfenced = text.replace(/^```(?:json)?\s*|\s*```$/g, "");
     const start = unfenced.indexOf("{");
     const end = unfenced.lastIndexOf("}");
-    if (start < 0 || end < 0) return null;
-    return JSON.parse(unfenced.slice(start, end + 1));
-  } catch {
-    return null;
+    // A call that succeeded but returned unparseable text still COST something,
+    // so the metadata is returned either way.
+    if (start < 0 || end < 0) return { data: null, meta: { ...meta, error: "no JSON object in response" } };
+    try {
+      return { data: JSON.parse(unfenced.slice(start, end + 1)), meta };
+    } catch (e) {
+      return { data: null, meta: { ...meta, error: `unparseable JSON: ${e.message}` } };
+    }
+  } catch (err) {
+    return {
+      data: null,
+      meta: { ok: false, ...base, promptTokens: null, completionTokens: null, totalTokens: null,
+        durationMs: Date.now() - t0, error: _classifyErr(err) },
+    };
   }
+}
+
+/** The parsed object, or null. The long-standing shape — unchanged. */
+export async function classifyJSON(args) {
+  return (await classifyJSONWithMeta(args)).data;
 }
 
 // ===========================================================================

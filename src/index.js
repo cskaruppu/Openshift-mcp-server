@@ -2902,14 +2902,25 @@ async function startSSE() {
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.
+          // The report id is minted BEFORE the model is consulted, so every LLM
+          // call carries it and the usage can be attributed to this assessment
+          // rather than to "some run, some time today".
+          const reportId = store.reportId();
           const [advice, perVm] = body.suggest === false
             ? [{ source: "skipped", suggestions: [] }, { source: "skipped", advice: [] }]
-            : await Promise.all([mig.adviseFleet(analysis), mig.adviseMigration(vms)]);
+            : await Promise.all([
+                mig.adviseFleet(analysis, { reportId }),
+                mig.adviseMigration(vms, { reportId }),
+              ]);
+          analysis.ai = mig.aiProvenance([advice.usage, perVm.usage], {
+            overrides: perVm.overrides || 0,
+            adviceSource: perVm.source, suggestionSource: advice.source,
+          });
           // Drift against the previous assessment for this source. An estate
           // assessment goes stale in weeks; showing only the current state
           // hides the fact that three machines regressed since sign-off.
           const provider = body.provider || "default";
-          const snapshot = store.snapshotOf(analysis, { provider, cluster });
+          const snapshot = store.snapshotOf(analysis, { provider, cluster, id: reportId });
           let drift = null;
           try {
             const prev = await withClusterContext(url, async () => store.loadSnapshot(provider));
@@ -2949,6 +2960,7 @@ async function startSSE() {
             suggestions: analysis.suggestions || [],
             capacity: analysis.capacity || null,
             drift: analysis.drift || null,
+            ai: analysis.ai || null,
           };
           const csv = body.format === "csv";
           const stamp = (meta.reportId || "assessment").replace(/[^\w.-]/g, "-");
@@ -2985,7 +2997,7 @@ async function startSSE() {
       if (url.pathname === "/api/migration/plan-preview" && req.method === "POST") {
         try {
           const body = await readJsonBody(req);
-          return sendJson(res, 200, mig.planGroups(body.selection || []));
+          return sendJson(res, 200, mig.planGroups(body.selection || [], { ai: body.ai || null }));
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
@@ -2993,7 +3005,7 @@ async function startSSE() {
         if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
         try {
           const body = await readJsonBody(req);
-          const { groups, errors } = mig.planGroups(body.selection || []);
+          const { groups, errors } = mig.planGroups(body.selection || [], { ai: body.ai || null });
           if (errors.length) return sendJson(res, 200, { ok: false, errors });
           if (!groups.length) return sendJson(res, 200, { ok: false, errors: [{ message: "Nothing selected." }] });
           const out = await withClusterContext(url, async () => mig.createPlans(groups, {

@@ -434,6 +434,14 @@ export default function FleetAnalysis({
             ["Source platform", analysis.provider || "—"],
             ["Target cluster", analysis.cluster || "—"],
             ["Guest matrix", matrix?.asOf || "—"],
+            // What the model cost, next to everything else about provenance.
+            ["AI usage", analysis.ai
+              ? (analysis.ai.consulted
+                  ? `${analysis.ai.calls} call${analysis.ai.calls === 1 ? "" : "s"} · ${analysis.ai.model || "model"}`
+                    + (analysis.ai.totalTokens != null ? ` · ${analysis.ai.totalTokens.toLocaleString()} tokens` : "")
+                    + (analysis.ai.corrections ? ` · ${analysis.ai.corrections} corrected` : "")
+                  : "no model consulted — rules only")
+              : "—"],
           ].map(([k, v]) => (
             <div key={k}>
               <div style={{ fontSize: "0.68rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{k}</div>
