@@ -78,7 +78,10 @@ export function AutomationHub({ open, onClose }) {
            screen someone is talking over. Hidden by default while presenting,
            one click away. */
         .ah-terse [data-prose]{display:none !important}`}</style>
-      <div onClick={(e) => e.stopPropagation()} className={presenting && !showNotes ? "ah-terse" : undefined}
+      {/* ah-ink re-steps the secondary text token for this subtree only — see
+          styles.css. Everything inside the hub reads var(--text2), so one
+          class fixes the whole agent rather than sixty inline colours. */}
+      <div onClick={(e) => e.stopPropagation()} className={`ah-ink${presenting && !showNotes ? " ah-terse" : ""}`}
         style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1320px, 97vw)" : "min(1040px, 96vw)",
         height: presenting ? "100vh" : "min(760px, 90vh)", minHeight: presenting ? 0 : 520,
         background: "var(--bg, #fff)", border: presenting ? "none" : "1px solid var(--border, #e4e8f1)",
@@ -607,7 +610,7 @@ function SopAgent({ clusters, activeCluster }) {
                           <span style={{ fontWeight: 800, fontSize: "0.76rem" }}>{i + 1}. {l.title}</span>
                         </div>
                         {(l.checks || []).map((c, j) => (
-                          <div key={j} style={{ fontSize: "0.71rem", color: c.passed ? "var(--muted,#5a6373)" : "#dc2626", marginTop: 3, lineHeight: 1.4 }}>
+                          <div key={j} style={{ fontSize: "0.75rem", color: c.passed ? "var(--muted,#5a6373)" : "#dc2626", marginTop: 3, lineHeight: 1.4 }}>
                             {c.passed ? "•" : "✗"} <b>{c.name}</b> — {c.detail}
                           </div>
                         ))}
@@ -918,7 +921,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
               <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 7 }}>⚑ Recommended fix order</div>
               {(A.fixOrder || []).map((f, i) => (
                 <div key={f.number} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: "0.8rem", marginTop: 3 }}>
-                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "#3d5afe", color: "#fff", fontSize: "0.68rem", fontWeight: 800, display: "grid", placeItems: "center", flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "#3d5afe", color: "#fff", fontSize: "0.73rem", fontWeight: 800, display: "grid", placeItems: "center", flexShrink: 0 }}>{i + 1}</span>
                   <span><b>{f.number}</b> <span style={{ color: "var(--muted,#5a6373)" }}>— {f.why}</span></span>
                 </div>
               ))}
@@ -942,7 +945,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
 
                 {/* Primary */}
                 <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: "0.66rem", fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#16a34a", color: "#fff" }}>ROOT / FIX FIRST</span>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 7px", borderRadius: 5, background: "#16a34a", color: "#fff" }}>ROOT / FIX FIRST</span>
                   <b style={{ fontSize: "0.9rem" }}>{g.primary}</b>
                   {primary?.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {primary.namespace}{primary.resource ? " · " + primary.resource : ""}</span>}
                   {primary && <ClusterPicker inc={primary} />}
@@ -1002,7 +1005,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
                       <div style={{ fontWeight: 800, fontSize: "0.76rem", color: "#0e8a86", marginBottom: 6 }}>Will close {collateral.length + 1} incident(s) in ServiceNow:</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "0.78rem" }}>
-                          <span style={{ fontSize: "0.62rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: "#16a34a", color: "#fff" }}>PRIMARY</span>
+                          <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: "#16a34a", color: "#fff" }}>PRIMARY</span>
                           <b>{g.primary}</b>
                           <span style={{ color: "var(--muted,#5a6373)" }}>{primary?.shortDescription?.slice(0, 60)}</span>
                         </div>
@@ -1011,7 +1014,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
                           const isDup = (g.duplicates || []).includes(c.number);
                           return (
                             <div key={c.number} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "0.78rem" }}>
-                              <span style={{ fontSize: "0.62rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isDup ? "rgba(217,119,6,0.16)" : "rgba(100,116,139,0.16)", color: isDup ? "#b45309" : "#475569" }}>{isDup ? "DUPLICATE" : "RESOLVED-BY"}</span>
+                              <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isDup ? "rgba(217,119,6,0.16)" : "rgba(100,116,139,0.16)", color: isDup ? "#b45309" : "#475569" }}>{isDup ? "DUPLICATE" : "RESOLVED-BY"}</span>
                               <span>{c.number}</span>
                               <span style={{ color: "var(--muted,#5a6373)" }}>{ci?.shortDescription?.slice(0, 55)}</span>
                             </div>
@@ -1061,13 +1064,13 @@ function SnowAgent({ clusters = [], activeCluster }) {
           <div key={inc.sysId} style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: 14, background: "var(--card-bg,#fff)", opacity: inc.duplicateOf ? 0.72 : 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontWeight: 750, fontSize: "0.9rem" }}>{inc.number}</span>
-              {inc.stateLabel && <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569" }}>{inc.stateLabel}</span>}
+              {inc.stateLabel && <span style={{ fontSize: "0.73rem", fontWeight: 700, padding: "2px 7px", borderRadius: 999, background: "rgba(100,116,139,0.12)", color: "#475569" }}>{inc.stateLabel}</span>}
               {(() => { const rv = reconcile?.results?.[inc.sysId]; if (!rv || rv.error) return null;
                 return rv.stillAffected === false
-                  ? <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(22,163,74,0.14)", color: "#16a34a" }}>✅ resolved in-cluster</span>
-                  : <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(220,38,38,0.12)", color: "#dc2626" }}>⚠ still failing</span>;
+                  ? <span style={{ fontSize: "0.73rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(22,163,74,0.14)", color: "#16a34a" }}>✅ resolved in-cluster</span>
+                  : <span style={{ fontSize: "0.73rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(220,38,38,0.12)", color: "#dc2626" }}>⚠ still failing</span>;
               })()}
-              {inc.duplicateOf && <span style={{ fontSize: "0.68rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(217,119,6,0.12)", color: "#b45309" }}>🔁 dup of {inc.duplicateOf}</span>}
+              {inc.duplicateOf && <span style={{ fontSize: "0.73rem", fontWeight: 800, padding: "2px 7px", borderRadius: 999, background: "rgba(217,119,6,0.12)", color: "#b45309" }}>🔁 dup of {inc.duplicateOf}</span>}
               {inc.namespace && <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>ns: {inc.namespace}{inc.resource ? " · " + inc.resource : ""}</span>}
               <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>{inc.createdOn}</span>
             </div>
@@ -1450,7 +1453,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                 }}>
                 <span style={{
                   width: 17, height: 17, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "0.66rem", fontWeight: 800,
+                  fontSize: "0.72rem", fontWeight: 800,
                   background: n < step ? "var(--st-good)" : n === step ? "#3d5afe" : "var(--border)",
                   color: n <= step ? "#fff" : "var(--text2)",
                 }}>{n < step ? "✓" : n}</span>
@@ -1503,7 +1506,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                         <td style={{ padding: "6px 9px", color: "var(--muted,#5a6373)", maxWidth: 210 }} title={v.guestOS || ""}>
                           <div style={{ color: "var(--text,#151a29)" }}>{v.os?.distro || v.guestOS || "—"}</div>
                           {v.os?.family && v.os.family !== "unknown" && (
-                            <div style={{ fontSize: "0.68rem", textTransform: "capitalize" }}>{v.os.family}</div>
+                            <div style={{ fontSize: "0.73rem", textTransform: "capitalize" }}>{v.os.family}</div>
                           )}
                         </td>
                         <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}
@@ -1648,7 +1651,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                           {mins(cmp.withVddk?.wallClockMinutes?.likely)} — and a VM backed by vSAN will not migrate without it at all.
                         </div>
                       )}
-                      <div data-prose style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 4 }}>
+                      <div data-prose style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)", marginTop: 4 }}>
                         {cmp.basis} {cmp.assumption} {est.note}
                       </div>
                     </>
@@ -1681,7 +1684,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                 </div>
               ))}
               {(preview.errors || []).map((e, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.78rem", marginTop: 3 }}>✖ {e.message}</div>)}
-              <div data-prose style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
+              <div data-prose style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>
                 Warm/cold, the provider, both maps and the target namespace are plan-level in MTV, so a mixed selection becomes several plans.
                 Windows and Linux are split as well — they need different preparation and verification, and are almost always cut over in
                 separate windows, so a plan that mixed them could not be handed to either team.
@@ -1753,7 +1756,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                     </span>
                     <span style={{ color: "var(--muted,#5a6373)" }}>{st.gate.next}</span>
                     {st.gate.checkedAt && (
-                      <span style={{ color: "var(--muted,#5a6373)", fontSize: "0.71rem", marginLeft: "auto" }}>
+                      <span style={{ color: "var(--muted,#5a6373)", fontSize: "0.75rem", marginLeft: "auto" }}>
                         last checked {new Date(st.gate.checkedAt).toLocaleString()}
                       </span>
                     )}
@@ -1789,7 +1792,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                         </>
                       )}
                     </div>
-                    <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{st.eta.basis}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{st.eta.basis}</div>
                     {/* The forecast, judged against the transfer actually
                         happening. The useful moment to learn the estimate was
                         wrong is now, while someone can still say so. */}

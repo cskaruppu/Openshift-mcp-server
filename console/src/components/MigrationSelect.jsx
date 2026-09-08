@@ -191,7 +191,7 @@ export default function MigrationSelect({
               </button>
             </div>
           ))}
-          <div data-prose style={{ fontSize: "0.71rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
+          <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
             Inferred from addresses, names, vCenter folders and datastores — a suggestion to check, not a fact.
             Migrate them together, or confirm the split is safe for the gap between waves.
           </div>

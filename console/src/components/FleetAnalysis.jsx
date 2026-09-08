@@ -115,16 +115,20 @@ function FamilyRing({ label, counts, metrics, hero, onHover }) {
         {label}
       </div>
       {/* Direct labels: the counts are read, never estimated from an arc. */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", fontSize: "0.73rem" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", fontSize: "0.77rem" }}>
         {LEVELS.filter((l) => (counts[l.key] || 0) > 0).map((l) => (
-          <span key={l.key} style={{ color: `var(${l.token})`, fontWeight: 700 }} title={l.label}>
+          <span key={l.key} style={{ color: `var(${l.token}-ink)`, fontWeight: 700 }} title={l.label}>
             {l.icon}{counts[l.key]}
           </span>
         ))}
         {total === 0 && <span style={{ color: "var(--text2)" }}>—</span>}
       </div>
+      {/* These are measurements, not commentary, so they wear the primary ink.
+          Secondary grey at this size is the first thing to disappear on a
+          projector, and the vCPU/RAM/storage line is the one number in this
+          panel a person actually reads out loud. */}
       {metrics && (
-        <div style={{ fontSize: "0.72rem", color: "var(--text2)", textAlign: "center", lineHeight: 1.5 }}>
+        <div style={{ fontSize: "0.76rem", fontWeight: 600, color: "var(--text)", textAlign: "center", lineHeight: 1.5 }}>
           {metrics.map((m) => <div key={m}>{m}</div>)}
         </div>
       )}
@@ -143,26 +147,26 @@ function StatTile({ level, n, total }) {
       background: n ? `var(${level.bg})` : "transparent", minWidth: 0,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span aria-hidden style={{ color: `var(${level.token})`, fontWeight: 800, fontSize: "0.9rem" }}>{level.icon}</span>
-        <span style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
+        <span aria-hidden style={{ color: `var(${level.token}-ink)`, fontWeight: 800, fontSize: "0.9rem" }}>{level.icon}</span>
+        <span style={{ fontSize: "0.76rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
           {level.label}
         </span>
       </div>
       <div style={{ fontSize: "1.6rem", fontWeight: 800, lineHeight: 1.15, marginTop: 2, color: "var(--text)" }}>
         {n}<span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text2)" }}> · {pct}%</span>
       </div>
-      <div style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 1 }}>{level.blurb}</div>
+      <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 1 }}>{level.blurb}</div>
     </div>
   );
 }
 
 function Legend() {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.73rem", color: "var(--text2)" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: "0.77rem", color: "var(--text2)" }}>
       {LEVELS.map((l) => (
         <span key={l.key} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span style={{ width: 10, height: 10, borderRadius: 3, background: `var(${l.token})`, display: "inline-block" }} />
-          <span aria-hidden style={{ color: `var(${l.token})`, fontWeight: 800 }}>{l.icon}</span>
+          <span aria-hidden style={{ color: `var(${l.token}-ink)`, fontWeight: 800 }}>{l.icon}</span>
           {l.label}
         </span>
       ))}
@@ -209,9 +213,9 @@ function CapacityPanel({ capacity }) {
   return (
     <div style={{ border: `1px solid var(${st.token})`, borderRadius: 10, padding: "12px 14px", background: `var(${st.bg})` }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
-        <span aria-hidden style={{ color: `var(${st.token})`, fontWeight: 800 }}>{st.icon}</span>
+        <span aria-hidden style={{ color: `var(${st.token}-ink)`, fontWeight: 800 }}>{st.icon}</span>
         <span style={{ fontWeight: 800, fontSize: "0.86rem" }}>Will it fit?</span>
-        <span style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${st.token})` }}>
+        <span style={{ fontSize: "0.76rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${st.token}-ink)` }}>
           {capacity.verdict}
         </span>
         <span style={{ fontSize: "0.79rem", color: "var(--text)" }}>{capacity.headline}</span>
@@ -222,10 +226,10 @@ function CapacityPanel({ capacity }) {
           <div style={{ height: 8, borderRadius: 999, background: "rgba(127,127,127,.18)", overflow: "hidden" }}>
             <div style={{ width: `${pct}%`, height: "100%", background: `var(${st.token})` }} />
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.72rem", color: "var(--text2)", marginTop: 3 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>
             <span>
               {capacity.demand.memGiB} GiB required by this wave
-              {over && <b style={{ color: `var(${st.token})`, marginLeft: 6 }}>{over}</b>}
+              {over && <b style={{ color: `var(${st.token}-ink)`, marginLeft: 6 }}>{over}</b>}
             </span>
             <span>{capacity.free.memGiB} GiB unreserved on {capacity.virtNodeCount} virtualization node(s)</span>
           </div>
@@ -236,7 +240,7 @@ function CapacityPanel({ capacity }) {
         <div style={{ marginTop: 9 }}>
           {bad.map((p) => (
             <div key={p.name} style={{ display: "flex", gap: 8, fontSize: "0.78rem", marginTop: 4 }}>
-              <span aria-hidden style={{ color: `var(${p.permanent ? "--st-crit" : "--st-warn"})`, fontWeight: 800 }}>
+              <span aria-hidden style={{ color: `var(${p.permanent ? "--st-crit" : "--st-warn"}-ink)`, fontWeight: 800 }}>
                 {p.permanent ? "✖" : "⚠"}
               </span>
               <div><b>{p.name}</b> — {p.reason}</div>
@@ -247,7 +251,7 @@ function CapacityPanel({ capacity }) {
 
       {/* The assumptions, stated. A capacity number without them is a guess
           wearing a suit. */}
-      <ul data-prose style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.7rem", color: "var(--text2)" }}>
+      <ul data-prose style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.75rem", color: "var(--text2)" }}>
         {(capacity.notes || []).map((n, i) => <li key={i}>{n}</li>)}
       </ul>
     </div>
@@ -272,13 +276,13 @@ function DriftPanel({ drift }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Since the last assessment</span>
         <span style={{ fontSize: "0.78rem", color: "var(--text2)" }}>{drift.headline}</span>
-        <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text2)" }}>
+        <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--text2)" }}>
           baseline {drift.sinceReportId} · {new Date(drift.since).toLocaleString()}
         </span>
       </div>
       {groups.map(([key, label, token, icon]) => (
         <div key={key} style={{ marginTop: 7 }}>
-          <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${token})` }}>
+          <div style={{ fontSize: "0.76rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${token}-ink)` }}>
             {icon} {label} · {drift[key].length}
           </div>
           {drift[key].map((d) => (
@@ -329,22 +333,22 @@ function FidelityPanel({ fidelity }) {
             note: "requested in full, plus virt-launcher overhead", warn: false },
         ].map((m) => (
           <div key={m.k} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px" }}>
-            <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{m.k}</div>
+            <div style={{ fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{m.k}</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2 }}>
               <span style={{ fontSize: "1.15rem", fontWeight: 800 }}>{m.assigned}</span>
               <span style={{ color: "var(--text2)" }}>→</span>
               <span style={{ fontSize: "1.15rem", fontWeight: 800, color: m.warn ? "var(--st-warn)" : "var(--st-good)" }}>{m.requested}</span>
             </div>
-            <div style={{ fontSize: "0.71rem", color: "var(--text2)", marginTop: 2 }}>{m.note}</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 2 }}>{m.note}</div>
           </div>
         ))}
         <div style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px" }}>
-          <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
+          <div style={{ fontSize: "0.75rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>
             Quality of service
           </div>
           {Object.entries(QOS).map(([k, q]) => (byClass[k] ? (
             <div key={k} style={{ fontSize: "0.75rem", marginTop: 2 }}>
-              <span style={{ color: `var(${q.token})`, fontWeight: 800 }}>{q.icon}</span>{" "}
+              <span style={{ color: `var(${q.token}-ink)`, fontWeight: 800 }}>{q.icon}</span>{" "}
               <b>{byClass[k]}</b> <span style={{ color: "var(--text2)" }}>{q.label}</span>
             </div>
           ) : null))}
@@ -353,7 +357,7 @@ function FidelityPanel({ fidelity }) {
 
       {losing.length > 0 && (
         <div style={{ marginTop: 9, fontSize: "0.77rem" }}>
-          <b style={{ color: "var(--st-warn)" }}>⚠ {losing.length} VM{losing.length === 1 ? "" : "s"} lose a guarantee they have today:</b>
+          <b style={{ color: "var(--st-warn-ink)" }}>⚠ {losing.length} VM{losing.length === 1 ? "" : "s"} lose a guarantee they have today:</b>
           {losing.slice(0, 6).map((l) => (
             <div key={l.name} style={{ marginTop: 2 }}>
               <b>{l.name}</b> <span style={{ color: "var(--text2)" }}>{l.evidence.join("; ")}</span>
@@ -366,8 +370,8 @@ function FidelityPanel({ fidelity }) {
           </div>
         </div>
       )}
-      {note && <div style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 8 }}>{note}</div>}
-      <div data-prose style={{ fontSize: "0.7rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
+      {note && <div style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 8 }}>{note}</div>}
+      <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 7 }}>
         Every migrated VM lands as a <b>Burstable</b> pod: scheduled on its request, evictable under node pressure.
         The guest still sees the CPU count it always had — only the scheduler's view of it changes.
       </div>
@@ -444,7 +448,7 @@ export default function FleetAnalysis({
               : "—"],
           ].map(([k, v]) => (
             <div key={k}>
-              <div style={{ fontSize: "0.68rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{k}</div>
+              <div style={{ fontSize: "0.72rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{k}</div>
               <div style={{ fontSize: "0.79rem" }}>{v}</div>
             </div>
           ))}
@@ -473,7 +477,7 @@ export default function FleetAnalysis({
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", background: "var(--card)" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>Source landscape by operating system</div>
-          <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>
+          <div style={{ fontSize: "0.76rem", color: "var(--text2)" }}>
             {hover
               ? `${hover.n} ${hover.level.label.toLowerCase()} — ${hover.level.blurb}`
               : "Readiness of each OS family, with the compute and storage it carries"}
@@ -505,7 +509,7 @@ export default function FleetAnalysis({
       <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", background: "var(--card)" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
           <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>Support by distribution and version</div>
-          <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>Checked against Red Hat's certified guest list for OpenShift Virtualization</div>
+          <div style={{ fontSize: "0.76rem", color: "var(--text2)" }}>Checked against Red Hat's certified guest list for OpenShift Virtualization</div>
         </div>
 
         {families.map((f) => (
@@ -536,10 +540,10 @@ export default function FleetAnalysis({
                   </div>
                   <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
                     <StackBar counts={d} scale={scale} height={9} onHover={setHover} />
-                    <span style={{ fontSize: "0.73rem", color: "var(--text2)", whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: "0.77rem", color: "var(--text2)", whiteSpace: "nowrap" }}>
                       {d.total} VM{d.total === 1 ? "" : "s"}
                       {present.length > 1 && present.map((l) => (
-                        <span key={l.key} style={{ marginLeft: 6, color: `var(${l.token})`, fontWeight: 700 }}>
+                        <span key={l.key} style={{ marginLeft: 6, color: `var(${l.token}-ink)`, fontWeight: 700 }}>
                           {l.icon}{d[l.key]}
                         </span>
                       ))}
@@ -547,7 +551,7 @@ export default function FleetAnalysis({
                           "supported by SUSE" are different promises, and the
                           difference only shows up in a support call. */}
                       <span style={{ marginLeft: 9 }} title={d.note || "Verdict from Red Hat's certified guest list"}>
-                        <b style={{ color: `var(${LV[d.level]?.token || "--st-unknown"})` }}>
+                        <b style={{ color: `var(${LV[d.level]?.token || "--st-unknown"}-ink)` }}>
                           {LV[d.level]?.icon} {d.tierLabel || d.level}
                         </b>
                       </span>
@@ -559,11 +563,11 @@ export default function FleetAnalysis({
           </div>
         ))}
 
-        <div data-prose style={{ fontSize: "0.7rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+        <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
           Levels combine Red Hat's certified guest list{matrix?.asOf ? ` (read ${matrix.asOf})` : ""} with MTV's own validation of each VM.
-          {" "}Red Hat publishes three tiers: <b style={{ color: "var(--st-good)" }}>certified</b> (Red Hat supports you on it),
-          {" "}<b style={{ color: "var(--st-warn)" }}>vendor supported</b> (Oracle, SUSE or Canonical does), and
-          {" "}<b style={{ color: "var(--st-crit)" }}>known to run</b> (it boots; nobody certifies it).
+          {" "}Red Hat publishes three tiers: <b style={{ color: "var(--st-good-ink)" }}>certified</b> (Red Hat supports you on it),
+          {" "}<b style={{ color: "var(--st-warn-ink)" }}>vendor supported</b> (Oracle, SUSE or Canonical does), and
+          {" "}<b style={{ color: "var(--st-crit-ink)" }}>known to run</b> (it boots; nobody certifies it).
           {matrix?.url && (
             <> <a href={matrix.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--text2)" }}>
               Check the current list for your OpenShift version →
@@ -582,12 +586,12 @@ export default function FleetAnalysis({
             Click a row to see every action for that machine
           </span>
           <span style={{
-            marginLeft: "auto", fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
+            marginLeft: "auto", fontSize: "0.72rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
             background: adviceSource === "ai" ? "rgba(124,58,237,.16)" : "var(--st-unknown-bg)",
             color: adviceSource === "ai" ? "#a78bfa" : "var(--st-unknown)",
           }}>{adviceSource === "ai" ? "method advised by AI" : "method from rules"}</span>
         </div>
-        {adviceNote && <div style={{ fontSize: "0.73rem", color: "var(--st-warn)", padding: "0 13px 6px" }}>{adviceNote}</div>}
+        {adviceNote && <div style={{ fontSize: "0.77rem", color: "var(--st-warn-ink)", padding: "0 13px 6px" }}>{adviceNote}</div>}
 
         <div style={{ overflow: "auto", maxHeight: 520 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.77rem" }}>
@@ -610,10 +614,10 @@ export default function FleetAnalysis({
                     borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
                   }}>
                     <span style={{ fontWeight: 800, fontSize: "0.79rem" }}>{FAMILY_LABEL[family] || family}</span>
-                    <span style={{ marginLeft: 8, fontSize: "0.73rem", color: "var(--text2)" }}>
+                    <span style={{ marginLeft: 8, fontSize: "0.77rem", color: "var(--text2)" }}>
                       {famRows.length} VM{famRows.length === 1 ? "" : "s"} · {gib(diskGiB)}
                       {famRows.some((x) => x.blockers.length) && (
-                        <span style={{ marginLeft: 8, color: "var(--st-crit)", fontWeight: 700 }}>
+                        <span style={{ marginLeft: 8, color: "var(--st-crit-ink)", fontWeight: 700 }}>
                           ✖ {famRows.filter((x) => x.blockers.length).length} blocked
                         </span>
                       )}
@@ -633,19 +637,19 @@ export default function FleetAnalysis({
                     <td style={{ padding: "6px 9px", fontWeight: 700, whiteSpace: "nowrap" }}>
                       <span style={{ color: "var(--text2)", marginRight: 5 }}>{open ? "▾" : "▸"}</span>{r.name}
                     </td>
-                    <td style={{ padding: "6px 9px", whiteSpace: "nowrap", color: `var(${l.token})`, fontWeight: 700 }}>{l.icon} {l.label}</td>
+                    <td style={{ padding: "6px 9px", whiteSpace: "nowrap", color: `var(${l.token}-ink)`, fontWeight: 700 }}>{l.icon} {l.label}</td>
                     <td style={{ padding: "6px 9px", color: "var(--text2)" }} title={r.os?.reported || ""}>
                       <div style={{ color: "var(--text)" }}>{r.os?.distro || "—"}</div>
                       {/* Coloured by the OS's own level, not the row's. A
                           certified guest blocked by a shared disk is still a
                           certified guest — the two say different things. */}
                       {r.os?.tierLabel && (
-                        <div style={{ fontSize: "0.67rem", color: `var(${LV[r.os.level]?.token || "--st-unknown"})` }}>
+                        <div style={{ fontSize: "0.73rem", color: `var(${LV[r.os.level]?.token || "--st-unknown"}-ink)` }}>
                           {r.os.tierLabel}
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}>
+                    <td style={{ padding: "6px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.76rem" }}>
                       {r.ips?.length ? r.ips[0] + (r.ips.length > 1 ? ` +${r.ips.length - 1}` : "") : "—"}
                     </td>
                     <td style={{ padding: "6px 9px" }}>{r.cpuCount ?? "—"}</td>
@@ -662,12 +666,14 @@ export default function FleetAnalysis({
                       ) : (
                         <>
                           {a?.strategy || "—"}
-                          {p && <span style={{ marginLeft: 6, fontWeight: 600, color: `var(${p.token})` }}>{p.icon} {p.label}</span>}
+                          {p && <span style={{ marginLeft: 6, fontWeight: 600, color: `var(${p.token}-ink)` }}>{p.icon} {p.label}</span>}
                         </>
                       )}
                     </td>
-                    <td style={{ padding: "6px 9px", color: "var(--text2)", maxWidth: 300 }}>
-                      <span style={{ color: `var(${SEV_TOKEN[worst?.severity] || "--st-unknown"})`, fontWeight: 700 }}>
+                    {/* The finding itself is the point of the row, so it wears
+                        primary ink; only the "+n more" tail is secondary. */}
+                    <td style={{ padding: "6px 9px", color: "var(--text)", maxWidth: 300 }}>
+                      <span style={{ color: `var(${SEV_TOKEN[worst?.severity] || "--st-unknown"}-ink)`, fontWeight: 700 }}>
                         {SEV_ICON[worst?.severity] || "•"}
                       </span>{" "}
                       {worst?.title || "—"}
@@ -679,13 +685,13 @@ export default function FleetAnalysis({
                       <td colSpan={9} style={{ padding: "2px 9px 10px 30px", background: "var(--bg2)" }}>
                         {acts.map((x, i) => (
                           <div key={i} style={{ display: "flex", gap: 8, padding: "5px 0" }}>
-                            <span aria-hidden style={{ color: `var(${SEV_TOKEN[x.severity] || "--st-unknown"})`, fontWeight: 800 }}>
+                            <span aria-hidden style={{ color: `var(${SEV_TOKEN[x.severity] || "--st-unknown"}-ink)`, fontWeight: 800 }}>
                               {SEV_ICON[x.severity] || "•"}
                             </span>
                             <div>
                               <div style={{ fontWeight: 700 }}>
                                 {x.title}
-                                {x.required && <span style={{ marginLeft: 6, fontSize: "0.66rem", fontWeight: 800, color: "var(--st-warn)" }}>REQUIRED</span>}
+                                {x.required && <span style={{ marginLeft: 6, fontSize: "0.71rem", fontWeight: 800, color: "var(--st-warn-ink)" }}>REQUIRED</span>}
                               </div>
                               {x.detail && <div style={{ color: "var(--text2)" }}>{x.detail}</div>}
                               <div>→ {x.action}</div>
@@ -696,7 +702,7 @@ export default function FleetAnalysis({
                             A check the inventory could not answer is never
                             presented as a check that passed. */}
                         {r.checks?.coverage && (
-                          <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1px solid var(--border)", fontSize: "0.72rem", color: "var(--text2)" }}
+                          <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1px solid var(--border)", fontSize: "0.76rem", color: "var(--text2)" }}
                             title={(r.checks.unchecked || []).map((u) => u.label).join(", ")}>
                             {r.checks.coverage.ran} of {r.checks.coverage.total} source checks ran
                             {r.checks.unchecked?.length > 0 && (
@@ -720,21 +726,21 @@ export default function FleetAnalysis({
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 7 }}>
           <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>What to do about it</span>
           <span style={{
-            fontSize: "0.68rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
+            fontSize: "0.72rem", padding: "2px 8px", borderRadius: 999, fontWeight: 700,
             background: suggestionSource === "ai" ? "rgba(124,58,237,.16)" : "var(--st-unknown-bg)",
             color: suggestionSource === "ai" ? "#a78bfa" : "var(--st-unknown)",
           }}>{suggestionSource === "ai" ? "AI + rules" : "rule-based"}</span>
         </div>
-        {note && <div style={{ fontSize: "0.73rem", color: "var(--st-warn)", marginBottom: 5 }}>{note}</div>}
+        {note && <div style={{ fontSize: "0.77rem", color: "var(--st-warn-ink)", marginBottom: 5 }}>{note}</div>}
         {suggestions.map((s, i) => (
           <div key={i} style={{ display: "flex", gap: 9, padding: "7px 0", borderTop: i ? "1px solid var(--border)" : "none" }}>
-            <span aria-hidden style={{ color: `var(${SEV_TOKEN[s.severity] || "--st-unknown"})`, fontWeight: 800, fontSize: "0.9rem", lineHeight: 1.3 }}>
+            <span aria-hidden style={{ color: `var(${SEV_TOKEN[s.severity] || "--st-unknown"}-ink)`, fontWeight: 800, fontSize: "0.9rem", lineHeight: 1.3 }}>
               {SEV_ICON[s.severity] || "•"}
             </span>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: "0.81rem" }}>
                 {s.title}
-                {s.ai && <span style={{ marginLeft: 6, fontSize: "0.65rem", color: "#a78bfa", fontWeight: 700 }}>AI</span>}
+                {s.ai && <span style={{ marginLeft: 6, fontSize: "0.7rem", color: "#a78bfa", fontWeight: 700 }}>AI</span>}
               </div>
               {s.detail && <div style={{ fontSize: "0.77rem", color: "var(--text2)", marginTop: 1 }}>{s.detail}</div>}
               <div style={{ fontSize: "0.77rem", marginTop: 2 }}>→ {s.action}</div>

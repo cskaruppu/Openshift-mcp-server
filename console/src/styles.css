@@ -7033,6 +7033,9 @@ h3.widget-title {
   --st-crit: #c92a2a; --st-crit-bg: rgba(201,42,42,.14);
   --st-unknown: #6b7a8f; --st-unknown-bg: rgba(107,122,143,.14);
   --st-surface: #1a1d27;
+  /* Ink steps — see the note below. Same hue, stepped for TEXT. */
+  --st-good-ink: #22b8a6; --st-warn-ink: #f0a020;
+  --st-crit-ink: #f07070; --st-unknown-ink: #8d9cb0;
 }
 .light-theme {
   --st-good: #0d9488; --st-good-bg: rgba(13,148,136,.12);
@@ -7040,4 +7043,64 @@ h3.widget-title {
   --st-crit: #b91c1c; --st-crit-bg: rgba(185,28,28,.10);
   --st-unknown: #64748b; --st-unknown-bg: rgba(100,116,139,.12);
   --st-surface: #ffffff;
+  --st-good-ink: #0f766e; --st-warn-ink: #a15c07;
+  --st-crit-ink: #b91c1c; --st-unknown-ink: #5a6675;
 }
+
+/* ── Status colours used as TEXT ────────────────────────────────────────────
+   The --st-* steps above are validated as MARKS: a fill or an arc, judged on
+   band, chroma, and separation from its neighbours. Several of them fail badly
+   the moment the same value is used as a text colour, which is most of why the
+   analysis report reads washed out:
+
+     light  --st-warn  #f59e0b on white  2.15:1   ← "⚠ Known to run", "⚠ REQUIRED"
+            --st-good  #0d9488 on white  3.74:1   ← "✓ Certified"
+     dark   --st-crit  #c92a2a on card   3.08:1
+            --st-unknown #6b7a8f on card 3.85:1
+
+   So each status colour gets a second step for ink. Same hue, same meaning,
+   re-stepped until it clears 4.5:1 on both surfaces it can land on:
+
+     light  good #0f766e 5.47/5.00 · warn #a15c07 5.19/4.73
+            crit #b91c1c 6.47/5.91 · unknown #5a6675 5.85/5.34   (on #fff/#f1f5f9)
+     dark   good #22b8a6 6.79/6.98 · warn #f0a020 7.81/8.03
+            crit #f07070 5.81/5.98 · unknown #8d9cb0 6.02/6.19   (on #1a1d27/#161b22)
+
+   Marks keep the validated palette untouched — a bar, an arc, a swatch and a
+   panel border still use --st-good and friends, so nothing that was checked for
+   colour-vision separation moves. Only text switches to the -ink step, and
+   every coloured word still carries its icon and its label, so identity is
+   never colour alone either way.
+
+   ── Automation Hub: secondary ink, re-stepped for a projector ──────────────
+   The hub's reports are read over a screen share as often as on a laptop, and
+   the global secondary token was chosen for a laptop. In the light theme
+   --text2 (#6b7280) sits at 4.83:1 on white — legal for body text, and the
+   first thing to go through video compression on a meeting-room display.
+
+   So it is re-stepped inside the hub only. Nothing outside .ah-ink changes, no
+   existing rule is edited, and every element already reading var(--text2)
+   picks the darker step up on its own.
+
+     light  #475569 on #ffffff  7.58:1   (was #6b7280, 4.83:1)
+            #475569 on #f1f5f9  6.92:1   — table header and OS group rows
+     dark   #b8bec9 on #1a1d27  9.00:1   (was #a1a1aa, 6.56:1)
+            #b8bec9 on #161b22  9.26:1
+
+   Primary --text is untouched. It passes comfortably in both modes, and
+   lifting it as well would flatten the primary/secondary distinction that
+   tells a reader which line is the finding and which is the footnote.
+
+   --muted is here for a different reason. The hub's chrome was written against
+   --muted, --fg and --card-bg, and none of those three tokens exists in this
+   stylesheet — all 137 uses fall through to the hardcoded default beside them,
+   which is why that text is a flat #5a6373 (6.06:1) whatever the theme.
+   Defining --muted alone gives it one darker step without moving a surface. It
+   is deliberately NOT tied to --text2: the hub's cards fall back to #fff in
+   both themes, so light ink on them would be invisible, while FleetAnalysis
+   panels sit on var(--card) and need exactly the opposite. --fg and --card-bg
+   are left alone on purpose — pointing them at the theme tokens turns the
+   hub's surfaces dark, and ~90 hardcoded accent colours inside those cards
+   were chosen against white.                                                */
+.ah-ink { --text2: #b8bec9; --muted: #475569; }
+.light-theme .ah-ink { --text2: #475569; }
