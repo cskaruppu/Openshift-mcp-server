@@ -1006,12 +1006,18 @@ test("the measured throughput belongs to the configuration in force, and the oth
 test("the speed-up is labelled as an assumption, never presented as measured", async () => {
   const { vddkComparison } = await import("../../src/services/vm-migration.js");
   const c = vddkComparison([{ name: "a", diskGiB: 100 }], { throughputMBps: 60, vddkConfigured: true });
-  assert.match(c.assumption, /assumption, not a measurement/);
+  assert.match(c.assumption, /an assumption/);
   assert.match(c.assumption, /MTV_VDDK_SPEEDUP/, "and it says how to correct it");
+  // Red Hat publishes no throughput figure for VDDK. Quote them rather than
+  // implying a number they never gave.
+  assert.match(c.assumption, /publishes no throughput figure/);
+  assert.match(c.assumption, /significantly lower migration speeds/);
+  assert.equal(c.measured, true);
 
   // With nothing measured at all, that is said too.
   const none = vddkComparison([{ name: "a", diskGiB: 100 }], { throughputMBps: null, vddkConfigured: false });
-  assert.match(none.basis, /No completed migration to measure/);
+  assert.match(none.basis, /No completed migration on this cluster yet/);
+  assert.equal(none.measured, false);
 });
 
 test("a missing VDDK image is a fleet finding, and cites the vSAN hard stop", async () => {
@@ -1035,4 +1041,42 @@ test("a provider that could not be read is not reported as unconfigured", async 
   const r = await providerVddk("does-not-exist");
   assert.equal(r.found, false);
   assert.equal(r.configured, null, "null is 'we do not know'; false would be a claim");
+});
+
+test("REGRESSION: an unmeasured cluster must still show a difference between the two paths", async () => {
+  const { vddkComparison } = await import("../../src/services/vm-migration.js");
+  // The bug: with no measurement, both sides were handed null, estimateMigration
+  // substituted the same default for each, and the two columns came out
+  // identical — a real difference rendered as no difference at all.
+  for (const configured of [true, false]) {
+    for (const strategy of ["cold", "warm"]) {
+      const c = vddkComparison([{ name: "a", diskGiB: 800 }], { strategy, throughputMBps: null, vddkConfigured: configured });
+      assert.ok(
+        c.withoutVddk.wallClockMinutes.likely > c.withVddk.wallClockMinutes.likely,
+        `${strategy}, vddk=${configured}: without VDDK must take longer, measured or not`,
+      );
+    }
+  }
+});
+
+test("warm cutover grows with the transfer, because the delta does", async () => {
+  const { estimateMigration } = await import("../../src/services/vm-migration.js");
+  // A flat per-VM cutover made a 3x slower link look free. The cutover has to
+  // copy whatever the guest wrote while the disks were copying.
+  const fast = estimateMigration([{ name: "a", diskGiB: 4000 }], { strategy: "warm", throughputMBps: 200 });
+  const slow = estimateMigration([{ name: "a", diskGiB: 4000 }], { strategy: "warm", throughputMBps: 20 });
+  assert.ok(slow.downtimeMinutes.likely > fast.downtimeMinutes.likely,
+    "a longer copy means a bigger delta to catch up at cutover");
+  // But it stays dominated by the fixed cutover — warm downtime is not the
+  // transfer time, and must never be presented as if it were.
+  assert.ok(slow.downtimeMinutes.likely < slow.wallClockMinutes.likely / 4);
+});
+
+test("cold downtime IS the transfer, so VDDK moves it one-for-one", async () => {
+  const { vddkComparison } = await import("../../src/services/vm-migration.js");
+  const c = vddkComparison([{ name: "a", diskGiB: 800 }], { strategy: "cold", throughputMBps: 60, vddkConfigured: false });
+  assert.deepEqual(c.withVddk.downtimeMinutes, c.withVddk.wallClockMinutes);
+  assert.deepEqual(c.withoutVddk.downtimeMinutes, c.withoutVddk.wallClockMinutes);
+  assert.ok(c.withoutVddk.downtimeMinutes.likely > c.withVddk.downtimeMinutes.likely * 2,
+    "for a cold migration the VDDK decision is an outage decision");
 });

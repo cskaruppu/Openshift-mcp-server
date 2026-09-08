@@ -704,10 +704,15 @@ export function vddkComparison(vms = [], {
   strategy = "cold", throughputMBps = null, concurrency = 2, vddkConfigured = false,
 } = {}) {
   const ratio = vddkSpeedup();
-  const withMBps = throughputMBps == null ? null
-    : vddkConfigured ? throughputMBps : throughputMBps * ratio;
-  const withoutMBps = throughputMBps == null ? null
-    : vddkConfigured ? throughputMBps / ratio : throughputMBps;
+  // The rate in hand — measured, or the conservative default — describes the
+  // configuration IN FORCE. The other side is derived from it.
+  //
+  // Passing null through for the unmeasured case was a bug: estimateMigration
+  // substitutes the same default for both, so the two columns came out
+  // identical and a real difference looked like no difference at all.
+  const base = throughputMBps || DEFAULT_MBPS;
+  const withMBps = vddkConfigured ? base : base * ratio;
+  const withoutMBps = vddkConfigured ? base / ratio : base;
 
   const est = (mbps) => estimateMigration(vms, { strategy, throughputMBps: mbps, concurrency });
   return {
@@ -717,12 +722,15 @@ export function vddkComparison(vms = [], {
     withVddk: est(withMBps),
     withoutVddk: est(withoutMBps),
     // Said plainly, because it is the whole point of showing two numbers.
+    measured: throughputMBps != null,
     basis: throughputMBps == null
-      ? `No completed migration to measure, so both figures come from a conservative default, scaled by an assumed ${ratio}× VDDK speed-up.`
+      ? `No completed migration on this cluster yet, so the ${vddkConfigured ? "with" : "without"}-VDDK figure is a conservative default of ${DEFAULT_MBPS} MiB/s and the other is derived from it.`
       : vddkConfigured
         ? `Measured on this cluster WITH VDDK. The without-VDDK figure divides it by an assumed ${ratio}×.`
         : `Measured on this cluster WITHOUT VDDK. The with-VDDK figure multiplies it by an assumed ${ratio}×.`,
-    assumption: `The ${ratio}× ratio is an assumption, not a measurement. Set MTV_VDDK_SPEEDUP to match what you observe.`,
+    // Red Hat is explicit that VDDK matters and publishes no number for it.
+    // Quoting them, rather than implying a figure they never gave.
+    assumption: `Red Hat states that using MTV without VDDK "is not recommended and could result in significantly lower migration speeds", but publishes no throughput figure. The ${ratio}× ratio here is therefore an assumption — set MTV_VDDK_SPEEDUP to match what you measure.`,
   };
 }
 
@@ -759,6 +767,10 @@ export function observedThroughput(history = []) {
 
 /** Conservative default until this cluster has measured itself. */
 const DEFAULT_MBPS = Number(process.env.MTV_DEFAULT_MBPS || 60);
+/** Cutover cost per VM that does not depend on how fast the disks copied. */
+const WARM_CUTOVER_MIN_PER_VM = 6;
+/** …plus the delta the guest wrote while the copy ran. An assumption, named. */
+const WARM_DELTA_FRACTION = 0.05;
 
 /**
  * How long a wave will take, and how much of that is DOWNTIME — the two are
@@ -781,8 +793,12 @@ export function estimateMigration(vms = [], { strategy = "cold", throughputMBps 
   const likely = transferMin + overheadMin;
 
   const downtimeMin = strategy === "warm"
-    // Warm copies while the VM runs; only the final delta and cutover cost.
-    ? (vms.length || 0) * 6
+    // Warm copies while the VM runs, so downtime is the cutover — but not a
+    // flat number: the cutover has to copy whatever the guest wrote DURING the
+    // transfer, so a slower link means a bigger delta to catch up on. Mostly
+    // fixed, slightly rate-sensitive. The fraction is an assumption; the shape
+    // is not, and a flat figure made a 3x slower link look free.
+    ? (vms.length || 0) * WARM_CUTOVER_MIN_PER_VM + transferMin * WARM_DELTA_FRACTION
     : likely;
 
   const round = (n) => Math.max(1, Math.round(n));

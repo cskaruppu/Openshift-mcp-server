@@ -328,8 +328,8 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["Detection", "spec.settings.vddkInitImage on the Forklift Provider — read from a list the readiness check already fetches, so detecting it costs nothing."],
     ["What the panel shows", "The same wave costed WITH and WITHOUT VDDK, with the configured path marked. Where it is not configured: \"Configuring the VDDK image would take this from 34 min to 10 min.\""],
     ["Why two numbers", "\"Configure VDDK\" as advice is ignored. \"34 minutes becomes 10, and anything on vSAN will not migrate at all\" is a decision."],
-    ["The ratio is an assumption", "Default 3x, overridable with MTV_VDDK_SPEEDUP, and printed on the panel. It is labelled an assumption, never presented as a measurement."],
-    ["Which half was measured", "Measured throughput belongs to whatever configuration is in force: it is the WITH figure when VDDK is configured and the WITHOUT figure when it is not. The other side is derived, and the panel says which is which."],
+    ["The ratio is an assumption", "Red Hat's own wording is \"using MTV without VDDK is not recommended and could result in significantly lower migration speeds\" — with NO throughput figure published. The panel quotes that and labels the 3x default (MTV_VDDK_SPEEDUP) as this product's assumption, rather than implying a number Red Hat never gave."],
+    ["Which half was measured", "Whatever rate is in hand — measured, or the conservative default — describes the configuration IN FORCE: the WITH figure when VDDK is configured, the WITHOUT figure when it is not. The other side is derived, and the panel says which is which."],
     ["Unknown is not false", "A provider that could not be read reports configured: null — \"we do not know\" — rather than \"not configured\", which would be a claim."],
     ["Corrected during build", "The assumption that warm migration requires VDDK was WRONG: Red Hat ties warm migration to changed block tracking. Checked against the documentation before it reached the product rather than after it reached a customer."],
   ], { height: 46 });

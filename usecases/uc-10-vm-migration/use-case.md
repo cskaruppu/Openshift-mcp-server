@@ -282,11 +282,17 @@ configuring it would save: *"34 min becomes 10 min"* argues better than a link
 to the documentation, and missing VDDK becomes a fleet finding citing the vSAN
 hard stop.
 
-**The speed-up is not invented.** Measured throughput belongs to whatever
-configuration is in force, so it is the *with* figure when VDDK is configured
-and the *without* figure when it is not — the other side is derived from a
-named, printed ratio (default 3, `MTV_VDDK_SPEEDUP`). The panel states which
-half was measured and which was assumed. A provider that could not be read
+**The speed-up is not invented — and Red Hat does not publish one.** Their
+wording is *"using MTV without VDDK is not recommended and could result in
+significantly lower migration speeds"*, with no throughput figure attached. The
+panel quotes exactly that and labels the ratio as this product's assumption
+(default 3, `MTV_VDDK_SPEEDUP`) rather than implying a number Red Hat never
+gave.
+
+Whatever rate is in hand — measured, or the conservative default — describes
+the configuration **in force**: it is the *with* figure when VDDK is configured
+and the *without* figure when it is not, and the other side is derived from it.
+The panel says which half was measured. A provider that could not be read
 reports `null` — *we do not know* — rather than *not configured*.
 
 > One belief corrected while building this: warm migration does **not** require

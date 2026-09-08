@@ -314,7 +314,7 @@ function footNote(s, text, color) {
   });
   s.addShape(pptx.ShapeType.roundRect, { x: 7.15, y: 2.9, w: 5.7, h: 1.85, fill: { color: C.lBlue }, line: { color: C.tcsBlue, width: 1.5 }, rectRadius: 0.08 });
   s.addText("The speed-up is not invented", { x: 7.35, y: 3.0, w: 5.3, h: 0.3, fontSize: 12.5, bold: true, color: C.tcsBlue, fontFace: F });
-  s.addText("Measured throughput belongs to the configuration in force — it is the WITH figure when VDDK is configured and the WITHOUT figure when it is not. The other side is derived from a named, printed ratio (default 3, MTV_VDDK_SPEEDUP), and the panel says which half was measured.\n\nA provider that could not be read reports \u201cwe do not know\u201d, never \u201cnot configured\u201d.",
+  s.addText("Red Hat publishes NO throughput figure — only that migrating without VDDK \u201ccould result in significantly lower migration speeds\u201d. The panel quotes that and labels the 3\u00d7 default (MTV_VDDK_SPEEDUP) as this product\u2019s assumption.\n\nWhatever rate is in hand describes the configuration IN FORCE; the other side is derived from it, and the panel says which half was measured.\n\nA provider that could not be read reports \u201cwe do not know\u201d, never \u201cnot configured\u201d.",
     { x: 7.35, y: 3.3, w: 5.3, h: 1.4, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
 
   s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 4.95, w: 12.4, h: 0.85, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.5 }, rectRadius: 0.08 });
