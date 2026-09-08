@@ -89,6 +89,7 @@ ambiguous — if a row says deterministic, no model was involved in producing it
 | 1.2 | Discover VMs | 🔵 Automatic | Read-only inventory call to MTV. Nothing is written to vCenter | `discoverVMs` |
 | 1.3 | Normalise each VM | 🔵 Automatic | IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts | `normaliseInventoryVM` |
 | 1.4 | Decode the guest id | 🔵 Automatic | `windows2019srvNext_64Guest` → Windows Server 2022, from a lookup table | `expandGuestId` |
+| 1.5 | Detect the VDDK image | 🔵 Automatic | Reads `spec.settings.vddkInitImage` off the Forklift Provider — free, on a list we already fetch | `providerVddk` |
 | 2.1 | Classify the guest OS | 🔵 Automatic | Matched against Red Hat's certified list; three tiers | `classifyGuestOS` |
 | 2.2 | Run 15 source checks | 🔵 Automatic | Snapshots, RDM, shared disks, vTPM, devices, NIC coverage… | `runSourceChecks` |
 | 2.3 | Read target capacity | 🔵 Automatic | Node allocatable minus pod requests, virt-schedulable nodes only | `readClusterCapacity` |
@@ -107,7 +108,7 @@ ambiguous — if a row says deterministic, no model was involved in producing it
 | 3.3 | Warn on split groups | 🔵 Automatic | Recomputed on every tick, from 2.6 | `splitGroups` |
 | 3.4 | Target namespace + maps | 🟡 Manual | Chosen from what the cluster actually has | Console |
 | 4.1 | Measure throughput | 🔵 Automatic | From migrations this cluster has already completed | `clusterThroughput` |
-| 4.2 | Estimate the transfer | 🔵 Automatic | Per plan, from its own recorded footprint | `estimatePlan` |
+| 4.2 | Estimate the transfer | 🔵 Automatic | Per plan, from its own recorded footprint — costed **with and without VDDK** | `estimatePlan`, `vddkComparison` |
 | 4.3 | Group into plans | 🔵 Automatic | The 5 dimensions MTV forces, plus operating system | `planGroups` |
 | 4.4 | Create the Plans | 🔵 Automatic | MTV validates. Nothing moves | `createPlans` |
 | 4.5 | Raise the change request | 🔵 Automatic | Platform authors it — implementation, backout, test plan, outage | `raiseMigrationCR` |
@@ -118,7 +119,7 @@ ambiguous — if a row says deterministic, no model was involved in producing it
 | 4.10 | Verify on the target | 🔵 Automatic | Against the live cluster, never inferred | `verifyMigration` |
 | 4.11 | Roll back | 🟡 Manual | Deletes only what the migration created. Source never deleted | `rollbackMigration` |
 
-**The count: 2 AI steps, 8 manual, 22 deterministic — 32 in all.** That ratio is the
+**The count: 2 AI steps, 8 manual, 23 deterministic — 33 in all.** That ratio is the
 argument, not an apology — the AI is used where judgement is genuinely
 required, and nowhere that a fact can be measured instead.
 
@@ -252,6 +253,7 @@ too — because they read the source and this agent runs inside the destination.
 | Evidence pack for the CAB | — | ✅ | ✅ Report ID, matrix version, HTML + CSV |
 | Drift since the last assessment | — | Rare | ✅ Improved / regressed / added / gone |
 | Move-together groups | — | Dependency mapping (agents) | ✅ Agentless inference, evidence shown |
+| The wave costed with AND without VDDK | — | — | ✅ Both shown, configured path marked |
 | Approval gate before data moves | — | — | ✅ Held on the Plan, re-read server-side |
 
 ### The check nobody else makes
@@ -265,6 +267,31 @@ The agent blocks that at assessment time, and separates "can never schedule"
 (needs hardware) from "no room today" (needs a window). It counts only nodes
 that are Ready, uncordoned and labelled `kubevirt.io/schedulable=true`, because
 a node without virt-handler has RAM the cluster can use and a VM cannot.
+
+### The VDDK choice, as a number
+
+MTV can migrate from vSphere with or without the VMware VDDK init image. Red
+Hat's guidance is unambiguous — create one: it accelerates the transfer and
+**reduces the risk of a plan failing**. And a VM backed by **vSAN will not
+migrate without it at all**.
+
+The agent detects whether it is configured (`spec.settings.vddkInitImage` on the
+Provider — free, on a list already being read) and shows the wave costed both
+ways, with the configured path marked. Where it is absent, the panel says what
+configuring it would save: *"34 min becomes 10 min"* argues better than a link
+to the documentation, and missing VDDK becomes a fleet finding citing the vSAN
+hard stop.
+
+**The speed-up is not invented.** Measured throughput belongs to whatever
+configuration is in force, so it is the *with* figure when VDDK is configured
+and the *without* figure when it is not — the other side is derived from a
+named, printed ratio (default 3, `MTV_VDDK_SPEEDUP`). The panel states which
+half was measured and which was assumed. A provider that could not be read
+reports `null` — *we do not know* — rather than *not configured*.
+
+> One belief corrected while building this: warm migration does **not** require
+> VDDK. Red Hat ties warm migration to changed block tracking. The assumption
+> was checked against the documentation before it reached the product.
 
 ## 7. Architecture
 
@@ -316,6 +343,7 @@ flowchart LR
 | Evidence pack | assessment-report.js | Pure string generation — no runtime library dependency |
 | Plan builder | `planGroups`, `buildPlanManifest` | Groups by the five dimensions MTV forces, plus OS |
 | Approval gate | `approvalGate`, `raiseMigrationCR`, `checkMigrationApproval` | Annotations on the Plan; survives a restart and a different operator |
+| VDDK detection and comparison | `providerVddk`, `vddkComparison` | Reads the Provider's init image; costs the wave both ways with the assumption printed |
 | Live ETA | `liveEta`, `recordProgressSample` | Measured from bytes moving; says "stalled" rather than growing a number |
 | Rollback | `rollbackPlan`, `rollbackMigration` | Deletes target VMs; **the source is never deleted** |
 
@@ -345,12 +373,13 @@ flowchart LR
 
 | Min | Beat | Say |
 |---|---|---|
+| — | **Before you start** | Press **⤢ Present** in the Hub header: full screen, larger type, and the explanatory prose collapsed. It is built for exactly this — a shared screen someone is talking over. |
 | 0–1 | Step 1, Discover | "Read-only. Fourteen VMs, and note the Guest OS column — vCenter reports `windows2019srvNext_64Guest`; that is VMware's id for Server **2022**. Read it literally and your whole Windows estate lands in 'needs review'." |
 | 1–3 | Step 2, the report | "Every VM assessed, not the ones I already chose. Rings by OS family. Red Hat's three tiers — certified, vendor supported, known to run. And 'Will it fit?' — this machine needs 64 GiB and the biggest node has 48. MTV would have copied 200 GiB and left it Pending." |
 | 3–4 | Expand a row | "Fifteen source checks per machine, each with its own fix. And '15 of 15 ran' — where the inventory tells us nothing we say so, rather than calling it a pass." |
 | 4–5 | Resource guarantees + export | "52 vCPU becomes 5.2 cores requested. The guests still see 52; the scheduler does not. Three VMs lose a reservation they have today. Then: evidence pack for the change board." |
 | 5–6 | Step 3, choose the wave | "Pick two of the three ShopApp machines and it says db01 would stay on VMware — MTV has no idea these are one system." |
-| 6–7 | Step 4, plan → CR → migrate | "Windows and Linux never share a plan. The estimate comes from this cluster's own history. Change request raised, held on the Plan itself — Migrate stays disabled until the CAB says yes. And if it goes wrong: roll back. The source VMs were never deleted." |
+| 6–7 | Step 4, plan → CR → migrate | "Windows and Linux never share a plan. And here is the wave costed with and without the VDDK image — this cluster has none, so we are looking at the slow column, and anything on vSAN would not migrate at all. The estimate comes from this cluster's own history. Change request raised, held on the Plan itself — Migrate stays disabled until the CAB says yes. And if it goes wrong: roll back. The source VMs were never deleted." |
 
 ## 11. Verification status
 
@@ -369,6 +398,8 @@ flowchart LR
 | Live measured ETA + stall detection | ✅ Unit-tested |
 | Rollback (source never deleted) | ✅ Unit-tested decision logic |
 | MTV readiness detection + RBAC guidance | ✅ Live (fixed after two field runs) |
+| VDDK detection, and the wave costed both ways | ✅ Unit-tested; the derivation is direction-aware |
+| Presentation mode for screen sharing | ✅ Live |
 | Wave scheduling against blackout windows | 🔶 Roadmap |
 | RCA agent on a stalled transfer | 🔶 Machinery exists (UC-05); auto-wiring is roadmap |
 

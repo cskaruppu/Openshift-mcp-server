@@ -284,9 +284,43 @@ function footNote(s, text, color) {
     ["Evidence pack for the CAB", "—", "✅", "✅ Report ID + matrix version"],
     ["Drift since the last assessment", "—", "Rare", "✅ Improved / regressed / added / gone"],
     ["Move-together groups", "—", "Agent-based mapping", "✅ Agentless, evidence shown"],
+    ["The wave costed with AND without VDDK", "—", "—", "✅ Both shown, configured path marked"],
     ["Approval gate before data moves", "—", "—", "✅ Held on the Plan itself"],
   ], { y: 1.5, colW: [4.3, 2.4, 2.7, 3.0], fontSize: 10 });
   footNote(s, "None of this replaces MTV. All of it is missing without the agent.");
+}
+
+// ── 7b. THE VDDK CHOICE ─────────────────────────────────────────────────────
+{
+  const s = pptx.addSlide();
+  head(s, "THE VDDK CHOICE", "The single biggest lever on transfer speed — shown as a number, not a link");
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 1.5, w: 12.4, h: 1.15, fill: { color: C.lRed }, line: { color: C.secRed, width: 2 }, rectRadius: 0.08 });
+  s.addText("A VM backed by vSAN will not migrate without VDDK at all. Everywhere else it is slower and more likely to fail.",
+    { x: 0.7, y: 1.6, w: 11.9, h: 0.42, fontSize: 15.5, bold: true, color: C.secRed, fontFace: F });
+  s.addText("Red Hat's guidance is unambiguous: create the VDDK init image. The agent detects whether you have — spec.settings.vddkInitImage on the Provider, free, on a list it already reads.",
+    { x: 0.7, y: 2.02, w: 11.9, h: 0.5, fontSize: 11.5, color: C.navy, fontFace: F, valign: "top" });
+
+  const cols = [
+    { t: "WITH VDDK", v: "10 min", d: "transfer\n6 min downtime", c: C.autoGreen, bg: C.lGreen },
+    { t: "WITHOUT VDDK", v: "34 min", d: "transfer\n34 min downtime\nvSAN: will not migrate", c: C.secRed, bg: C.lRed },
+  ];
+  cols.forEach((k, i) => {
+    const x = 0.45 + i * 3.3;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 2.9, w: 3.05, h: 1.85, fill: { color: k.bg }, line: { color: k.c, width: 2 }, rectRadius: 0.08 });
+    s.addText(k.t, { x: x + 0.18, y: 3.0, w: 2.7, h: 0.3, fontSize: 11.5, bold: true, color: k.c, fontFace: F });
+    s.addText(k.v, { x: x + 0.18, y: 3.28, w: 2.7, h: 0.55, fontSize: 27, bold: true, color: k.c, fontFace: F });
+    s.addText(k.d, { x: x + 0.18, y: 3.85, w: 2.7, h: 0.85, fontSize: 10.5, color: C.navy, fontFace: F, valign: "top" });
+  });
+  s.addShape(pptx.ShapeType.roundRect, { x: 7.15, y: 2.9, w: 5.7, h: 1.85, fill: { color: C.lBlue }, line: { color: C.tcsBlue, width: 1.5 }, rectRadius: 0.08 });
+  s.addText("The speed-up is not invented", { x: 7.35, y: 3.0, w: 5.3, h: 0.3, fontSize: 12.5, bold: true, color: C.tcsBlue, fontFace: F });
+  s.addText("Measured throughput belongs to the configuration in force — it is the WITH figure when VDDK is configured and the WITHOUT figure when it is not. The other side is derived from a named, printed ratio (default 3, MTV_VDDK_SPEEDUP), and the panel says which half was measured.\n\nA provider that could not be read reports \u201cwe do not know\u201d, never \u201cnot configured\u201d.",
+    { x: 7.35, y: 3.3, w: 5.3, h: 1.4, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 4.95, w: 12.4, h: 0.85, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.5 }, rectRadius: 0.08 });
+  s.addText("Corrected while building this: warm migration does NOT require VDDK — Red Hat ties warm migration to changed block tracking. The assumption was checked against the documentation before it reached the product, rather than after it reached a customer.",
+    { x: 0.7, y: 5.05, w: 11.9, h: 0.65, fontSize: 11, bold: true, color: "92400E", fontFace: F, valign: "middle" });
+  footNote(s, "\u201c34 minutes becomes 10\u201d argues better than a link to the documentation.", C.autoGreen);
 }
 
 // ── 8. GOVERNANCE ───────────────────────────────────────────────────────────

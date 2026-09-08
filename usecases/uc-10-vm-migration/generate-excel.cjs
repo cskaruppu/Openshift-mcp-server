@@ -145,7 +145,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
 {
   const ws = wb.addWorksheet("3. Workflow by Actor", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 7 }, { width: 32 }, { width: 17 }, { width: 66 }, { width: 26 }];
-  let r = banner(ws, "Every step, and who performs it — 22 deterministic · 8 manual · 2 AI",
+  let r = banner(ws, "Every step, and who performs it — 23 deterministic · 8 manual · 2 AI",
     "If a row says deterministic, no model was involved in producing it. Discovery is read-only; strategy is chosen last; both irreversible acts stay human.", 5);
   r = headerRow(ws, r, ["#", "Step", "Actor", "What happens", "Where it lives"]);
   r = dataRows(ws, r, [
@@ -153,6 +153,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["1.2", "Discover VMs", AU, "Read-only inventory call to MTV. Nothing is written to vCenter.", "discoverVMs"],
     ["1.3", "Normalise each VM", AU, "IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts.", "normaliseInventoryVM"],
     ["1.4", "Decode the guest id", AU, "windows2019srvNext_64Guest → Windows Server 2022, from a lookup table rather than a regex over the text.", "expandGuestId"],
+    ["1.5", "Detect the VDDK image", AU, "Reads spec.settings.vddkInitImage off the Forklift Provider — free, on a list already being fetched.", "providerVddk"],
     ["2.1", "Classify the guest OS", AU, "Matched against Red Hat's certified list; three tiers.", "classifyGuestOS"],
     ["2.2", "Run 15 source checks", AU, "Snapshots, independent disks, RDM, shared disks, FT, vTPM, Secure Boot, devices, NIC coverage, VMware Tools.", "runSourceChecks"],
     ["2.3", "Read target capacity", AU, "Node allocatable minus pod requests, counting only Ready, uncordoned, virt-schedulable nodes.", "readClusterCapacity"],
@@ -171,7 +172,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["3.3", "Warn on split groups", AU, "Recomputed on every tick from 2.6 — 'db01 would stay on VMware'.", "splitGroups"],
     ["3.4", "Target namespace and maps", MA, "Chosen from what the cluster actually has.", "Console"],
     ["4.1", "Measure throughput", AU, "From migrations this cluster has already completed, not from a vendor figure.", "clusterThroughput"],
-    ["4.2", "Estimate the transfer", AU, "Per plan, from that plan's own recorded footprint. Transfer time and downtime stated separately.", "estimatePlan"],
+    ["4.2", "Estimate the transfer", AU, "Per plan, from that plan's own recorded footprint. Transfer time and downtime stated separately, and the wave costed both WITH and WITHOUT the VDDK image.", "estimatePlan, vddkComparison"],
     ["4.3", "Group into plans", AU, "The five dimensions MTV forces, plus operating system so Windows and Linux never mix.", "planGroups"],
     ["4.4", "Create the Plans", AU, "MTV validates them. Nothing moves.", "createPlans"],
     ["4.5", "Raise the change request", AU, "The platform authors it: implementation, backout, test plan, and the outage being approved.", "raiseMigrationCR"],
@@ -233,6 +234,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["Move-together groups", "—", "Agent-based mapping", "✅ Agentless inference, evidence shown"],
     ["Approval gate before data moves", "—", "—", "✅ Held on the Plan, re-read server-side"],
     ["Windows and Linux in separate waves", "—", "—", "✅ OS is a plan-grouping dimension"],
+    ["The wave costed with AND without VDDK", "—", "—", "✅ Both shown, configured path marked"],
   ], { height: 30 });
   note(ws, r, 4, "The unique angle: every tool in this market reads the SOURCE. This agent runs inside the DESTINATION, so it knows both sides at once.", C.lightRed, C.darkRed);
 }
@@ -313,6 +315,27 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
   note(ws, r, 2, "Example from the lab: a 64 GiB VM against 48 GiB workers — blocked at assessment. MTV would have copied 200 GiB first.", C.lightRed, C.darkRed);
 }
 
+// ═══ 7b. VDDK ══════════════════════════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("7b. VDDK", { properties: { tabColor: { argb: "FF" + C.secRed } } });
+  ws.columns = [{ width: 34 }, { width: 86 }];
+  let r = banner(ws, "The VDDK choice — shown as a number, not a documentation link",
+    "MTV can migrate from vSphere with or without the VMware VDDK init image. Red Hat's guidance is unambiguous: create one.", 2);
+  r = headerRow(ws, r, ["Point", "Detail"]);
+  r = dataRows(ws, r, [
+    ["Why it matters", "A VDDK image accelerates the transfer AND reduces the risk of a plan failing. Red Hat recommends it for every vSphere migration."],
+    ["The hard stop", "A VM backed by VMware vSAN will NOT migrate without VDDK at all. Where VDDK is absent this stops being a speed question and becomes a blocker."],
+    ["Detection", "spec.settings.vddkInitImage on the Forklift Provider — read from a list the readiness check already fetches, so detecting it costs nothing."],
+    ["What the panel shows", "The same wave costed WITH and WITHOUT VDDK, with the configured path marked. Where it is not configured: \"Configuring the VDDK image would take this from 34 min to 10 min.\""],
+    ["Why two numbers", "\"Configure VDDK\" as advice is ignored. \"34 minutes becomes 10, and anything on vSAN will not migrate at all\" is a decision."],
+    ["The ratio is an assumption", "Default 3x, overridable with MTV_VDDK_SPEEDUP, and printed on the panel. It is labelled an assumption, never presented as a measurement."],
+    ["Which half was measured", "Measured throughput belongs to whatever configuration is in force: it is the WITH figure when VDDK is configured and the WITHOUT figure when it is not. The other side is derived, and the panel says which is which."],
+    ["Unknown is not false", "A provider that could not be read reports configured: null — \"we do not know\" — rather than \"not configured\", which would be a claim."],
+    ["Corrected during build", "The assumption that warm migration requires VDDK was WRONG: Red Hat ties warm migration to changed block tracking. Checked against the documentation before it reached the product rather than after it reached a customer."],
+  ], { height: 46 });
+  note(ws, r, 2, "Sources: Red Hat, Installing and using the Migration Toolkit for Virtualization; Migrating virtual machines from VMware vSphere.", C.lightRed, C.darkRed);
+}
+
 // ═══ 8. RESOURCE GUARANTEES ═════════════════════════════════════════════════
 {
   const ws = wb.addWorksheet("8. Resource Guarantees", { properties: { tabColor: { argb: "FF" + C.userAmber } } });
@@ -375,12 +398,13 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
   let r = banner(ws, "Demo script — 7 minutes", null, 3);
   r = headerRow(ws, r, ["Min", "Beat", "Say"]);
   r = dataRows(ws, r, [
+    ["—", "Before you start", "Press \u2921 Present in the Hub header: full screen, larger type, explanatory prose collapsed. Built for exactly this — a shared screen someone is talking over. Escape exits."],
     ["0–1", "Step 1 — Discover", "\"Read-only. Fourteen VMs, and note the Guest OS column: vCenter reports windows2019srvNext_64Guest. That is VMware's id for Server 2022 — read it literally and your whole Windows estate lands in 'needs review'.\""],
     ["1–3", "Step 2 — the report", "\"Every VM assessed, not the ones I already chose. Rings by OS family. Red Hat's three tiers. And 'Will it fit?' — this machine needs 64 GiB, the biggest node has 48. MTV would have copied 200 GiB and left it Pending.\""],
     ["3–4", "Expand a row", "\"Fifteen source checks per machine, each with its own fix. And '15 of 15 ran' — where the inventory tells us nothing, we say so rather than calling it a pass.\""],
     ["4–5", "Guarantees + export", "\"52 vCPU becomes 5.2 cores requested. The guests still see 52; the scheduler does not. Three VMs lose a reservation they have today. Then: evidence pack for the change board.\""],
     ["5–6", "Step 3 — choose the wave", "\"Pick two of the three ShopApp machines and it says db01 would stay on VMware. MTV has no idea these are one system.\""],
-    ["6–7", "Step 4 — plan, CR, migrate", "\"Windows and Linux never share a plan. The estimate comes from this cluster's own history. Change request raised and held on the Plan itself — Migrate stays disabled until the CAB says yes. And if it goes wrong: roll back. The source VMs were never deleted.\""],
+    ["6–7", "Step 4 — plan, CR, migrate", "\"Windows and Linux never share a plan. And here is the wave costed with and without the VDDK image — this cluster has none, so we are reading the slow column, and anything on vSAN would not migrate at all. The estimate comes from this cluster's own history. Change request raised and held on the Plan itself — Migrate stays disabled until the CAB says yes. And if it goes wrong: roll back. The source VMs were never deleted.\""],
   ], { height: 58 });
   note(ws, r, 3, "Best single moment: the blocked VM on the capacity panel. It is the failure everyone in the room has seen, explained before it happens.", C.lightBlue, "1E40AF");
 }
@@ -406,10 +430,12 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["Live measured ETA with stall detection", OK, "Unit-tested"],
     ["Rollback — source never deleted", OK, "Decision logic unit-tested"],
     ["MTV readiness detection + RBAC guidance", OK, "Live; fixed after two field runs"],
+    ["VDDK detection and the wave costed both ways", OK, "Unit-tested; the derivation is direction-aware"],
+    ["Presentation mode for screen sharing", OK, "Live"],
     ["Wave scheduling against blackout windows", RM, "Roadmap"],
     ["RCA agent on a stalled transfer", RM, "Machinery exists (UC-05); auto-wiring is roadmap"],
   ], { height: 28 });
-  note(ws, r, 3, "230 unit tests pin the deterministic half. The AI half is clamped by it.", C.lightGreen, C.darkGreen);
+  note(ws, r, 3, "241 unit tests pin the deterministic half. The AI half is clamped by it.", C.lightGreen, C.darkGreen);
 }
 
 wb.xlsx.writeFile(OUT).then(() => console.log("✅ " + OUT));
