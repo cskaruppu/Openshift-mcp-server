@@ -914,10 +914,13 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
   const confidence = watched >= 20 ? "high" : watched >= 8 ? "medium" : "low";
 
   const round = (n) => Math.max(0, Math.round(n));
+  // How long this transfer has been running, so a revised TOTAL can be stated
+  // rather than only a remaining figure.
+  const elapsedMinutes = round((last.at - samples[0].at) / 60000);
   return {
     state: "transferring",
     mbps: Math.round(mbps * 10) / 10,
-    percent,
+    percent, elapsedMinutes, samples: watched,
     etaMinutes: { low: round(likely * (1 - spread)), likely: round(likely), high: round(likely * (1 + spread)) },
     confidence,
     basis: `Measured over the last ${Math.round(secs / 60) || 1} minute(s) at ${Math.round(mbps)} MiB/s${
@@ -925,6 +928,67 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
   };
 }
 
+
+/**
+ * The forecast, judged against the transfer that is actually happening.
+ *
+ * A pre-flight estimate is only as good as the throughput it assumed. Once
+ * bytes are moving, the migration is telling you what this source, this
+ * network and this storage really do — and if that is a third of what was
+ * assumed, the useful moment to find out is now, while someone can still tell
+ * the change board, not afterwards.
+ *
+ * It also closes the loop the estimate opens: the measured rate is the number
+ * that should replace the default on the next assessment, so the tool stops
+ * guessing and starts remembering.
+ *
+ * Pure.
+ *
+ * @param {{mbps:number, minutes:number}|null} planned  stamped on the Plan at creation
+ * @param {object} live  liveEta() output
+ */
+export function estimateVsActual(planned, live) {
+  // Nothing to compare against a stalled, finished or not-yet-measured transfer.
+  if (!planned?.mbps || !live || live.state !== "transferring" || !live.mbps) return null;
+
+  const ratio = live.mbps / planned.mbps;
+  const elapsed = live.elapsedMinutes || 0;
+  const remaining = live.etaMinutes?.likely ?? 0;
+  const revisedMinutes = elapsed + remaining;
+  const plannedMinutes = planned.minutes ?? null;
+
+  const verdict = ratio >= 1.15 ? "ahead"
+    : ratio >= 0.85 ? "on-track"
+    : ratio >= 0.5 ? "behind"
+    : "far-behind";
+
+  const times = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}×`;
+  const early = live.confidence === "low" ? "Early reading — " : "";
+  const message = early + (verdict === "on-track"
+    ? `Running at the rate the estimate assumed (${live.mbps} MiB/s).`
+    : verdict === "ahead"
+      ? `Running ${times(ratio)} faster than the estimate assumed${plannedMinutes ? ` — expect about ${revisedMinutes} min in total rather than ${plannedMinutes}` : ""}.`
+      : `Running at ${times(ratio)} the assumed rate${plannedMinutes ? ` — expect about ${revisedMinutes} min in total rather than ${plannedMinutes}` : ""}.`);
+
+  // Only suggest recalibrating once the measurement has earned it. Rewriting a
+  // cluster-wide default from four samples would be worse than the default.
+  const trustworthy = live.confidence === "medium" || live.confidence === "high";
+  const materially = Math.abs(ratio - 1) > 0.25;
+  return {
+    verdict, ratio: Math.round(ratio * 100) / 100,
+    plannedMbps: planned.mbps, actualMbps: live.mbps,
+    plannedMinutes, revisedMinutes, elapsedMinutes: elapsed,
+    confidence: live.confidence,
+    message,
+    calibration: trustworthy && materially
+      ? {
+          setting: "MTV_DEFAULT_MBPS",
+          value: Math.max(1, Math.round(live.mbps)),
+          reason: `This cluster is achieving ${live.mbps} MiB/s, not the ${planned.mbps} MiB/s the estimate assumed. Setting MTV_DEFAULT_MBPS=${Math.max(1, Math.round(live.mbps))} makes the next assessment start from what actually happens here.`,
+        }
+      : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 2e. Fleet analysis — the overall picture before anyone selects anything
@@ -1636,6 +1700,13 @@ export function buildPlanManifest(group, { targetProvider }) {
         // change request is raised from the Plan — possibly days later, from a
         // fresh session — so the record has to travel with it.
         ...(group.ai ? { "tcs.agentic-ai/ai-provenance": JSON.stringify(group.ai).slice(0, 4000) } : {}),
+        // The forecast, and the rate it assumed. Recorded at creation so the
+        // live transfer can be judged against what was actually promised —
+        // rather than against a throughput figure that has since moved.
+        ...(group.planned?.mbps ? {
+          "tcs.agentic-ai/planned-mbps": String(group.planned.mbps),
+          "tcs.agentic-ai/planned-minutes": String(group.planned.minutes ?? ""),
+        } : {}),
       },
     },
     spec: {
@@ -1679,8 +1750,16 @@ export function buildMigrationManifest(planName, { cutover = null } = {}) {
 /** Create the Plans. Creating a Plan moves nothing — MTV validates it first. */
 export async function createPlans(groups, { targetProvider, actor = "operator", cluster = "local" } = {}) {
   const created = [], failed = [], terminal = [];
+  // Once, not per poll: the rate assumed at creation is a fact about the plan.
+  const tp = await clusterThroughput().catch(() => ({ mbps: null }));
   for (const g of groups) {
-    const manifest = buildPlanManifest(g, { targetProvider });
+    const est = estimateMigration(g.vms, {
+      strategy: g.strategy, throughputMBps: tp.mbps, concurrency: Math.min(2, g.vms.length),
+    });
+    const manifest = buildPlanManifest(
+      { ...g, planned: { mbps: est.throughputMBps, minutes: est.wallClockMinutes.likely } },
+      { targetProvider },
+    );
     terminal.push(`$ oc apply -f plan-${g.planName}.yaml -n ${MTV_NS}`);
     try {
       const r = await ocpPost(`/${FORKLIFT}/namespaces/${MTV_NS}/plans`, manifest);
@@ -1718,6 +1797,10 @@ export async function planStatus(planName) {
     vmCount: (p.spec?.vms || []).length,
     vmNames: (p.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
     totalGiB: Number(p.metadata?.annotations?.["tcs.agentic-ai/total-gib"] || 0) || null,
+    planned: p.metadata?.annotations?.["tcs.agentic-ai/planned-mbps"] ? {
+      mbps: Number(p.metadata.annotations["tcs.agentic-ai/planned-mbps"]),
+      minutes: Number(p.metadata.annotations["tcs.agentic-ai/planned-minutes"]) || null,
+    } : null,
     // The approval gate travels with the plan, so the console shows the same
     // answer the migrate endpoint will enforce.
     gate: approvalGate(p),
@@ -1738,10 +1821,13 @@ export async function planStatusWithEta(planName) {
   if (!status.found) return status;
   const snap = progressSnapshot(status);
   if (status.executing || snap.bytes > 0) recordProgressSample(planName, snap);
+  const eta = liveEta(getProgressSamples(planName));
   return {
     ...status,
     progress: { bytes: snap.bytes, total: snap.total, activeVMs: snap.activeVMs },
-    eta: liveEta(getProgressSamples(planName)),
+    eta,
+    // The forecast, judged against what is actually happening.
+    vsEstimate: estimateVsActual(status.planned, eta),
   };
 }
 

@@ -1080,3 +1080,75 @@ test("cold downtime IS the transfer, so VDDK moves it one-for-one", async () => 
   assert.ok(c.withoutVddk.downtimeMinutes.likely > c.withVddk.downtimeMinutes.likely * 2,
     "for a cold migration the VDDK decision is an outage decision");
 });
+
+// ── The forecast, judged against the transfer ───────────────────────────────
+// A pre-flight estimate is only as good as the throughput it assumed. The
+// useful moment to learn it was wrong is while the transfer is running.
+
+const atRate = (mbps, n, totalGiB = 800) => {
+  const total = totalGiB * 1024 ** 3;
+  return Array.from({ length: n }, (_, i) => ({
+    at: Date.now() - (n - 1 - i) * 60000,
+    bytes: Math.min(total, mbps * 1048576 * 60 * i),
+    total,
+  }));
+};
+
+test("a transfer running slower than planned says so, with a revised total", async () => {
+  const { estimateVsActual, liveEta } = await import("../../src/services/vm-migration.js");
+  const c = estimateVsActual({ mbps: 60, minutes: 228 }, liveEta(atRate(20, 12)));
+  assert.equal(c.verdict, "far-behind");
+  assert.equal(c.actualMbps, 20);
+  assert.ok(c.revisedMinutes > c.plannedMinutes * 2, "the revised total must reflect the real rate");
+  assert.match(c.message, /0\.3× the assumed rate/);
+  assert.match(c.message, /rather than 228/, "the number that was promised has to appear beside the new one");
+});
+
+test("matching the plan is reported as matching, not as a problem", async () => {
+  const { estimateVsActual, liveEta } = await import("../../src/services/vm-migration.js");
+  const c = estimateVsActual({ mbps: 60, minutes: 228 }, liveEta(atRate(60, 12)));
+  assert.equal(c.verdict, "on-track");
+  assert.equal(c.calibration, null, "nothing to recalibrate when the assumption was right");
+});
+
+test("a faster cluster is credited, not silently ignored", async () => {
+  const { estimateVsActual, liveEta } = await import("../../src/services/vm-migration.js");
+  const c = estimateVsActual({ mbps: 60, minutes: 228 }, liveEta(atRate(90, 12)));
+  assert.equal(c.verdict, "ahead");
+  assert.ok(c.revisedMinutes < c.plannedMinutes);
+  assert.equal(c.calibration.value, 90, "and the default should learn from it too");
+});
+
+test("an early reading is labelled early, and never rewrites a cluster default", async () => {
+  const { estimateVsActual, liveEta } = await import("../../src/services/vm-migration.js");
+  const c = estimateVsActual({ mbps: 60, minutes: 228 }, liveEta(atRate(20, 3)));
+  assert.equal(c.confidence, "low");
+  assert.match(c.message, /^Early reading —/);
+  assert.equal(c.calibration, null, "four samples must not rewrite a cluster-wide default");
+});
+
+test("nothing is compared against a stalled, finished or unmeasured transfer", async () => {
+  const { estimateVsActual, liveEta } = await import("../../src/services/vm-migration.js");
+  const stalled = [0, 2, 4, 6].map((m) => ({ at: Date.now() - (6 - m) * 60000, bytes: 4e10, total: 8e10 }));
+  assert.equal(estimateVsActual({ mbps: 60, minutes: 228 }, liveEta(stalled)), null,
+    "a stalled transfer has no rate to judge");
+  assert.equal(estimateVsActual({ mbps: 60 }, liveEta(atRate(60, 1))), null, "nor has one that has not started");
+  // And with no forecast recorded there is nothing to compare against.
+  assert.equal(estimateVsActual(null, liveEta(atRate(60, 12))), null);
+});
+
+test("the forecast is stamped on the Plan, so a refresh does not lose it", async () => {
+  const { buildPlanManifest } = await import("../../src/services/vm-migration.js");
+  const g = {
+    planName: "p", strategy: "cold", warm: false, sourceProvider: "v", storageMap: "s",
+    networkMap: "n", targetNamespace: "ns", vms: [{ id: "i", name: "a", diskGiB: 100 }],
+    totalGiB: 100, planned: { mbps: 60, minutes: 32 },
+  };
+  const ann = buildPlanManifest(g, { targetProvider: "t" }).metadata.annotations;
+  assert.equal(ann["tcs.agentic-ai/planned-mbps"], "60");
+  assert.equal(ann["tcs.agentic-ai/planned-minutes"], "32");
+  // A plan created before this existed simply has no annotation, and the
+  // comparison is skipped rather than invented.
+  const old = buildPlanManifest({ ...g, planned: undefined }, { targetProvider: "t" }).metadata.annotations;
+  assert.equal(old["tcs.agentic-ai/planned-mbps"], undefined);
+});

@@ -1790,6 +1790,34 @@ function MigrationAgent({ clusters, activeCluster }) {
                       )}
                     </div>
                     <div style={{ fontSize: "0.71rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{st.eta.basis}</div>
+                    {/* The forecast, judged against the transfer actually
+                        happening. The useful moment to learn the estimate was
+                        wrong is now, while someone can still say so. */}
+                    {st.vsEstimate && (
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border,#e4e8f1)", fontSize: "0.78rem" }}>
+                        <span style={{ fontWeight: 700, color:
+                          st.vsEstimate.verdict === "far-behind" ? "var(--st-crit)"
+                          : st.vsEstimate.verdict === "behind" ? "var(--st-warn)"
+                          : st.vsEstimate.verdict === "ahead" ? "var(--st-good)" : "var(--text2)" }}>
+                          {st.vsEstimate.verdict === "on-track" ? "✓ On plan"
+                            : st.vsEstimate.verdict === "ahead" ? "✓ Ahead of plan"
+                            : st.vsEstimate.verdict === "behind" ? "⚠ Behind plan" : "✖ Far behind plan"}
+                        </span>{" "}
+                        <span style={{ color: "var(--muted,#5a6373)" }}>{st.vsEstimate.message}</span>
+                        {/* Only once the measurement has earned it — rewriting a
+                            cluster default from four samples would be worse
+                            than the default. */}
+                        {st.vsEstimate.calibration && (
+                          <div style={{ marginTop: 4, fontSize: "0.75rem" }}>
+                            → <code style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem",
+                              background: "var(--bg2,#f1f5f9)", padding: "1px 5px", borderRadius: 4 }}>
+                              {st.vsEstimate.calibration.setting}={st.vsEstimate.calibration.value}
+                            </code>{" "}
+                            <span data-prose style={{ color: "var(--muted,#5a6373)" }}>{st.vsEstimate.calibration.reason}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {st.eta.state === "transferring" && (
                       <div style={{ height: 4, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 5, overflow: "hidden" }}>
                         <div style={{ width: `${st.eta.percent}%`, height: "100%", background: "#0ea5a0" }} />
