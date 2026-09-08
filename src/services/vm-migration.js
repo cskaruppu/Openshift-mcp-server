@@ -30,6 +30,7 @@ import { classifyJSON, classifyJSONWithMeta, llmEnabled } from "./llm.js";
 import { fenceUntrusted, UNTRUSTED_GUARD } from "./untrusted.js";
 
 const FORKLIFT = "apis/forklift.konveyor.io/v1beta1";
+const KUBEVIRT = "apis/kubevirt.io/v1";
 const MTV_NS = process.env.MTV_NAMESPACE || "openshift-mtv";
 
 /** Providers whose VMs we can migrate FROM. */
@@ -1668,7 +1669,17 @@ export function planGroups(selection = [], { ai = null } = {}) {
     }
     // Size travels with the VM into the group: the plan's own footprint is
     // what its change request has to quote, not the wave's.
-    byKey.get(key).vms.push({ id: vm.id || null, name: vm.name, diskGiB: vm.diskGiB || 0 });
+    //
+    // So does the rest of the source shape, for a different reason: it is what
+    // verification compares against afterwards. Read back from the source later
+    // it may be powered off, changed or decommissioned — the promise has to
+    // travel with the plan that made it.
+    byKey.get(key).vms.push({
+      id: vm.id || null, name: vm.name, diskGiB: vm.diskGiB || 0,
+      cpu: vm.cpuCount ?? null, memGiB: vm.memoryGiB ?? null,
+      disks: Array.isArray(vm.disks) ? vm.disks.length : null,
+      ips: Array.isArray(vm.ips) ? vm.ips.filter(Boolean).slice(0, 4) : [],
+    });
   }
 
   const groups = [...byKey.values()].map((g, i) => ({
@@ -1723,6 +1734,13 @@ export function buildPlanManifest(group, { targetProvider }) {
           "tcs.agentic-ai/planned-mbps": String(group.planned.mbps),
           "tcs.agentic-ai/planned-minutes": String(group.planned.minutes ?? ""),
         } : {}),
+        // What the source looked like, so verification afterwards compares
+        // against what was promised rather than against a source that has since
+        // been powered off or decommissioned. Short keys: this is an
+        // annotation, and annotations have a size limit worth respecting.
+        "tcs.agentic-ai/source-vms": JSON.stringify(
+          group.vms.map((v) => ({ n: v.name, c: v.cpu ?? null, m: v.memGiB ?? null, d: v.disks ?? null, g: v.diskGiB ?? null, i: v.ips || [] })),
+        ).slice(0, 8000),
       },
     },
     spec: {
@@ -1810,6 +1828,10 @@ export async function planStatus(planName) {
     canceled: isTrue(p, "Canceled"),
     warm: p.spec?.warm === true,
     targetNamespace: p.spec?.targetNamespace || null,
+    sourceProvider: p.spec?.provider?.source?.name || null,
+    // The source footprint recorded at creation — what verification compares
+    // against once the source itself may be off or gone.
+    sourceVms: p.metadata?.annotations?.["tcs.agentic-ai/source-vms"] || null,
     vmCount: (p.spec?.vms || []).length,
     vmNames: (p.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
     totalGiB: Number(p.metadata?.annotations?.["tcs.agentic-ai/total-gib"] || 0) || null,
@@ -1846,6 +1868,9 @@ export async function planStatusWithEta(planName) {
     eta,
     // Waiting on a person, not on the network. The console needs to say which.
     cutover: cut,
+    // The end-to-end route this plan is on. Warm and cold are different
+    // journeys, so the console never has to work out which one to draw.
+    journey: (await import("./migration-verify.js")).migrationJourney({ ...status, cutover: cut }),
     // The forecast, judged against what is actually happening.
     vsEstimate: estimateVsActual(status.planned, eta),
   };
@@ -2494,18 +2519,89 @@ export async function rollbackMigration(planName, { deleteTargetVMs = true, acto
 export async function verifyMigration(planName) {
   const status = await planStatus(planName);
   if (!status.found) return { ok: false, error: `Plan "${planName}" not found.` };
-  const { vmRuntimeStatus } = await import("./vm-provisioning.js");
   const names = (status.vms || []).map((v) => v.name).filter(Boolean);
   if (!names.length || !status.targetNamespace) {
     return { ok: false, planName, error: "No migrated VMs to verify yet." };
   }
+
+  const { verifyVM, verifySummary } = await import("./migration-verify.js");
+  const { vmRuntimeStatus } = await import("./vm-provisioning.js");
+
+  // 1. What the plan promised, recorded when it was created.
+  let promised = [];
+  try { promised = JSON.parse(status.sourceVms || "[]"); } catch { promised = []; }
+  const promisedBy = Object.fromEntries(promised.map((p) => [p.n, {
+    name: p.n, cpu: p.c, memGiB: p.m, disks: p.d, diskGiB: p.g, ips: p.i || [],
+  }]));
+
+  // 2. What is running on OpenShift now.
   const runtime = await vmRuntimeStatus(status.targetNamespace, names);
+  const runtimeBy = Object.fromEntries((runtime.vms || []).map((v) => [v.name, v]));
+
+  // 3. The shape the target was actually built with.
+  const targetBy = {};
+  for (const n of names) {
+    const vm = await ocpGet(`/${KUBEVIRT}/namespaces/${status.targetNamespace}/virtualmachines/${n}`).catch(() => null);
+    if (!vm) continue;
+    const dom = vm.spec?.template?.spec?.domain || {};
+    const memStr = dom.memory?.guest || dom.resources?.requests?.memory || null;
+    targetBy[n] = {
+      cpu: (dom.cpu?.cores || 1) * (dom.cpu?.sockets || 1) * (dom.cpu?.threads || 1),
+      memGiB: memStr ? Math.round(parseMemGiB(memStr)) : null,
+      disks: (dom.devices?.disks || []).length || null,
+    };
+  }
+
+  // 4. Is the source off? An unreachable source platform leaves this NULL —
+  //    which verifyVM reports as unchecked, never as "powered off".
+  const sourceOff = await sourcePowerStates(status, names);
+
+  const vms = names.map((n) => verifyVM(promisedBy[n] || { name: n }, runtimeBy[n] || null, targetBy[n] || null,
+    Object.prototype.hasOwnProperty.call(sourceOff, n) ? sourceOff[n] : null));
+  const summary = verifySummary(vms);
+
   return {
-    ok: runtime.allRunning,
-    planName, namespace: status.targetNamespace,
-    ...runtime,
-    note: runtime.allRunning
-      ? "Every migrated VM is running. The source VMs are still powered off — raise a decommission request when you are satisfied."
-      : "Not every migrated VM is running yet.",
+    ok: summary.verdict === "passed" || summary.verdict === "passed-with-warnings",
+    planName, namespace: status.targetNamespace, verifiedAt: new Date().toISOString(),
+    ...summary, vmChecks: vms,
+    note: summary.headline,
   };
+}
+
+/** GiB from a Kubernetes quantity, for the one comparison that needs it. */
+function parseMemGiB(v) {
+  const m = String(v).match(/^(\d+(?:\.\d+)?)\s*([KMGTP]i?)?$/);
+  if (!m) return NaN;
+  const mult = { Ki: 1 / 1048576, Mi: 1 / 1024, Gi: 1, Ti: 1024, K: 1e3 / 2 ** 30, M: 1e6 / 2 ** 30, G: 1e9 / 2 ** 30, T: 1e12 / 2 ** 30 };
+  return Number(m[1]) * (mult[m[2]] ?? 1 / 2 ** 30);
+}
+
+/**
+ * Power state of each source VM, read from the provider inventory.
+ *
+ * Returns a map with an entry ONLY for VMs it could actually read. A name that
+ * is absent means "not checked", and the caller must not read that as "off" —
+ * this is the check that catches the same machine running on both platforms.
+ */
+async function sourcePowerStates(status, names) {
+  const out = {};
+  try {
+    const providerName = status.sourceProvider;
+    if (!providerName) return out;
+    const p = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/providers/${providerName}`).catch(() => null);
+    const uid = p?.metadata?.uid;
+    if (!uid) return out;
+    const vms = await discoverVMs(uid);
+    for (const v of vms) {
+      if (!names.includes(v.name)) continue;
+      // normaliseInventoryVM fills an absent power state with the literal
+      // "unknown". Treating that as a read value would answer "the source is
+      // still ON" on the strength of having learned nothing — which is the one
+      // mistake this check exists to avoid. It stays unchecked instead.
+      const st = String(v.powerState || "").toLowerCase();
+      if (!st || st === "unknown") continue;
+      out[v.name] = /off|suspend/.test(st);
+    }
+  } catch { /* unreachable source: every VM stays unchecked, which is the point */ }
+  return out;
 }

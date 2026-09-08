@@ -1135,6 +1135,110 @@ function SnowAgent({ clusters = [], activeCluster }) {
    rather than as a chat card: you pick six VMs out of forty, not one VM out of
    a sentence. The gate chain mirrors the VM Request card so an operator who
    knows one already knows the other.                                        */
+/* ── Where this plan is, end to end ───────────────────────────────────────────
+   Warm and cold are drawn as different routes because they are different
+   routes. A cold migration powers the guest off at the start and the outage is
+   the whole transfer; a warm one keeps it serving users and spends the outage
+   at the very end. One stepper with a flag would promise a cutover step on a
+   plan that never has one. */
+function Journey({ j }) {
+  return (
+    <div style={{ marginTop: 7 }}>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 4, flexWrap: "wrap" }}>
+        {j.steps.map((s, i) => {
+          const done = i < j.at, here = i === j.at;
+          const bad = j.failed && here;
+          return (
+            <div key={s.key} title={s.detail} style={{
+              flex: "1 1 110px", minWidth: 96, padding: "5px 8px", borderRadius: 7, fontSize: "0.74rem",
+              background: bad ? "rgba(220,38,38,.1)" : done ? "rgba(22,163,74,.1)" : here ? "rgba(61,90,254,.1)" : "rgba(127,127,127,.07)",
+              border: `1px solid ${bad ? "rgba(220,38,38,.4)" : done ? "rgba(22,163,74,.3)" : here ? "rgba(61,90,254,.4)" : "transparent"}`,
+            }}>
+              <div style={{ fontWeight: 700, color: bad ? "#dc2626" : done ? "#16a34a" : here ? "#3d5afe" : "var(--muted,#5a6373)" }}>
+                {bad ? "✖" : done ? "✓" : here ? "▸" : "·"} {s.label}
+              </div>
+              {/* The step in front of you is the only one worth explaining
+                  in place; the rest are a tooltip away. */}
+              {here && <div data-prose style={{ color: "var(--muted,#5a6373)", marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>}
+            </div>
+          );
+        })}
+      </div>
+      {j.next && <div style={{ fontSize: "0.76rem", marginTop: 4, fontWeight: 600 }}>{j.next}</div>}
+    </div>
+  );
+}
+
+/* ── Post-migration verification ──────────────────────────────────────────────
+   The Plan saying "Succeeded" means the copy finished. It says nothing about
+   whether the guest booted, kept its address, kept its disks, or — the one that
+   actually costs money — whether the source is switched off.
+
+   An unrun check is shown as unrun. A verification that could not reach the
+   source platform reports "not confirmed", never "powered off": the whole value
+   of this panel is that it can be believed. */
+function VerifyPanel({ planName, result, busy, onRun }) {
+  const loadedFor = useRef(null);
+  useEffect(() => {
+    if (loadedFor.current !== planName) { loadedFor.current = planName; onRun(); }
+  }, [planName]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const TONE = {
+    pass:      { icon: "✓", color: "#16a34a" },
+    warn:      { icon: "⚠", color: "#b45309" },
+    fail:      { icon: "✖", color: "#dc2626" },
+    unchecked: { icon: "?", color: "#64748b" },
+  };
+  const VERDICT = {
+    passed:                 { color: "#16a34a", bg: "rgba(22,163,74,.08)", border: "rgba(22,163,74,.35)" },
+    "passed-with-warnings": { color: "#b45309", bg: "rgba(245,158,11,.08)", border: "rgba(245,158,11,.35)" },
+    incomplete:             { color: "#64748b", bg: "rgba(100,116,139,.08)", border: "rgba(100,116,139,.35)" },
+    failed:                 { color: "#dc2626", bg: "rgba(220,38,38,.08)", border: "rgba(220,38,38,.35)" },
+  };
+  const v = VERDICT[result?.verdict] || VERDICT.incomplete;
+
+  return (
+    <div style={{ marginTop: 7, padding: "9px 11px", borderRadius: 8, background: v.bg, border: `1px solid ${v.border}` }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <b style={{ color: v.color, fontSize: "0.79rem" }}>
+          {result ? `Verification — ${result.verdict?.replace(/-/g, " ")}` : "Verifying…"}
+        </b>
+        {result?.coverage && (
+          <span style={{ color: "var(--muted,#5a6373)", fontSize: "0.75rem" }}>
+            {result.coverage.ran} of {result.coverage.total} checks ran
+          </span>
+        )}
+        <button onClick={onRun} disabled={busy} style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 7,
+          border: "1px solid var(--border,#e4e8f1)", background: "transparent", color: "var(--muted,#5a6373)",
+          fontFamily: "inherit", fontSize: "0.75rem", fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "…" : "↻ Re-check"}
+        </button>
+      </div>
+      {result?.headline && <div style={{ fontSize: "0.78rem", marginTop: 3, fontWeight: 600 }}>{result.headline}</div>}
+      {result?.error && <div style={{ fontSize: "0.77rem", marginTop: 3, color: "#dc2626" }}>{result.error}</div>}
+
+      {(result?.vmChecks || []).map((vm) => (
+        <div key={vm.name} style={{ marginTop: 7, paddingTop: 6, borderTop: "1px solid var(--border,#e4e8f1)" }}>
+          <b style={{ fontSize: "0.78rem" }}>{vm.name}</b>
+          {vm.checks.map((c) => {
+            const t = TONE[c.state] || TONE.unchecked;
+            return (
+              <div key={c.id} style={{ display: "flex", gap: 7, marginTop: 3, fontSize: "0.76rem" }}>
+                <span aria-hidden style={{ color: t.color, fontWeight: 800 }}>{t.icon}</span>
+                <div>
+                  <span style={{ fontWeight: 600 }}>{c.label}</span>{" "}
+                  <span style={{ color: "var(--muted,#5a6373)" }}>{c.detail || c.why}</span>
+                  {c.action && <div style={{ marginTop: 1 }}>→ {c.action}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── The cutover stage ────────────────────────────────────────────────────────
    A warm migration stops here on purpose. The copy is done; the guest is still
    serving users; nothing else happens until someone says the guest may go down.
@@ -1198,7 +1302,7 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
           title={d.mode === "now" ? "Shut the guests down and finish the migration" : d.reason}
           style={{ ...btn(d.allowed && d.mode === "now" ? "#dc2626" : "#9ca3af"),
             cursor: d.allowed && d.mode === "now" ? btn().cursor : "not-allowed" }}>
-          ⏻ Cut over now
+          ⏻ Power off &amp; cut over now
         </button>
         {d.mode === "schedule" && (
           <button disabled={busy} onClick={() => onGo(d.at)} style={btn("#3d5afe")}>
@@ -1227,6 +1331,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [status, setStatus] = useState({});            // planName -> status
   const [rollback, setRollback] = useState(null);      // { planName, decision }
   const [cutovers, setCutovers] = useState({});        // planName -> cutover posture
+  const [verifs, setVerifs] = useState({});            // planName -> verification result
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [busy, setBusy] = useState(null);
   // The workbench is a three-step wizard: pick what moves, understand whether
@@ -1451,6 +1556,15 @@ function MigrationAgent({ clusters, activeCluster }) {
       const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/cutover`, at ? { at } : {});
       if (d.ok) { showToast(d.message || "Cutover set", "ok"); loadCutover(planName); refreshStatus([planName]); }
       else showToast(d.error || "Could not set the cutover", "err");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const runVerify = async (planName) => {
+    setBusy(planName);
+    try {
+      const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/verify`);
+      setVerifs((v) => ({ ...v, [planName]: d }));
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -1855,6 +1969,8 @@ function MigrationAgent({ clusters, activeCluster }) {
                   </button>
                 </div>
                 {(st.critical || []).map((c, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.76rem", marginTop: 4 }}>✖ {c}</div>)}
+                {/* Where this plan is, on the route this plan is actually on. */}
+                {st.journey && <Journey j={st.journey} />}
                 {st.gate && st.gate.required !== false && (
                   <div style={{ marginTop: 5, fontSize: "0.77rem", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                     <span style={{ color: st.gate.approved ? "var(--st-good)" : st.gate.state === "rejected" || st.gate.state === "cancelled" ? "var(--st-crit)" : "var(--st-warn)", fontWeight: 700 }}>
@@ -1935,6 +2051,20 @@ function MigrationAgent({ clusters, activeCluster }) {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* ── Post-migration verification ──────────────────────────
+                    "Succeeded" on a Plan describes the transfer, not the
+                    machine. Offered as soon as the plan succeeds, and run
+                    again on demand — the source being switched off is worth
+                    re-checking after someone has been near it. */}
+                {st.succeeded && (
+                  <VerifyPanel
+                    planName={p.planName}
+                    result={verifs[p.planName]}
+                    busy={busy === p.planName}
+                    onRun={() => runVerify(p.planName)}
+                  />
                 )}
 
                 {/* ── The cutover ──────────────────────────────────────────
