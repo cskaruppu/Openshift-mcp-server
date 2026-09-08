@@ -874,7 +874,19 @@ export function getProgressSamples(planName) { return _samples.get(planName) || 
  *            etaMinutes:{low:number,likely:number,high:number}|null,
  *            confidence:string, basis:string}}
  */
-export function liveEta(samples = [], { windowSize = 6 } = {}) {
+export function liveEta(samples = [], { windowSize = 6, awaitingCutover = false } = {}) {
+  // A warm precopy that has finished moves no bytes, and that is success, not a
+  // fault. Checked before anything else: the stall branch below cannot tell the
+  // two apart from byte counts alone, and calling this one "stalled" sends
+  // someone to debug a transfer pod that is doing exactly what it should.
+  if (awaitingCutover) {
+    const last = samples[samples.length - 1];
+    const percent = last?.total ? Math.min(100, Math.round((last.bytes / last.total) * 100)) : 100;
+    return {
+      state: "awaiting-cutover", mbps: null, percent, etaMinutes: null, confidence: "n/a",
+      basis: "The disks are copied. MTV is refreshing changed blocks while the guest keeps running, and waits for a cutover to be scheduled.",
+    };
+  }
   const total = samples[samples.length - 1]?.total || 0;
   const bytes = samples[samples.length - 1]?.bytes || 0;
   const percent = total ? Math.min(100, Math.round((bytes / total) * 100)) : 0;
@@ -892,15 +904,19 @@ export function liveEta(samples = [], { windowSize = 6 } = {}) {
   if (secs <= 0) {
     return { state: "measuring", mbps: null, percent, etaMinutes: null, confidence: "none", basis: "No elapsed time between readings yet." };
   }
+  // Completion is checked BEFORE the stall: a transfer that has copied every
+  // byte also moves no bytes, and the stall branch below cannot tell the two
+  // apart. Checked the other way round — as it was — a finished migration
+  // reported itself stalled for as long as anyone kept polling it.
+  if (bytes >= total && total > 0) {
+    return { state: "complete", mbps: null, percent: 100, etaMinutes: { low: 0, likely: 0, high: 0 }, confidence: "measured", basis: "Transfer complete." };
+  }
   if (moved <= 0) {
     const stalledFor = Math.round(secs / 60);
     return {
       state: "stalled", mbps: 0, percent, etaMinutes: null, confidence: "n/a",
       basis: `No data has moved for about ${stalledFor} minute${stalledFor === 1 ? "" : "s"}. Check the transfer pod and the source platform before trusting any estimate.`,
     };
-  }
-  if (bytes >= total && total > 0) {
-    return { state: "complete", mbps: null, percent: 100, etaMinutes: { low: 0, likely: 0, high: 0 }, confidence: "measured", basis: "Transfer complete." };
   }
 
   const mbps = moved / 1048576 / secs;                       // MiB/s, right now
@@ -1821,11 +1837,15 @@ export async function planStatusWithEta(planName) {
   if (!status.found) return status;
   const snap = progressSnapshot(status);
   if (status.executing || snap.bytes > 0) recordProgressSample(planName, snap);
-  const eta = liveEta(getProgressSamples(planName));
+  // Read the phase before judging the byte counts — see liveEta.
+  const cut = cutoverState(status);
+  const eta = liveEta(getProgressSamples(planName), { awaitingCutover: cut.awaitingCutover });
   return {
     ...status,
     progress: { bytes: snap.bytes, total: snap.total, activeVMs: snap.activeVMs },
     eta,
+    // Waiting on a person, not on the network. The console needs to say which.
+    cutover: cut,
     // The forecast, judged against what is actually happening.
     vsEstimate: estimateVsActual(status.planned, eta),
   };
@@ -2122,6 +2142,234 @@ export async function startMigration(planName, { cutover = null, actor = "operat
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Cutover — the outage, scheduled into the window that was approved
+// ---------------------------------------------------------------------------
+/**
+ * A warm migration does not finish on its own, and that is the point of it.
+ *
+ * MTV copies the disks while the guest keeps serving users, then holds at the
+ * last snapshot refreshing deltas and waits. Nothing else happens until a human
+ * names the moment the guest is allowed to go down. In the plan's own words the
+ * VM sits in "CopyingPaused", and the console read that as a stalled transfer —
+ * which is exactly backwards. The copy has succeeded; it is waiting for us.
+ *
+ * So the cutover is treated as what it actually is: the outage. It is the thing
+ * the change request asked the board to approve, so it happens inside the window
+ * the board approved and the ticket records that it did. Nobody has to remember
+ * to click a button at 2am, and nobody can take a production VM down at 3pm
+ * because a console offered them a button that was always enabled.
+ */
+
+/** vSphere/Forklift phases that mean "precopy done, waiting to be told". */
+const AWAITING_CUTOVER = /^(copyingpaused|copying_paused|precopy)$/i;
+
+/**
+ * Is this plan waiting on us rather than on the network? Pure.
+ *
+ * Only warm plans can be in this state. A cold plan that has stopped moving
+ * bytes really has stopped, and must keep saying so.
+ */
+export function cutoverState(status = {}) {
+  if (!status.warm) return { awaitingCutover: false, vms: [], reason: "Cold migration — there is no cutover step to wait for." };
+  const vms = (status.vms || []).filter((v) => AWAITING_CUTOVER.test(String(v.phase || "")));
+  if (!vms.length) return { awaitingCutover: false, vms: [], reason: null };
+  return {
+    awaitingCutover: true,
+    vms: vms.map((v) => ({ name: v.name, phase: v.phase, since: v.started || null })),
+    reason: `${vms.length === 1 ? "The disk copy is" : "The disk copies are"} done and MTV is holding at the last snapshot, refreshing changes while the ${vms.length === 1 ? "guest keeps" : "guests keep"} running. Nothing more moves until a cutover is scheduled.`,
+  };
+}
+
+/**
+ * The approved window, read off the change record. Pure.
+ *
+ * ServiceNow stores these as "YYYY-MM-DD HH:MM:SS" in the instance's own
+ * timezone, which is a genuine ambiguity rather than a parsing bug — so an
+ * unparseable or absent window is reported as absent, never as "open". A gate
+ * that fails open is not a gate.
+ */
+export function cutoverWindow(record = {}, now = Date.now()) {
+  const parse = (v) => {
+    if (!v) return null;
+    const t = Date.parse(String(v).trim().replace(" ", "T") + (/[Zz]|[+-]\d\d:?\d\d$/.test(String(v)) ? "" : "Z"));
+    return Number.isFinite(t) ? t : null;
+  };
+  const start = parse(record.start_date), end = parse(record.end_date);
+  if (!start && !end) {
+    return { known: false, start: null, end: null, open: false,
+      note: "The change record carries no planned start or end, so there is no window to check the cutover against." };
+  }
+  const open = (!start || now >= start) && (!end || now <= end);
+  const mins = (a, b) => Math.round((a - b) / 60000);
+  return {
+    known: true,
+    start: start ? new Date(start).toISOString() : null,
+    end: end ? new Date(end).toISOString() : null,
+    open,
+    opensInMinutes: start && now < start ? mins(start, now) : null,
+    closesInMinutes: end && open ? mins(end, now) : null,
+    expired: !!(end && now > end),
+    note: open
+      ? end ? `Inside the approved window; it closes in ${mins(end, now)} min.` : "Inside the approved window."
+      : start && now < start ? `The approved window opens in ${mins(start, now)} min.`
+      : "The approved window has closed. Ask the change board to extend it or raise a new change request.",
+  };
+}
+
+/**
+ * May we cut over, and when? Pure, so the rule is tested rather than asserted.
+ *
+ * Three answers, never two: cut over now, schedule it for when the window
+ * opens, or refuse. The middle one matters — it is the difference between a
+ * tool that makes someone sit up until midnight and one that does not.
+ */
+export function cutoverDecision({ gate, window: win, state, now = Date.now() } = {}) {
+  const no = (reason, fix) => ({ allowed: false, mode: "blocked", at: null, reason, fix });
+
+  if (!state?.awaitingCutover) {
+    return no("This plan is not waiting for a cutover.",
+      "A cutover applies to a warm migration once its precopy is done.");
+  }
+  if (gate?.required !== false && !gate?.approved) {
+    return no(
+      gate?.number ? `${gate.number} is ${gate.state} — the cutover is the outage this change request asks to approve.`
+        : "No change request has been raised for this plan.",
+      gate?.number ? "Approve it in ServiceNow, then re-check the gate here." : "Raise the change request first.",
+    );
+  }
+  // Approved, but the board named a window and we are not in it. Schedule
+  // rather than refuse: MTV will cut over on its own at the timestamp.
+  if (win?.known && !win.open) {
+    if (win.expired) {
+      return no("The approved change window has already closed.",
+        "Ask the change board to extend the window, or raise a new change request for the cutover.");
+    }
+    return {
+      allowed: true, mode: "schedule", at: win.start,
+      reason: `Approved, but the window opens in ${win.opensInMinutes} min. MTV will cut over by itself at the start of the window.`,
+      fix: null,
+    };
+  }
+  return {
+    allowed: true, mode: "now", at: new Date(now).toISOString(),
+    reason: win?.known ? win.note : "Approved. No window is recorded on the change request, so the cutover runs when you ask for it.",
+    fix: null,
+  };
+}
+
+/** The Migration that is actually running this plan — the newest, not the first. */
+export async function activeMigration(planName) {
+  const list = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/migrations`).catch(() => ({ items: [] }));
+  const mine = (list.items || [])
+    .filter((m) => m.spec?.plan?.name === planName)
+    .sort((a, b) => String(b.metadata?.creationTimestamp || "").localeCompare(String(a.metadata?.creationTimestamp || "")));
+  return mine[0] || null;
+}
+
+/**
+ * Everything the console needs to decide, in one read: is it waiting, what did
+ * the board approve, and what may we do about it.
+ */
+export async function cutoverPosture(planName) {
+  const status = await planStatus(planName);
+  if (!status.found) return { found: false, planName };
+  const state = cutoverState(status);
+  let record = null, lookupError = null;
+  if (state.awaitingCutover && status.gate?.sysId) {
+    try {
+      const { getRecord } = await import("../utils/servicenow-client.js");
+      const cr = await getRecord("change_request", status.gate.sysId);
+      record = cr?.result || cr || null;
+    } catch (e) {
+      // An unreachable ServiceNow is not an open window. Say which it is.
+      lookupError = `Could not read the change window from ServiceNow: ${e.message}`;
+    }
+  }
+  const win = record ? cutoverWindow(record) : { known: false, open: false, note: lookupError || "No change record to read a window from." };
+  const mig = state.awaitingCutover ? await activeMigration(planName) : null;
+  return {
+    found: true, planName, state, gate: status.gate, window: win,
+    scheduled: mig?.spec?.cutover || null,
+    migrationName: mig?.metadata?.name || null,
+    decision: cutoverDecision({ gate: status.gate, window: win, state }),
+  };
+}
+
+/**
+ * Schedule the cutover by stamping the moment onto the running Migration.
+ *
+ * spec.cutover is how Forklift is told; setting it in the future is a genuine
+ * schedule, not a timer in our process — so this survives the console being
+ * closed, and the browser being on a different continent to the cluster.
+ */
+export async function scheduleCutover(planName, { at = null, actor = "operator", cluster = "local" } = {}) {
+  const posture = await cutoverPosture(planName);
+  if (!posture.found) return { ok: false, error: `Plan "${planName}" not found.` };
+
+  const d = posture.decision;
+  // An explicit time from the operator is still checked against the window —
+  // the console offering a control is not the same as the board approving it.
+  const requested = at ? Date.parse(at) : null;
+  if (at && !Number.isFinite(requested)) return { ok: false, error: `"${at}" is not a time I can read.`, posture };
+  if (at && posture.window?.known && posture.window.end && requested > Date.parse(posture.window.end)) {
+    return { ok: false, error: "That moment is after the approved change window closes.", posture };
+  }
+  if (!d.allowed) return { ok: false, error: d.reason, fix: d.fix, posture };
+
+  const when = at ? new Date(requested).toISOString() : d.at;
+  if (!posture.migrationName) {
+    return { ok: false, error: "No running Migration was found for this plan, so there is nothing to cut over.", posture };
+  }
+
+  try {
+    await ocpPatch(
+      `/${FORKLIFT}/namespaces/${MTV_NS}/migrations/${posture.migrationName}`,
+      { spec: { cutover: when } },
+      "application/merge-patch+json",
+    );
+  } catch (e) {
+    return { ok: false, error: `Could not set the cutover on migration/${posture.migrationName}: ${e.message}`, posture };
+  }
+
+  await recordChange({
+    cluster, namespace: MTV_NS, resourceKind: "migration", resourceName: posture.migrationName,
+    action: "schedule_vm_cutover",
+    command: `oc patch migration ${posture.migrationName} -n ${MTV_NS} --type=merge -p '{"spec":{"cutover":"${when}"}}'`,
+    // This one takes production VMs down. It is not a low-risk annotation.
+    risk: "high", approvedBy: posture.gate?.number || actor,
+    revertCommand: `oc patch migration ${posture.migrationName} -n ${MTV_NS} --type=json -p '[{"op":"remove","path":"/spec/cutover"}]'  # only before it fires`,
+  }).catch(() => {});
+
+  // The ticket is the record, not this console. Written after the patch, so a
+  // work note never claims something that did not happen.
+  let noted = false;
+  if (posture.gate?.sysId) {
+    try {
+      const { updateRecord } = await import("../utils/servicenow-client.js");
+      const names = posture.state.vms.map((v) => v.name).join(", ");
+      await updateRecord("change_request", posture.gate.sysId, {
+        work_notes: [
+          `[TCS Agentic AI] Cutover ${d.mode === "now" ? "started" : "scheduled"} for ${when} by ${actor}.`,
+          `Plan      : ${planName}`,
+          `Machines  : ${names}`,
+          `Migration : ${posture.migrationName}`,
+          "The disk copy is already complete. At cutover the guest is shut down on the source, the final changed blocks are copied, and the VM is started on OpenShift Virtualization.",
+        ].join("\n"),
+      });
+      noted = true;
+    } catch { /* the cutover is set; a missing work note must not undo it */ }
+  }
+
+  return {
+    ok: true, planName, migrationName: posture.migrationName, cutover: when,
+    mode: d.mode, workNoteAdded: noted,
+    message: d.mode === "now"
+      ? "Cutover started. The guests shut down, the final changes copy, and the VMs start on OpenShift."
+      : `Cutover scheduled for ${new Date(when).toLocaleString()}. MTV performs it without anyone being present.`,
+  };
 }
 
 // ---------------------------------------------------------------------------

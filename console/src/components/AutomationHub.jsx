@@ -1135,6 +1135,84 @@ function SnowAgent({ clusters = [], activeCluster }) {
    rather than as a chat card: you pick six VMs out of forty, not one VM out of
    a sentence. The gate chain mirrors the VM Request card so an operator who
    knows one already knows the other.                                        */
+/* ── The cutover stage ────────────────────────────────────────────────────────
+   A warm migration stops here on purpose. The copy is done; the guest is still
+   serving users; nothing else happens until someone says the guest may go down.
+
+   Every other tool in this space puts a "Cutover" button here and lets you press
+   it whenever. That is how a VM gets taken down at 3pm on a Tuesday. The outage
+   is what the change request asked the board to approve, so this panel answers
+   in that order — what is waiting, what was approved, and only then what may be
+   done — and the two things it offers are "now" and "when the window opens",
+   because scheduling is what stops someone having to sit up until midnight. */
+function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
+  const loadedFor = useRef(null);
+  useEffect(() => {
+    if (loadedFor.current !== planName) { loadedFor.current = planName; onLoad(); }
+  }, [planName]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const box = { marginTop: 7, padding: "9px 11px", borderRadius: 8,
+    background: "rgba(245,158,11,.07)", border: "1px solid rgba(245,158,11,.35)" };
+  if (!posture) return <div style={{ ...box, fontSize: "0.77rem", color: "var(--muted,#5a6373)" }}>Reading the approved change window…</div>;
+
+  const { state, window: win, decision: d, scheduled } = posture;
+  const when = (t) => (t ? new Date(t).toLocaleString() : "—");
+  const btn = (bg) => ({ padding: "5px 13px", borderRadius: 8, border: "none", fontWeight: 700,
+    fontSize: "0.79rem", fontFamily: "inherit", cursor: busy ? "wait" : "pointer", background: bg, color: "#fff" });
+
+  // Already stamped on the Migration: MTV will do it with nobody present, so
+  // the panel stops asking for anything and just says when.
+  if (scheduled) {
+    return (
+      <div style={{ ...box, background: "rgba(14,165,160,.07)", borderColor: "rgba(14,165,160,.35)" }}>
+        <b style={{ color: "#0ea5a0", fontSize: "0.79rem" }}>◷ Cutover scheduled — {when(scheduled)}</b>
+        <div data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>
+          MTV performs the cutover at that moment on its own. Nobody needs to be watching this screen, and the
+          change record carries the same timestamp.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={box}>
+      <b style={{ color: "#b45309", fontSize: "0.79rem" }}>
+        ◷ Waiting for cutover · {state.vms.map((v) => v.name).join(", ")}
+      </b>
+      <div data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{state.reason}</div>
+
+      {/* What the board approved. Stated even when it is nothing, because
+          "no window recorded" and "outside the window" are different facts and
+          must never look the same. */}
+      <div style={{ fontSize: "0.76rem", marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
+        <span style={{ fontWeight: 700, color: win.known ? (win.open ? "#16a34a" : "#b45309") : "#64748b" }}>
+          {win.known ? (win.open ? "✓ Inside the approved window" : win.expired ? "✖ Window closed" : "◷ Window not open yet") : "• No window on the change record"}
+        </span>
+        {win.known && <span style={{ color: "var(--muted,#5a6373)" }}>{when(win.start)} → {when(win.end)}</span>}
+      </div>
+      <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 2 }}>{d.reason}</div>
+      {d.fix && <div style={{ fontSize: "0.76rem", marginTop: 2 }}>→ {d.fix}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button disabled={busy || !d.allowed || d.mode !== "now"} onClick={() => onGo(null)}
+          title={d.mode === "now" ? "Shut the guests down and finish the migration" : d.reason}
+          style={{ ...btn(d.allowed && d.mode === "now" ? "#dc2626" : "#9ca3af"),
+            cursor: d.allowed && d.mode === "now" ? btn().cursor : "not-allowed" }}>
+          ⏻ Cut over now
+        </button>
+        {d.mode === "schedule" && (
+          <button disabled={busy} onClick={() => onGo(d.at)} style={btn("#3d5afe")}>
+            ◷ Schedule for {when(d.at)}
+          </button>
+        )}
+        <span data-prose style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>
+          The guest shuts down, the last changed blocks copy, the VM starts on OpenShift. Until then it keeps serving users.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function MigrationAgent({ clusters, activeCluster }) {
   const [cluster, setCluster] = useState(activeCluster || "local");
   const [ready, setReady] = useState(null);            // readiness report
@@ -1148,6 +1226,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [plans, setPlans] = useState([]);              // created plans
   const [status, setStatus] = useState({});            // planName -> status
   const [rollback, setRollback] = useState(null);      // { planName, decision }
+  const [cutovers, setCutovers] = useState({});        // planName -> cutover posture
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [busy, setBusy] = useState(null);
   // The workbench is a three-step wizard: pick what moves, understand whether
@@ -1344,6 +1423,34 @@ function MigrationAgent({ clusters, activeCluster }) {
       const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/migrate`, {});
       if (d.ok) { showToast(`Migration started for ${planName}`, "ok"); refreshStatus([planName]); }
       else showToast(d.error || "Could not start", "err");
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  // Reads where the cutover stands: whether the plan is waiting, what window
+  // the change board approved, and whether we are inside it. Read-only.
+  const loadCutover = async (planName) => {
+    try {
+      const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/cutover`);
+      setCutovers((c) => ({ ...c, [planName]: d }));
+    } catch (e) { showToast(e.message, "err"); }
+  };
+
+  // The outage. Confirmed in the words of what actually happens, not "are you
+  // sure?" — and the server checks the window again regardless of what the
+  // console offered, because a UI state is not an authorisation.
+  const doCutover = async (planName, at) => {
+    const posture = cutovers[planName];
+    const names = (posture?.state?.vms || []).map((v) => v.name).join(", ") || "the migrated VM(s)";
+    const when = at ? `at ${new Date(at).toLocaleString()}` : "now";
+    if (!window.confirm(
+      `Cut over ${planName} ${when}?\n\n${names} will be shut down on VMware, the final changed blocks copied, and the VM(s) started on OpenShift Virtualization.\n\nThis is the outage ${posture?.gate?.number || "the change request"} approved.`
+    )) return;
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/cutover`, at ? { at } : {});
+      if (d.ok) { showToast(d.message || "Cutover set", "ok"); loadCutover(planName); refreshStatus([planName]); }
+      else showToast(d.error || "Could not set the cutover", "err");
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -1768,11 +1875,12 @@ function MigrationAgent({ clusters, activeCluster }) {
                     than quoting a number that keeps growing. */}
                 {st.eta && st.eta.state !== "measuring" && (
                   <div style={{ marginTop: 7, padding: "7px 9px", borderRadius: 8,
-                    background: st.eta.state === "stalled" ? "rgba(220,38,38,.07)" : "rgba(14,165,160,.07)",
-                    border: `1px solid ${st.eta.state === "stalled" ? "rgba(220,38,38,.3)" : "rgba(14,165,160,.3)"}` }}>
+                    background: st.eta.state === "stalled" ? "rgba(220,38,38,.07)" : st.eta.state === "awaiting-cutover" ? "rgba(245,158,11,.09)" : "rgba(14,165,160,.07)",
+                    border: `1px solid ${st.eta.state === "stalled" ? "rgba(220,38,38,.3)" : st.eta.state === "awaiting-cutover" ? "rgba(245,158,11,.4)" : "rgba(14,165,160,.3)"}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: "0.79rem" }}>
-                      <b style={{ color: st.eta.state === "stalled" ? "#dc2626" : "#0ea5a0" }}>
+                      <b style={{ color: st.eta.state === "stalled" ? "#dc2626" : st.eta.state === "awaiting-cutover" ? "#b45309" : "#0ea5a0" }}>
                         {st.eta.state === "stalled" ? "⚠ Transfer stalled"
+                          : st.eta.state === "awaiting-cutover" ? "◷ Copied — waiting for cutover"
                           : st.eta.state === "complete" ? "✅ Transfer complete"
                           : `⏱ About ${st.eta.etaMinutes.likely} min remaining`}
                       </b>
@@ -1827,6 +1935,23 @@ function MigrationAgent({ clusters, activeCluster }) {
                       </div>
                     )}
                   </div>
+                )}
+
+                {/* ── The cutover ──────────────────────────────────────────
+                    The second gate, and the one that costs an outage. The
+                    disks moved at "Migrate"; this is where the guests go
+                    down. It is deliberately not a button that is always
+                    available: what is offered here depends on what the change
+                    board approved and on whether we are inside the window
+                    they approved it for. */}
+                {st.cutover?.awaitingCutover && (
+                  <CutoverPanel
+                    planName={p.planName}
+                    posture={cutovers[p.planName]}
+                    busy={busy === p.planName}
+                    onLoad={() => loadCutover(p.planName)}
+                    onGo={(at) => doCutover(p.planName, at)}
+                  />
                 )}
                 {(st.vms || []).map((v) => (
                   <div key={v.name} style={{ marginTop: 6, fontSize: "0.77rem" }}>

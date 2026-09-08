@@ -1152,3 +1152,90 @@ test("the forecast is stamped on the Plan, so a refresh does not lose it", async
   const old = buildPlanManifest({ ...g, planned: undefined }, { targetProvider: "t" }).metadata.annotations;
   assert.equal(old["tcs.agentic-ai/planned-mbps"], undefined);
 });
+
+// ---------------------------------------------------------------------------
+// Cutover — the second gate, and the one that costs an outage
+// ---------------------------------------------------------------------------
+test("a finished warm precopy is not a stalled transfer", async () => {
+  const { cutoverState, liveEta } = await import("../../src/services/vm-migration.js");
+
+  const warm = { warm: true, vms: [{ name: "app-01", phase: "CopyingPaused", started: "2026-09-08T12:00:00Z" }] };
+  const s = cutoverState(warm);
+  assert.equal(s.awaitingCutover, true);
+  assert.equal(s.vms[0].name, "app-01");
+
+  // The byte counts alone are indistinguishable from a stall: same total, no
+  // movement. Only the phase separates success from a broken transfer pod.
+  const flat = [{ at: 0, bytes: 21474836480, total: 21474836480 }, { at: 600000, bytes: 21474836480, total: 21474836480 }];
+  assert.equal(liveEta(flat).state, "complete", "bytes==total reads as complete");
+  const partial = [{ at: 0, bytes: 1e9, total: 2e9 }, { at: 600000, bytes: 1e9, total: 2e9 }];
+  assert.equal(liveEta(partial).state, "stalled", "a cold transfer that stops really has stopped");
+  assert.equal(liveEta(partial, { awaitingCutover: true }).state, "awaiting-cutover",
+    "the same numbers, in a paused warm precopy, are not a fault");
+
+  // A cold plan can never be awaiting cutover, whatever its phases say.
+  assert.equal(cutoverState({ warm: false, vms: [{ name: "a", phase: "CopyingPaused" }] }).awaitingCutover, false);
+  assert.equal(cutoverState({ warm: true, vms: [{ name: "a", phase: "DiskTransfer" }] }).awaitingCutover, false);
+});
+
+test("the change window is read from the record, and an unknown window is never open", async () => {
+  const { cutoverWindow } = await import("../../src/services/vm-migration.js");
+  const at = (s) => Date.parse(s);
+
+  const w = cutoverWindow({ start_date: "2026-09-08 22:00:00", end_date: "2026-09-09 02:00:00" }, at("2026-09-08T23:00:00Z"));
+  assert.equal(w.known, true);
+  assert.equal(w.open, true);
+  assert.equal(w.closesInMinutes, 180);
+
+  const early = cutoverWindow({ start_date: "2026-09-08 22:00:00", end_date: "2026-09-09 02:00:00" }, at("2026-09-08T21:30:00Z"));
+  assert.equal(early.open, false);
+  assert.equal(early.opensInMinutes, 30);
+
+  const late = cutoverWindow({ start_date: "2026-09-08 22:00:00", end_date: "2026-09-09 02:00:00" }, at("2026-09-09T03:00:00Z"));
+  assert.equal(late.open, false);
+  assert.equal(late.expired, true);
+
+  // The one that matters: no window, or an unreadable one, is reported as
+  // unknown — never as open. A gate that fails open is not a gate.
+  assert.equal(cutoverWindow({}).known, false);
+  assert.equal(cutoverWindow({}).open, false);
+  assert.equal(cutoverWindow({ start_date: "not a date" }).known, false);
+  assert.equal(cutoverWindow({ start_date: "not a date" }).open, false);
+});
+
+test("cutover is refused without approval, scheduled outside the window, allowed inside it", async () => {
+  const { cutoverDecision } = await import("../../src/services/vm-migration.js");
+  const waiting = { awaitingCutover: true, vms: [{ name: "a" }] };
+  const approved = { required: true, approved: true, number: "CHG0030074", state: "approved" };
+  const now = Date.parse("2026-09-08T21:30:00Z");
+
+  // Not waiting: nothing to do.
+  assert.equal(cutoverDecision({ gate: approved, state: { awaitingCutover: false } }).allowed, false);
+
+  // Waiting, but nobody has approved the outage.
+  const unapproved = cutoverDecision({ gate: { required: true, approved: false, number: "CHG0030074", state: "submitted" }, state: waiting });
+  assert.equal(unapproved.allowed, false);
+  assert.match(unapproved.reason, /CHG0030074 is submitted/);
+
+  // Approved, inside the window: go.
+  const open = { known: true, open: true, start: null, end: null, note: "Inside the approved window." };
+  assert.equal(cutoverDecision({ gate: approved, window: open, state: waiting, now }).mode, "now");
+
+  // Approved, before the window: schedule it rather than refuse — that is the
+  // difference between a tool someone has to sit up for and one they do not.
+  const soon = { known: true, open: false, expired: false, start: "2026-09-08T22:00:00.000Z", opensInMinutes: 30 };
+  const sched = cutoverDecision({ gate: approved, window: soon, state: waiting, now });
+  assert.equal(sched.allowed, true);
+  assert.equal(sched.mode, "schedule");
+  assert.equal(sched.at, "2026-09-08T22:00:00.000Z");
+
+  // Approved, but the window has been and gone: refuse, and say who can fix it.
+  const gone = cutoverDecision({ gate: approved, window: { known: true, open: false, expired: true }, state: waiting, now });
+  assert.equal(gone.allowed, false);
+  assert.match(gone.fix, /change board|new change request/i);
+
+  // Approval switched off deliberately still cuts over; an unknown window is
+  // not treated as a closed one, only as unrecorded.
+  const off = cutoverDecision({ gate: { required: false, approved: false }, window: { known: false, open: false }, state: waiting, now });
+  assert.equal(off.mode, "now");
+});

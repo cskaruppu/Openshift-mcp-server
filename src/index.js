@@ -3084,6 +3084,29 @@ async function startSSE() {
         }
       }
 
+      // The cutover: where the plan stands, what the board approved, and what
+      // may be done about it. Read-only — asked before anything goes down.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/cutover$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.cutoverPosture(m[1]));
+            return sendJson(res, 200, out ?? { found: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+        // The second gate. The disks moved at /migrate; the guests go down here.
+        if (m && req.method === "POST") {
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          try {
+            const body = await readJsonBody(req);
+            const out = await withClusterContext(url, async () => mig.scheduleCutover(m[1], {
+              at: body.at || null, actor: req.user?.name || "operator", cluster,
+            }));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
       // What rolling back would mean right now — asked before it is done.
       {
         const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/rollback-preview$/);
