@@ -1880,6 +1880,15 @@ export async function planStatusWithEta(planName) {
     }),
     // The forecast, judged against what is actually happening.
     vsEstimate: estimateVsActual(status.planned, eta),
+    // The APPROVED OUTAGE, judged against what is actually happening — a
+    // different question from the one above, and the one with a change board
+    // attached to it. Read from the window last seen on the change request, so
+    // polling status costs no ServiceNow call.
+    windowFit: (() => {
+      const need = measuredOutage(status, eta);
+      const w = _lastWindow.get(planName);
+      return need && w ? windowFit({ win: w, neededMinutes: need.minutes.high }) : null;
+    })(),
   };
 }
 
@@ -2018,13 +2027,18 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   // they actually need: how long these machines are down, not only how long the
   // copy runs — and computed from THIS plan's footprint, not the wave's.
   const est = await estimatePlan(plan).catch(() => null);
+  // Sized by strategy, because the two are not the same outage: a cold
+  // migration is down for the whole copy, a warm one only for the cutover.
+  const proposed = proposeWindow({ est, warm });
   const window = est
     ? [
         `Data to move       : ${est.totalGiB} GiB`,
         `Estimated transfer : ${est.wallClockMinutes.likely} min (${est.wallClockMinutes.low}-${est.wallClockMinutes.high})`,
         `Estimated downtime : ${est.downtimeMinutes.likely} min (${est.downtimeMinutes.low}-${est.downtimeMinutes.high})`,
         `Basis              : ${est.throughputMBps} MiB/s ${est.measured ? `measured from ${est.samples} completed migration(s) on this cluster` : "(conservative default — this cluster has completed no migrations yet)"}. ${est.note || ""}`.trim(),
-      ].join("\n")
+        proposed ? `Requested window   : ${proposed.minutes} min. ${proposed.basis}` : null,
+        proposed ? "                     The start below is a proposal — move it to suit, and the scheduled cutover follows wherever you put it." : null,
+      ].filter(Boolean).join("\n")
     : "Transfer time will be measured live once the migration starts.";
 
   let cr;
@@ -2071,6 +2085,9 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
         "Power the source VMs back on in vCenter. They were never deleted.",
       ].join("\n"),
       testPlan: `oc get vm -n ${plan.spec?.targetNamespace || "<target>"}; confirm each VM boots, has its IP, and its application answers.`,
+      // A change request with no window cannot be scheduled against, and a
+      // cutover cannot be gated on a window that was never asked for.
+      ...(proposed ? { startDate: proposed.snowStart, endDate: proposed.snowEnd } : {}),
     });
   } catch (e) {
     return { ok: false, error: `Could not raise the change request: ${e.message}` };
@@ -2122,8 +2139,13 @@ export async function checkMigrationApproval(planName) {
   const next = approvalGate({ metadata: { annotations: {
     [CR_ANN.number]: gate.number, [CR_ANN.sysId]: gate.sysId || "", [CR_ANN.state]: verdict,
   } } });
+  // The record is already in hand, so this is the cheapest place to keep the
+  // scheduled cutover honest with it: follow the window if the board moved it,
+  // and warn them if what we are now measuring no longer fits what they
+  // approved. Failing here must never turn an approval check into an error.
+  const reconciled = await reconcileCutoverWindow(planName, { record }).catch(() => null);
   return {
-    ok: true, gate: next,
+    ok: true, gate: next, reconciled,
     detail: { number: gate.number, approval: record.approval || null, state: record.state || null },
     note: next.next,
   };
@@ -2292,6 +2314,126 @@ export function cutoverDecision({ gate, window: win, state, now = Date.now() } =
   };
 }
 
+/**
+ * The window to ask the change board for. Pure.
+ *
+ * The distinction that makes this right, and that is easy to get wrong: for a
+ * COLD migration the transfer IS the outage, so the window has to cover the
+ * whole copy. For a WARM one the copy happens while the guest serves users and
+ * only the cutover is downtime — so asking for a window the length of the
+ * transfer asks the board to approve an outage twenty times longer than the one
+ * that will happen, and sets a window that closes before the precopy has even
+ * finished on a large VM.
+ *
+ * The start is a PROPOSAL. The board moves it whenever it likes; the drift
+ * check below follows wherever they put it.
+ */
+export function proposeWindow({ est, warm, now = Date.now(), leadHours = null } = {}) {
+  if (!est) return null;
+  const lead = leadHours ?? Number(process.env.MIGRATION_CR_LEAD_HOURS ?? 24);
+  // The high end, not the likely one: a window sized on the median estimate is
+  // one the work overruns half the time.
+  const minutes = Math.max(15, Math.ceil(warm ? est.downtimeMinutes.high : est.wallClockMinutes.high));
+  // Rounded up to the next quarter hour — a change window starting at 22:07 is
+  // a machine talking to a person.
+  const start = new Date(Math.ceil((now + lead * 3600000) / 900000) * 900000);
+  const end = new Date(start.getTime() + minutes * 60000);
+  return {
+    start: start.toISOString(), end: end.toISOString(), minutes,
+    // ServiceNow wants "YYYY-MM-DD HH:MM:SS" in UTC.
+    snowStart: start.toISOString().slice(0, 19).replace("T", " "),
+    snowEnd: end.toISOString().slice(0, 19).replace("T", " "),
+    basis: warm
+      ? `The guest keeps running while its disks copy (about ${est.wallClockMinutes.likely} min), so the window covers the cutover only — ${minutes} min at the high end of the estimate.`
+      : `A cold migration powers the guest off for the whole copy, so the window covers all of it — ${minutes} min at the high end of the estimate.`,
+  };
+}
+
+/**
+ * Has the change board moved the window out from under a scheduled cutover?
+ * Pure.
+ *
+ * A cutover stamped when the window said 22:00 fires at 22:00 even after the
+ * board pushes the change to 02:00 — outside the window they approved, on a
+ * decision made before they moved it. This is the read that catches it.
+ */
+export function windowDrift(stamped, win, now = Date.now(), toleranceMs = 60000) {
+  if (!stamped) return { drifted: false, reason: "No cutover is scheduled." };
+  const at = Date.parse(stamped);
+  if (!Number.isFinite(at)) return { drifted: false, reason: "The scheduled cutover is not a time that can be read." };
+  if (at <= now) return { drifted: false, reason: "The scheduled cutover has already passed — it is not re-stamped." };
+  if (!win?.known || !win.start) return { drifted: false, reason: "The change record carries no window to reconcile against." };
+
+  const start = Date.parse(win.start);
+  const end = win.end ? Date.parse(win.end) : null;
+  const outside = at < start - toleranceMs || (end && at > end);
+  if (!outside) return { drifted: false, reason: "The scheduled cutover is inside the approved window." };
+
+  return {
+    drifted: true, from: new Date(at).toISOString(), to: win.start,
+    reason: at < start
+      ? `The cutover is scheduled for ${new Date(at).toISOString()}, before the approved window opens at ${win.start}.`
+      : `The cutover is scheduled for ${new Date(at).toISOString()}, after the approved window closes at ${win.end}.`,
+  };
+}
+
+/**
+ * Does the outage the board approved still fit what we are now measuring? Pure.
+ *
+ * The window was sized from an estimate. Once bytes are moving we are no longer
+ * estimating — and the useful moment to learn the plan was wrong is BEFORE the
+ * window opens, while somebody can still extend it or cut the wave down, not
+ * halfway through an overrun.
+ */
+export function windowFit({ win, approvedMinutes = null, neededMinutes = null } = {}) {
+  const approved = approvedMinutes ?? (win?.known && win.start && win.end
+    ? Math.round((Date.parse(win.end) - Date.parse(win.start)) / 60000) : null);
+  if (approved == null || neededMinutes == null) {
+    return { known: false, fits: null, note: "Not enough measured to judge the window yet." };
+  }
+  const fits = neededMinutes <= approved;
+  return {
+    known: true, fits, approvedMinutes: approved, neededMinutes,
+    overrunMinutes: fits ? 0 : neededMinutes - approved,
+    note: fits
+      ? `The approved ${approved}-minute window still covers the ${neededMinutes} min now measured.`
+      : `The approved window is ${approved} min. At the rate now being measured the outage needs about ${neededMinutes} min — ${neededMinutes - approved} min more than was approved.`,
+    action: fits ? null : "Ask the change board to extend the window, or take fewer machines in this wave.",
+  };
+}
+
+/**
+ * How long the outage now looks, from the rate this transfer is ACTUALLY
+ * achieving rather than the one the estimate assumed.
+ *
+ * This is the whole point of measuring during a warm precopy. The copy runs for
+ * hours against this source, this network and this storage, and tells us what
+ * they really do. The cutover — the final delta plus the per-VM shutdown and
+ * start — is then costed at that measured rate instead of at the default the
+ * change request was sized with.
+ *
+ * Returns null while there is nothing measured, rather than a number dressed up
+ * as one.
+ */
+export function measuredOutage(status = {}, live = null) {
+  if (!live || live.state !== "transferring" || !live.mbps) return null;
+  const vms = (status.vms || []).map((v) => ({
+    name: v.name,
+    diskGiB: v.diskGiB || (status.totalGiB && status.vmCount ? status.totalGiB / status.vmCount : 0),
+  }));
+  if (!vms.length) return null;
+  const est = estimateMigration(vms, {
+    strategy: status.warm ? "warm" : "cold",
+    throughputMBps: live.mbps,
+    concurrency: Math.min(2, vms.length),
+  });
+  return {
+    minutes: est.downtimeMinutes,
+    mbps: live.mbps,
+    basis: `Costed at the ${live.mbps} MiB/s this transfer is measuring, not at the rate the estimate assumed.`,
+  };
+}
+
 /** The Migration that is actually running this plan — the newest, not the first. */
 export async function activeMigration(planName) {
   const list = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/migrations`).catch(() => ({ items: [] }));
@@ -2328,6 +2470,120 @@ export async function cutoverPosture(planName) {
     migrationName: mig?.metadata?.name || null,
     decision: cutoverDecision({ gate: status.gate, window: win, state }),
   };
+}
+
+/** Remembers what has already been said to the board, so it is not said twice. */
+const FIT_ANN = "tcs.agentic-ai/window-fit-warned";
+
+/**
+ * The window last read off the change request, per plan.
+ *
+ * Kept so that polling status — which the console does every ten seconds — can
+ * judge the measured outage against the approved one without a ServiceNow call
+ * each time. Populated by the approval poll; absent until then, which is why
+ * windowFit reads null rather than optimistic before the first read.
+ */
+const _lastWindow = new Map();
+
+/**
+ * Keep the scheduled cutover and the approved window honest with each other.
+ *
+ * Two jobs, both of which only matter between scheduling and firing:
+ *
+ *   1. The board moves the window. A cutover stamped against the old start
+ *      fires outside the window they approved, on a decision taken before they
+ *      changed it. Re-stamped to follow them.
+ *
+ *   2. The window no longer fits. It was sized from an estimate; the precopy
+ *      has since measured what this source and network really do. If the
+ *      outage now costs more than was approved, the board is told BEFORE the
+ *      window opens — once, as a work note — while somebody can still extend it
+ *      or take fewer machines.
+ *
+ * Called from the approval poll the console already runs, so this happens by
+ * itself rather than needing anyone to press anything.
+ */
+export async function reconcileCutoverWindow(planName, { record = null, actor = "agent" } = {}) {
+  const status = await planStatusWithEta(planName).catch(() => null);
+  if (!status?.found || !status.warm) return { checked: false, reason: "Only a warm plan has a cutover to reconcile." };
+
+  let cr = record;
+  const gate = status.gate || {};
+  if (!cr && gate.sysId) {
+    try {
+      const { getRecord } = await import("../utils/servicenow-client.js");
+      const r = await getRecord("change_request", gate.sysId);
+      cr = r?.result || r || null;
+    } catch { cr = null; }
+  }
+  const win = cr ? cutoverWindow(cr) : { known: false, open: false };
+  if (win.known) _lastWindow.set(planName, win);
+
+  const mig = await activeMigration(planName);
+  const stamped = mig?.spec?.cutover || null;
+  const out = { checked: true, planName, window: win, stamped, drift: null, fit: null, actions: [] };
+
+  // ── 1. Follow the board if they moved the window ────────────────────────
+  const drift = windowDrift(stamped, win);
+  out.drift = drift;
+  if (drift.drifted && mig?.metadata?.name) {
+    try {
+      await ocpPatch(
+        `/${FORKLIFT}/namespaces/${MTV_NS}/migrations/${mig.metadata.name}`,
+        { spec: { cutover: drift.to } },
+        "application/merge-patch+json",
+      );
+      out.actions.push(`Cutover re-stamped from ${drift.from} to ${drift.to} — the change window moved.`);
+      await recordChange({
+        cluster: "local", namespace: MTV_NS, resourceKind: "migration", resourceName: mig.metadata.name,
+        action: "resync_cutover_to_change_window",
+        command: `oc patch migration ${mig.metadata.name} -n ${MTV_NS} --type=merge -p '{"spec":{"cutover":"${drift.to}"}}'`,
+        risk: "medium", approvedBy: gate.number || actor,
+      }).catch(() => {});
+      if (gate.sysId) {
+        const { updateRecord } = await import("../utils/servicenow-client.js");
+        await updateRecord("change_request", gate.sysId, {
+          work_notes: `[TCS Agentic AI] The change window moved, so the scheduled cutover followed it: ${drift.from} → ${drift.to}.\n${drift.reason}`,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      out.actions.push(`Could not re-stamp the cutover: ${e.message}`);
+    }
+  }
+
+  // ── 2. Tell the board if the outage no longer fits what they approved ───
+  const need = measuredOutage(status, status.eta);
+  if (need) {
+    const fit = windowFit({ win, neededMinutes: need.minutes.high });
+    out.fit = { ...fit, measuredMbps: need.mbps };
+    // Said once per plan. A work note on every ten-second poll is not a warning,
+    // it is noise, and noise is how a real warning gets missed.
+    const already = (await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null))
+      ?.metadata?.annotations?.[FIT_ANN];
+    if (fit.known && !fit.fits && !already && gate.sysId) {
+      try {
+        const { updateRecord } = await import("../utils/servicenow-client.js");
+        await updateRecord("change_request", gate.sysId, {
+          work_notes: [
+            "[TCS Agentic AI] The approved window no longer covers the measured outage.",
+            "",
+            fit.note,
+            need.basis,
+            "",
+            fit.action,
+            "",
+            "This is being raised before the window opens, while it can still be changed.",
+          ].join("\n"),
+        });
+        await annotatePlan(planName, { [FIT_ANN]: new Date().toISOString() }).catch(() => {});
+        out.actions.push(`${gate.number} told the outage now needs ${fit.neededMinutes} min against an approved ${fit.approvedMinutes} min.`);
+      } catch (e) {
+        out.actions.push(`Could not add the window-fit note: ${e.message}`);
+      }
+    }
+  }
+
+  return out;
 }
 
 /**

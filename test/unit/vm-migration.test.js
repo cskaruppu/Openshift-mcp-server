@@ -1239,3 +1239,92 @@ test("cutover is refused without approval, scheduled outside the window, allowed
   const off = cutoverDecision({ gate: { required: false, approved: false }, window: { known: false, open: false }, state: waiting, now });
   assert.equal(off.mode, "now");
 });
+
+// ---------------------------------------------------------------------------
+// The change window: sized by strategy, followed when it moves, judged live
+// ---------------------------------------------------------------------------
+test("the requested window is the outage, which is not the same as the transfer", async () => {
+  const { proposeWindow } = await import("../../src/services/vm-migration.js");
+  const est = { wallClockMinutes: { low: 60, likely: 90, high: 120 }, downtimeMinutes: { low: 4, likely: 6, high: 11 } };
+  const now = Date.parse("2026-09-08T10:03:00Z");
+
+  // Cold: the guest is off for the whole copy, so the window covers all of it.
+  const cold = proposeWindow({ est, warm: false, now, leadHours: 24 });
+  assert.equal(cold.minutes, 120);
+  assert.match(cold.basis, /powers the guest off for the whole copy/);
+
+  // Warm: only the cutover is downtime. Asking for 120 minutes would ask the
+  // board to approve an outage eleven times longer than the one that happens.
+  const warm = proposeWindow({ est, warm: true, now, leadHours: 24 });
+  assert.equal(warm.minutes, 15, "floored at 15 min, from an 11-min cutover");
+  assert.match(warm.basis, /covers the cutover only/);
+  assert.ok(warm.minutes < cold.minutes);
+
+  // The high end, not the median: a window sized on the likely figure is one
+  // the work overruns half the time.
+  assert.equal(proposeWindow({ est: { ...est, downtimeMinutes: { low: 20, likely: 30, high: 45 } }, warm: true, now }).minutes, 45);
+
+  // Starts on a quarter hour, and in the format ServiceNow stores.
+  assert.equal(new Date(cold.start).getUTCMinutes() % 15, 0);
+  assert.match(cold.snowStart, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  assert.equal(proposeWindow({ est: null, warm: true }), null);
+});
+
+test("a cutover follows the window when the board moves it", async () => {
+  const { windowDrift } = await import("../../src/services/vm-migration.js");
+  const now = Date.parse("2026-09-08T20:00:00Z");
+  const win = { known: true, start: "2026-09-09T02:00:00.000Z", end: "2026-09-09T03:00:00.000Z" };
+
+  // Stamped for the old 22:00 start; the board pushed the change to 02:00.
+  const moved = windowDrift("2026-09-08T22:00:00.000Z", win, now);
+  assert.equal(moved.drifted, true);
+  assert.equal(moved.to, win.start);
+  assert.match(moved.reason, /before the approved window opens/);
+
+  // Stamped after the window closes is drift too, in the other direction.
+  assert.equal(windowDrift("2026-09-09T05:00:00.000Z", win, now).drifted, true);
+
+  // Inside the window: leave it alone.
+  assert.equal(windowDrift("2026-09-09T02:30:00.000Z", win, now).drifted, false);
+
+  // The cases that must never re-stamp anything: nothing scheduled, a cutover
+  // that has already fired, and a record with no window to reconcile against.
+  assert.equal(windowDrift(null, win, now).drifted, false);
+  assert.equal(windowDrift("2026-09-08T19:00:00.000Z", win, now).drifted, false, "already passed");
+  assert.equal(windowDrift("2026-09-09T02:30:00.000Z", { known: false }, now).drifted, false);
+  assert.equal(windowDrift("not a time", win, now).drifted, false);
+});
+
+test("the approved window is judged against what the precopy is actually measuring", async () => {
+  const { windowFit, measuredOutage, liveEta } = await import("../../src/services/vm-migration.js");
+
+  // The window was sized from an estimate; the transfer has since told us what
+  // this source and network really do.
+  const tight = windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T02:30:00Z" }, neededMinutes: 48 });
+  assert.equal(tight.fits, false);
+  assert.equal(tight.approvedMinutes, 30);
+  assert.equal(tight.overrunMinutes, 18);
+  assert.match(tight.action, /extend the window|fewer machines/);
+
+  const fine = windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T03:00:00Z" }, neededMinutes: 20 });
+  assert.equal(fine.fits, true);
+
+  // Nothing measured yet is reported as unknown, not as a fit.
+  assert.equal(windowFit({ win: { known: false } }).known, false);
+  assert.equal(windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T03:00:00Z" } }).fits, null);
+
+  // measuredOutage costs the cutover at the LIVE rate, and returns nothing
+  // rather than a guess while there is nothing to measure.
+  const status = { warm: true, vms: [{ name: "a", diskGiB: 500 }] };
+  assert.equal(measuredOutage(status, null), null);
+  assert.equal(measuredOutage(status, { state: "stalled", mbps: 0 }), null);
+
+  const slow = measuredOutage(status, { state: "transferring", mbps: 20 });
+  const fast = measuredOutage(status, { state: "transferring", mbps: 200 });
+  assert.ok(slow.minutes.high > fast.minutes.high, "a slower measured rate costs a longer outage");
+  assert.match(slow.basis, /20 MiB\/s/);
+
+  // And it is genuinely driven by the live reading, not by the default.
+  const samples = [{ at: 0, bytes: 0, total: 1e11 }, { at: 60000, bytes: 21474836, total: 1e11 }];
+  assert.equal(liveEta(samples).state, "transferring");
+});

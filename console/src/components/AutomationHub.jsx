@@ -1388,6 +1388,13 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
   );
 }
 
+/** Bytes as the unit a person says out loud, not as a number of bytes. */
+function bytesGiB(n) {
+  if (!n) return "0 GiB";
+  const g = n / 1073741824;
+  return g >= 1024 ? `${(g / 1024).toFixed(2)} TiB` : g >= 10 ? `${Math.round(g)} GiB` : `${g.toFixed(1)} GiB`;
+}
+
 function MigrationAgent({ clusters, activeCluster }) {
   const [cluster, setCluster] = useState(activeCluster || "local");
   const [ready, setReady] = useState(null);            // readiness report
@@ -2106,8 +2113,16 @@ function MigrationAgent({ clusters, activeCluster }) {
                             color: st.eta.confidence === "high" ? "#16a34a" : st.eta.confidence === "medium" ? "#b45309" : "#64748b" }}>
                             {st.eta.confidence} confidence
                           </span>
-                          <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem" }}>
+                          {/* How much has actually moved. "62%" is a ratio;
+                              "310 GiB of 500 GiB at 84 MiB/s" is the thing
+                              someone reads out on a bridge call. */}
+                          <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem",
+                            fontVariantNumeric: "tabular-nums" }}>
+                            {st.progress?.total
+                              ? <><b style={{ color: "var(--fg,#151a29)" }}>{bytesGiB(st.progress.bytes)}</b> of {bytesGiB(st.progress.total)} · </>
+                              : null}
                             {st.eta.mbps} MiB/s · {st.eta.percent}%
+                            {st.progress?.activeVMs ? ` · ${st.progress.activeVMs} VM(s) copying` : ""}
                           </span>
                         </>
                       )}
@@ -2144,6 +2159,17 @@ function MigrationAgent({ clusters, activeCluster }) {
                     {st.eta.state === "transferring" && (
                       <div style={{ height: 4, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 5, overflow: "hidden" }}>
                         <div style={{ width: `${st.eta.percent}%`, height: "100%", background: "#0ea5a0" }} />
+                      </div>
+                    )}
+                    {/* The approved outage, judged against the rate this
+                        precopy is measuring. Surfaced here as well as on the
+                        change request, because the person watching this screen
+                        is the one who can still do something about it. */}
+                    {st.windowFit?.known && !st.windowFit.fits && (
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid var(--border,#e4e8f1)", fontSize: "0.77rem" }}>
+                        <b style={{ color: "#b45309" }}>⚠ The approved window no longer fits</b>
+                        <div style={{ color: "var(--muted,#5a6373)", marginTop: 2 }}>{st.windowFit.note}</div>
+                        <div style={{ marginTop: 1 }}>→ {st.windowFit.action}</div>
                       </div>
                     )}
                   </div>
