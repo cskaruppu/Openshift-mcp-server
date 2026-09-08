@@ -189,6 +189,7 @@ export function migrationJourney(status = {}) {
         { key: "precopy", label: "Disks copy", detail: "The guest keeps serving users throughout." },
         { key: "cutover", label: "Cutover", detail: "The guest is powered off, the last changes copy, the VM starts on OpenShift. This is the only downtime." },
         { key: "verify", label: "Verified", detail: "Running, disks present, source confirmed off." },
+        { key: "decommission", label: "Source retired", detail: "A second change request to delete the VMware VMs. Until it is carried out, powering the source back on is still the way back." },
       ]
     : [
         { key: "plan", label: "Plan created", detail: "Validated by MTV. Nothing has moved." },
@@ -196,6 +197,7 @@ export function migrationJourney(status = {}) {
         { key: "transfer", label: "Power off and copy", detail: "The guest is powered off first. The whole transfer is the outage." },
         { key: "boot", label: "Starts on OpenShift", detail: "MTV creates and starts the VM." },
         { key: "verify", label: "Verified", detail: "Running, disks present, source confirmed off." },
+        { key: "decommission", label: "Source retired", detail: "A second change request to delete the VMware VMs. Until it is carried out, powering the source back on is still the way back." },
       ];
 
   // Position is read off the plan, never accumulated in the browser — a
@@ -207,7 +209,11 @@ export function migrationJourney(status = {}) {
   if (warm && awaiting) at = 3;                       // paused AT the cutover step
   if (warm && status.succeeded) at = 4;
   if (!warm && status.succeeded) at = 4;
-  if (verified) at = steps.length;
+  if (verified) at = steps.length - 1;                // at the decommission step
+  // Only a carried-out decommission finishes the journey: a migration is
+  // reversible until the source VMs are gone, and the pipeline should say so
+  // rather than declaring victory one step early.
+  if (status.decommission?.state === "approved" || status.decommission?.state === "closed") at = steps.length;
 
   const failed = status.failed || status.canceled;
   return {
@@ -215,8 +221,9 @@ export function migrationJourney(status = {}) {
     // What a person should do next, in the words of this journey rather than
     // a generic "continue".
     next: failed ? "The plan failed or was cancelled — read the errors, then roll back or fix and re-run."
-      : at >= steps.length ? "Done. Decommission the source VMs when you are satisfied."
+      : at >= steps.length ? "Done. The source VMs have been retired."
       : warm && awaiting ? "Schedule the cutover. Everything else is finished and waiting on this."
+      : steps[at]?.key === "decommission" ? "Verified. Raise the decommission request once the migrated machines have run long enough to trust."
       : steps[at]?.label ? `Next: ${steps[at].label.toLowerCase()}.` : null,
   };
 }

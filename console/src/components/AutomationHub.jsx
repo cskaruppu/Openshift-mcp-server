@@ -1239,6 +1239,77 @@ function VerifyPanel({ planName, result, busy, onRun }) {
   );
 }
 
+/* ── Decommission ─────────────────────────────────────────────────────────────
+   The last step, and the only irreversible one. Everything up to here can be
+   undone by powering the source VMs back on — MTV switched them off and never
+   deleted them. Once they are gone, that is no longer true.
+
+   So this panel is deliberately reluctant. It refuses while verification is
+   failed or incomplete, it counts out a soak period rather than offering a
+   button the day the copy finished, and what it produces is a REQUEST, not a
+   deletion: the agent has read-only access to VMware and the audit trail for an
+   irreversible act belongs with whoever owns the platform. */
+function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
+  const loadedFor = useRef(null);
+  useEffect(() => {
+    if (loadedFor.current !== planName) { loadedFor.current = planName; onLoad(); }
+  }, [planName]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (!posture?.found) return null;
+
+  const { gate, blockers = [], soak, ready } = posture;
+  const box = (bg, br) => ({ marginTop: 7, padding: "9px 11px", borderRadius: 8, background: bg, border: `1px solid ${br}` });
+
+  if (gate?.raised) {
+    const good = gate.approved;
+    return (
+      <div style={box(good ? "rgba(22,163,74,.07)" : "rgba(100,116,139,.07)", good ? "rgba(22,163,74,.3)" : "rgba(100,116,139,.3)")}>
+        <b style={{ fontSize: "0.79rem", color: good ? "#16a34a" : "#64748b" }}>
+          {good ? "✓" : "◷"} Decommission — {gate.number} · {gate.state}
+        </b>
+        <div style={{ fontSize: "0.77rem", color: "var(--muted,#5a6373)", marginTop: 2 }}>{gate.next}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={box("rgba(100,116,139,.06)", "rgba(100,116,139,.3)")}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+        <b style={{ fontSize: "0.79rem" }}>Retire the source VMs</b>
+        <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>{posture.next}</span>
+      </div>
+      {blockers.map((b) => (
+        <div key={b.code} style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 3 }}>⚠ {b.message}</div>
+      ))}
+      {!blockers.length && soak && (
+        <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{soak.note}</div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button disabled={busy || blockers.length > 0} onClick={() => onRaise(false)}
+          title={blockers.length ? blockers[0].message : "Raises a second change request. Deletes nothing."}
+          style={{ padding: "5px 13px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: "0.79rem",
+            fontFamily: "inherit", background: blockers.length ? "#9ca3af" : "#3d5afe", color: "#fff",
+            cursor: busy ? "wait" : blockers.length ? "not-allowed" : "pointer" }}>
+          ⤴ Raise decommission request
+        </button>
+        {/* The soak is a policy, not a safety interlock — it can be waived,
+            and the waiver is named in the change record. A failed or
+            incomplete verification cannot be waived from here at all. */}
+        {!ready && !blockers.length && !soak?.soaked && (
+          <button disabled={busy} onClick={() => onRaise(true)}
+            style={{ padding: "5px 11px", borderRadius: 8, fontWeight: 700, fontSize: "0.76rem", fontFamily: "inherit",
+              background: "transparent", color: "#b45309", border: "1px solid rgba(245,158,11,.5)", cursor: "pointer" }}>
+            Waive the {soak?.days}-day soak
+          </button>
+        )}
+        <span data-prose style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>
+          This raises a change request. It deletes nothing — the VMware team carries it out, and until they do,
+          powering the source back on is still the way back.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ── The cutover stage ────────────────────────────────────────────────────────
    A warm migration stops here on purpose. The copy is done; the guest is still
    serving users; nothing else happens until someone says the guest may go down.
@@ -1332,6 +1403,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [rollback, setRollback] = useState(null);      // { planName, decision }
   const [cutovers, setCutovers] = useState({});        // planName -> cutover posture
   const [verifs, setVerifs] = useState({});            // planName -> verification result
+  const [decoms, setDecoms] = useState({});            // planName -> decommission posture
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [busy, setBusy] = useState(null);
   // The workbench is a three-step wizard: pick what moves, understand whether
@@ -1565,6 +1637,30 @@ function MigrationAgent({ clusters, activeCluster }) {
     try {
       const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/verify`);
       setVerifs((v) => ({ ...v, [planName]: d }));
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  const loadDecom = async (planName) => {
+    try {
+      const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/decommission`);
+      setDecoms((c) => ({ ...c, [planName]: d }));
+    } catch (e) { showToast(e.message, "err"); }
+  };
+
+  // Raises a change request; deletes nothing. The confirm says so, because the
+  // word "decommission" beside a button is exactly where someone assumes the
+  // opposite.
+  const raiseDecom = async (planName, force) => {
+    const names = (plans.find((x) => x.planName === planName)?.vms || []).length;
+    if (!window.confirm(
+      `Raise a decommission request for ${planName}?\n\nThis asks the VMware team to DELETE the ${names || ""} source VM(s). It deletes nothing itself, and nothing happens until the change request is approved and carried out.${force ? "\n\nThe soak period has NOT elapsed. Waiving it will be recorded on the change request." : ""}`
+    )) return;
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/decommission`, force ? { force: true } : {});
+      if (d.ok) { showToast(d.message || "Decommission request raised", "ok"); loadDecom(planName); refreshStatus([planName]); }
+      else showToast(d.error || "Could not raise it", "err");
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -2064,6 +2160,19 @@ function MigrationAgent({ clusters, activeCluster }) {
                     result={verifs[p.planName]}
                     busy={busy === p.planName}
                     onRun={() => runVerify(p.planName)}
+                  />
+                )}
+
+                {/* ── Retire the source ────────────────────────────────────
+                    Offered only once the plan has succeeded, and refused by
+                    the server until verification passes and the soak elapses. */}
+                {st.succeeded && (
+                  <DecommissionPanel
+                    planName={p.planName}
+                    posture={decoms[p.planName]}
+                    busy={busy === p.planName}
+                    onLoad={() => loadDecom(p.planName)}
+                    onRaise={(force) => raiseDecom(p.planName, force)}
                   />
                 )}
 

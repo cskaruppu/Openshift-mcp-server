@@ -3107,6 +3107,40 @@ async function startSSE() {
         }
       }
 
+      // Decommission — the last step, and the only irreversible one. GET asks
+      // whether it may even be requested yet; POST raises the second change
+      // request. Nothing here deletes anything: the agent has read-only access
+      // to the source platform, and the deletion belongs to whoever owns it.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/decommission$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.decommissionPosture(m[1]));
+            return sendJson(res, 200, out ?? { found: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { error: err.message }); }
+        }
+        if (m && req.method === "POST") {
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          try {
+            const body = await readJsonBody(req);
+            const out = await withClusterContext(url, async () => mig.raiseDecommissionCR(m[1], {
+              actor: req.user?.name || "operator", cluster, force: body.force === true,
+            }));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+      // Where that second change request stands.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/decommission\/approval$/);
+        if (m && req.method === "GET") {
+          try {
+            const out = await withClusterContext(url, async () => mig.checkDecommissionApproval(m[1]));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
       // What rolling back would mean right now — asked before it is done.
       {
         const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/rollback-preview$/);

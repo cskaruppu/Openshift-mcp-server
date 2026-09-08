@@ -1861,6 +1861,7 @@ export async function planStatusWithEta(planName) {
   if (status.executing || snap.bytes > 0) recordProgressSample(planName, snap);
   // Read the phase before judging the byte counts — see liveEta.
   const cut = cutoverState(status);
+  const decom = decommissionGate(await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null) || {});
   const eta = liveEta(getProgressSamples(planName), { awaitingCutover: cut.awaitingCutover });
   return {
     ...status,
@@ -1870,7 +1871,13 @@ export async function planStatusWithEta(planName) {
     cutover: cut,
     // The end-to-end route this plan is on. Warm and cold are different
     // journeys, so the console never has to work out which one to draw.
-    journey: (await import("./migration-verify.js")).migrationJourney({ ...status, cutover: cut }),
+    decommission: decom,
+    journey: (await import("./migration-verify.js")).migrationJourney({
+      ...status, cutover: cut, decommission: decom,
+      // Verification is not re-run on every poll — it reads the source
+      // platform. The journey only needs to know whether it has passed.
+      verification: _lastVerify.get(planName) || null,
+    }),
     // The forecast, judged against what is actually happening.
     vsEstimate: estimateVsActual(status.planned, eta),
   };
@@ -2516,6 +2523,9 @@ export async function rollbackMigration(planName, { deleteTargetVMs = true, acto
  * Migrated is not running. Reuses the VM phase classifier so a migrated machine
  * is judged by exactly the same rules as a provisioned one.
  */
+/** Last verification verdict per plan, so polling need not re-read the source. */
+const _lastVerify = new Map();
+
 export async function verifyMigration(planName) {
   const status = await planStatus(planName);
   if (!status.found) return { ok: false, error: `Plan "${planName}" not found.` };
@@ -2560,6 +2570,7 @@ export async function verifyMigration(planName) {
     Object.prototype.hasOwnProperty.call(sourceOff, n) ? sourceOff[n] : null));
   const summary = verifySummary(vms);
 
+  _lastVerify.set(planName, { verdict: summary.verdict, at: Date.now() });
   return {
     ok: summary.verdict === "passed" || summary.verdict === "passed-with-warnings",
     planName, namespace: status.targetNamespace, verifiedAt: new Date().toISOString(),
@@ -2604,4 +2615,242 @@ async function sourcePowerStates(status, names) {
     }
   } catch { /* unreachable source: every VM stays unchecked, which is the point */ }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Decommission — the last step, and the only irreversible one
+// ---------------------------------------------------------------------------
+/**
+ * Until the source VMs are deleted, a migration is reversible: MTV powers them
+ * off and never removes them, so the way back is to power them on again. That
+ * is exactly why deleting them is a separate decision, with its own change
+ * request, taken after the migrated machines have carried real traffic for long
+ * enough to trust them.
+ *
+ * What this deliberately does NOT do is delete anything. The agent has
+ * read-only access to the source platform — it can see a VM's power state, it
+ * cannot remove it — and pretending otherwise would be worse than useless. It
+ * raises the request, carries the evidence that justifies it, and tracks it to
+ * closure. The deletion is performed by whoever owns vCenter, which is also
+ * where the audit trail for an irreversible act belongs.
+ */
+const DECOM_ANN = {
+  number: "tcs.agentic-ai/decommission-request",
+  sysId: "tcs.agentic-ai/decommission-sys-id",
+  state: "tcs.agentic-ai/decommission-state",
+  at: "tcs.agentic-ai/decommission-checked-at",
+};
+
+/** How long the migrated machines must run before deletion is even offered. */
+export function soakDays() {
+  const n = Number(process.env.MIGRATION_SOAK_DAYS);
+  return Number.isFinite(n) && n >= 0 ? n : 7;
+}
+
+/**
+ * May we ask to delete the source VMs yet? Pure.
+ *
+ * Four things have to be true, and each of them fails closed. The soak is the
+ * one people want to skip, so it is stated in days remaining rather than as a
+ * flat refusal — and it can be overridden deliberately, which is different from
+ * it not being there.
+ */
+export function decommissionReadiness({ status, verification, since, now = Date.now(), days = 7 } = {}) {
+  const blockers = [];
+
+  if (!status?.succeeded) {
+    blockers.push({ code: "not-migrated", message: "This plan has not completed. Nothing has been replaced yet." });
+  }
+  if (!verification) {
+    blockers.push({ code: "not-verified", message: "The migration has not been verified. Run verification first." });
+  } else if (verification.verdict === "failed") {
+    blockers.push({ code: "verification-failed", message: `Verification failed — ${verification.headline}` });
+  } else if (verification.verdict === "incomplete") {
+    // The unrun check is usually the one that matters: we could not confirm the
+    // source is off. Deleting on the strength of that is how the wrong VM goes.
+    blockers.push({ code: "verification-incomplete", message: `${verification.counts?.unchecked || 0} verification check(s) could not run. Deleting a source VM on an incomplete check is how the wrong machine gets deleted.` });
+  }
+  if (verification?.splitBrain?.length) {
+    blockers.push({ code: "split-brain", message: `${verification.splitBrain.join(", ")} still running on both platforms.` });
+  }
+
+  const elapsedDays = since ? (now - Date.parse(since)) / 86400000 : null;
+  const soaked = days === 0 || (elapsedDays != null && elapsedDays >= days);
+  const remaining = elapsedDays == null ? null : Math.max(0, Math.ceil(days - elapsedDays));
+
+  return {
+    ready: blockers.length === 0 && soaked,
+    blockers,
+    soak: {
+      days, soaked, remainingDays: remaining,
+      since: since || null,
+      note: days === 0 ? "No soak period is configured."
+        : elapsedDays == null ? "The migration completion time is not recorded, so the soak period cannot be measured."
+        : soaked ? `Running on OpenShift for ${Math.floor(elapsedDays)} day(s).`
+        : `${remaining} more day(s) before the source VMs are offered for deletion. They stay powered off and intact until then — this is the way back.`,
+    },
+    // Said in one line, because this is the sentence someone reads before
+    // agreeing to an irreversible thing.
+    next: blockers.length ? blockers[0].message
+      : soaked ? "The migrated machines have run long enough. Raising the decommission request is the last step."
+      : `Soaking — ${remaining} day(s) to go.`,
+  };
+}
+
+/** Where the decommission stands, read from the Plan. Pure. */
+export function decommissionGate(plan) {
+  const a = plan?.metadata?.annotations || {};
+  const number = a[DECOM_ANN.number] || null;
+  const state = a[DECOM_ANN.state] || (number ? "submitted" : "none");
+  return {
+    number, sysId: a[DECOM_ANN.sysId] || null, state,
+    checkedAt: a[DECOM_ANN.at] || null,
+    raised: !!number,
+    approved: state === "approved",
+    next: !number ? "No decommission request has been raised."
+      : state === "approved" ? `${number} is approved — the VMware team may delete the source VMs.`
+      : state === "rejected" ? `${number} was rejected. The source VMs stay where they are.`
+      : `${number} is awaiting approval.`,
+  };
+}
+
+/** When the migrated machines started carrying traffic — the soak clock. */
+function completedAt(status) {
+  const times = (status.vms || []).map((v) => v.completed).filter(Boolean).map((t) => Date.parse(t)).filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
+/** Everything the console needs to decide, in one read. */
+export async function decommissionPosture(planName) {
+  const status = await planStatus(planName);
+  if (!status.found) return { found: false, planName };
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  const verification = status.succeeded ? await verifyMigration(planName).catch(() => null) : null;
+  const since = completedAt(status);
+  const readiness = decommissionReadiness({
+    status, verification, since, days: soakDays(),
+  });
+  return {
+    found: true, planName, since,
+    gate: decommissionGate(plan || {}),
+    verification: verification ? { verdict: verification.verdict, headline: verification.headline, counts: verification.counts, splitBrain: verification.splitBrain } : null,
+    ...readiness,
+  };
+}
+
+/**
+ * Raise the request to delete the source VMs.
+ *
+ * A second change request, not an amendment to the first: the migration was
+ * reversible and this is not, they are approved by different people at
+ * different times, and a rejected decommission must not reopen a migration that
+ * succeeded. It carries the verification evidence, because "delete these
+ * production VMs" is a request that has to justify itself.
+ */
+export async function raiseDecommissionCR(planName, { actor = "operator", cluster = "local", force = false } = {}) {
+  const posture = await decommissionPosture(planName);
+  if (!posture.found) return { ok: false, error: `Plan "${planName}" not found.` };
+  if (posture.gate.raised && posture.gate.state !== "rejected") {
+    return { ok: true, alreadyRaised: true, gate: posture.gate, message: `${posture.gate.number} already exists for this plan.` };
+  }
+  // The soak may be waived deliberately; a failed verification may not.
+  if (posture.blockers.length) {
+    return { ok: false, error: posture.blockers[0].message, blockers: posture.blockers, posture };
+  }
+  if (!posture.soak.soaked && !force) {
+    return { ok: false, error: posture.soak.note, posture, waivable: true };
+  }
+
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  const vms = (plan?.spec?.vms || []).map((v) => v.name || v.id);
+  const migrationCR = approvalGate(plan || {}).number;
+  const v = posture.verification;
+
+  let cr;
+  try {
+    const { createChangeRequest } = await import("../utils/servicenow-client.js");
+    cr = await createChangeRequest({
+      shortDescription: `Decommission ${vms.length} source VM(s) in VMware, migrated to OpenShift Virtualization: ${vms.slice(0, 4).join(", ")}${vms.length > 4 ? ` +${vms.length - 4}` : ""}`,
+      description: [
+        "These virtual machines were migrated to OpenShift Virtualization and have been running there since the date below. This request is to DELETE the original VMs in VMware.",
+        "",
+        `Plan                : ${planName}`,
+        migrationCR ? `Migration change    : ${migrationCR}` : null,
+        `Virtual machines    : ${vms.join(", ")}`,
+        `Running on OpenShift: ${posture.since ? new Date(posture.since).toISOString() : "unknown"} (${posture.soak.days}-day soak ${posture.soak.soaked ? "complete" : "WAIVED by " + actor})`,
+        `Target namespace    : ${plan?.spec?.targetNamespace || "unspecified"}`,
+        "",
+        "Verification at the time of this request:",
+        `  Verdict : ${v?.verdict || "not run"}`,
+        `  Detail  : ${v?.headline || "—"}`,
+        v?.counts ? `  Checks  : ${v.counts.pass} passed, ${v.counts.warn} warning(s), ${v.counts.fail} failed, ${v.counts.unchecked} could not run` : null,
+        "",
+        "Until this request is carried out the migration remains reversible: the source VMs are powered off and intact, and powering them back on is the way back. After it, it is not.",
+      ].filter(Boolean).join("\n"),
+      type: "normal",
+      category: "Infrastructure",
+      // Deleting a VM is not a moderate risk however well it went.
+      risk: "high",
+      implementationPlan: [
+        "In vCenter, for each VM listed above:",
+        "  1. Confirm it is powered off.",
+        "  2. Confirm the migrated VM of the same name is running on OpenShift Virtualization.",
+        "  3. Take a final backup if policy requires one.",
+        "  4. Delete from disk.",
+      ].join("\n"),
+      backoutPlan: "None after deletion. This is the point at which the migration stops being reversible — which is why it is a separate change request, raised only after the soak period.",
+      testPlan: "Confirm the migrated VMs are still running and serving traffic after the source VMs are removed.",
+    });
+  } catch (e) {
+    return { ok: false, error: `Could not raise the decommission request: ${e.message}` };
+  }
+
+  const rec = cr?.result || cr || {};
+  const number = rec.number || null;
+  if (!number) return { ok: false, error: "ServiceNow accepted the request but returned no change number." };
+
+  await annotatePlan(planName, {
+    [DECOM_ANN.number]: number,
+    [DECOM_ANN.sysId]: rec.sys_id || "",
+    [DECOM_ANN.state]: "submitted",
+    [DECOM_ANN.at]: new Date().toISOString(),
+  }).catch(() => {});
+  await recordChange({
+    cluster, namespace: MTV_NS, resourceKind: "plan", resourceName: planName,
+    action: "raise_decommission_change_request", command: `# ServiceNow ${number}`,
+    risk: "low", approvedBy: actor,
+  }).catch(() => {});
+
+  return {
+    ok: true, number, sysId: rec.sys_id || null,
+    waived: !posture.soak.soaked,
+    message: `${number} raised. The source VMs stay powered off and intact until the VMware team carries it out.`,
+  };
+}
+
+/** Ask ServiceNow where the decommission request stands, and write it back. */
+export async function checkDecommissionApproval(planName) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
+  const gate = decommissionGate(plan);
+  if (!gate.number) return { ok: true, gate, note: gate.next };
+
+  let record;
+  try {
+    const { getRecord } = await import("../utils/servicenow-client.js");
+    const cr = await getRecord("change_request", gate.sysId || gate.number);
+    record = cr?.result || cr;
+  } catch (e) {
+    return { ok: false, gate, error: `Could not read ${gate.number} from ServiceNow: ${e.message}` };
+  }
+  if (!record) return { ok: false, gate, error: `ServiceNow returned no record for ${gate.number}.` };
+
+  const verdict = readMigrationApproval(record);
+  if (verdict !== gate.state) {
+    await annotatePlan(planName, { [DECOM_ANN.state]: verdict, [DECOM_ANN.at]: new Date().toISOString() }).catch(() => {});
+  }
+  const next = decommissionGate({ metadata: { annotations: {
+    [DECOM_ANN.number]: gate.number, [DECOM_ANN.sysId]: gate.sysId || "", [DECOM_ANN.state]: verdict,
+  } } });
+  return { ok: true, gate: next, note: next.next };
 }

@@ -116,11 +116,81 @@ test("warm and cold are different journeys, not one journey with a flag", () => 
   assert.equal(waiting.steps[waiting.at].key, "cutover");
   assert.match(waiting.next, /Schedule the cutover/);
 
-  // Verified is the end, and only verification puts it there.
+  // Verification advances the pipeline to its last step, but does not finish
+  // it — see the decommission test below for why that step exists.
   const done = migrationJourney({ found: true, warm: true, gate, succeeded: true, verification: { verdict: "passed" } });
-  assert.equal(done.at, done.steps.length);
-  assert.match(done.next, /Decommission the source/);
+  assert.equal(done.at, done.steps.length - 1);
 
   const broke = migrationJourney({ found: true, warm: false, gate, failed: true });
   assert.match(broke.next, /roll back/);
+});
+
+test("decommission is refused until the migration is verified, and the soak is counted out", async () => {
+  const { decommissionReadiness } = await import("../../src/services/vm-migration.js");
+  const done = { succeeded: true };
+  const ok = { verdict: "passed", counts: { unchecked: 0 }, headline: "fine" };
+  const day = 86400000;
+  const now = Date.parse("2026-09-20T00:00:00Z");
+  const since = "2026-09-01T00:00:00Z";                 // 19 days ago
+
+  // Nothing has been replaced yet.
+  const early = decommissionReadiness({ status: { succeeded: false }, verification: ok, since, now });
+  assert.equal(early.ready, false);
+  assert.equal(early.blockers[0].code, "not-migrated");
+
+  // Migrated but never verified.
+  assert.equal(decommissionReadiness({ status: done, since, now }).blockers[0].code, "not-verified");
+
+  // The one that matters: an INCOMPLETE verification blocks deletion. The
+  // check that usually could not run is "is the source powered off", and
+  // deleting on the strength of that is how the wrong machine goes.
+  const partial = decommissionReadiness({
+    status: done, since, now, verification: { verdict: "incomplete", counts: { unchecked: 1 } },
+  });
+  assert.equal(partial.ready, false);
+  assert.equal(partial.blockers[0].code, "verification-incomplete");
+
+  // Both platforms running is its own blocker, named.
+  const split = decommissionReadiness({
+    status: done, since, now,
+    verification: { verdict: "failed", counts: {}, headline: "x", splitBrain: ["db-01"] },
+  });
+  assert.ok(split.blockers.some((b) => b.code === "split-brain"));
+
+  // Verified, but not soaked: not ready, and it says how long is left rather
+  // than only refusing.
+  const soaking = decommissionReadiness({ status: done, verification: ok, since: new Date(now - 2 * day).toISOString(), now, days: 7 });
+  assert.equal(soaking.ready, false);
+  assert.equal(soaking.blockers.length, 0, "soaking is not a blocker — it is a wait");
+  assert.equal(soaking.soak.remainingDays, 5);
+  assert.match(soaking.soak.note, /this is the way back/);
+
+  // Verified and soaked.
+  const go = decommissionReadiness({ status: done, verification: ok, since, now, days: 7 });
+  assert.equal(go.ready, true);
+  assert.match(go.next, /last step/);
+
+  // No soak configured is a deliberate setting, not a missing one.
+  assert.equal(decommissionReadiness({ status: done, verification: ok, since: null, now, days: 0 }).ready, true);
+  // An unknown completion time cannot satisfy a soak that is required.
+  assert.equal(decommissionReadiness({ status: done, verification: ok, since: null, now, days: 7 }).ready, false);
+});
+
+test("the journey ends at the decommission, not at the migration", async () => {
+  const { migrationJourney } = await import("../../src/services/migration-verify.js");
+  const gate = { required: true, approved: true, number: "CHG1", state: "approved" };
+  const base = { found: true, warm: true, gate, succeeded: true, verification: { verdict: "passed" } };
+
+  const verified = migrationJourney(base);
+  assert.equal(verified.steps[verified.at].key, "decommission", "verified lands ON the decommission step");
+  assert.match(verified.next, /Raise the decommission request/);
+
+  // Only a carried-out decommission finishes it: a migration stays reversible
+  // while the source VMs exist, and the stepper should not declare victory.
+  const retired = migrationJourney({ ...base, decommission: { state: "approved" } });
+  assert.equal(retired.at, retired.steps.length);
+  assert.match(retired.next, /source VMs have been retired/);
+
+  // Both routes end the same way.
+  assert.equal(migrationJourney({ ...base, warm: false }).steps.at(-1).key, "decommission");
 });
