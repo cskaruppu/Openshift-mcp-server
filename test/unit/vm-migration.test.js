@@ -390,14 +390,22 @@ test("a finished transfer reports complete rather than a residual ETA", async ()
   assert.equal(r.etaMinutes.likely, 0);
 });
 
-test("progressSnapshot sums bytes across every VM and step in the plan", async () => {
+test("progressSnapshot sums megabytes across every VM in the plan", async () => {
   const { progressSnapshot } = await import("../../src/services/vm-migration.js");
+  const MB = 1048576;
+  // Only progress Forklift annotates as megabytes is counted. An unannotated
+  // step is counting something else — tasks, usually — and contributes nothing.
   const s = progressSnapshot({ vms: [
-    { name: "a", phase: "CopyingDisks", steps: [{ progress: { completed: 10, total: 100 } }, { progress: { completed: 5, total: 50 } }] },
-    { name: "b", phase: "Completed", steps: [{ progress: { completed: 40, total: 40 } }] },
+    { name: "a", phase: "CopyingDisks", steps: [
+      { name: "DiskTransfer", unit: "MB", progress: { completed: 10, total: 100 } },
+      { name: "Initialize", progress: { completed: 1, total: 1 } },
+    ] },
+    { name: "b", phase: "Completed", steps: [
+      { name: "DiskTransfer", unit: "MB", progress: { completed: 40, total: 40 } },
+    ] },
   ] });
-  assert.equal(s.bytes, 55);
-  assert.equal(s.total, 190);
+  assert.equal(s.bytes, 50 * MB);
+  assert.equal(s.total, 140 * MB);
   assert.equal(s.activeVMs, 1, "a completed VM is not still active");
 });
 
@@ -1351,4 +1359,91 @@ test("the approved window is judged against what the precopy is actually measuri
   // And it is genuinely driven by the live reading, not by the default.
   const samples = [{ at: 0, bytes: 0, total: 1e11 }, { at: 60000, bytes: 21474836, total: 1e11 }];
   assert.equal(liveEta(samples).state, "transferring");
+});
+
+test("transfer progress counts megabytes, not pipeline tasks", async () => {
+  const { progressSnapshot } = await import("../../src/services/vm-migration.js");
+  const MB = 1048576;
+
+  // The real shape, from Forklift: the DiskTransfer STEP counts tasks
+  // ("Completed 0 of 1 DiskTransfer tasks") and the megabytes live on its
+  // TASKS, one per disk, annotated unit: MB. Summing both added 20480 MB to
+  // 1 task and computed a transfer rate from the result.
+  const status = { vms: [{ phase: "CopyDisks", steps: [
+    { name: "Initialize", phase: "Completed", progress: { completed: 1, total: 1 }, tasks: [] },
+    { name: "DiskTransfer", phase: "Running", unit: null,
+      progress: { completed: 0, total: 1 },                       // ← tasks, not bytes
+      tasks: [{ name: "[ds] redhat2/redhat2.vmdk", unit: "MB", progress: { completed: 20480, total: 20480 } }] },
+    { name: "Cutover", phase: "Pending", progress: { completed: 0, total: 1 }, tasks: [] },
+  ] }] };
+
+  const snap = progressSnapshot(status);
+  assert.equal(snap.total, 20480 * MB, "20480 MB, matching what MTV displays");
+  assert.equal(snap.bytes, 20480 * MB);
+  assert.equal(snap.bytes, snap.total, "the copy is finished, and must read as finished");
+
+  // A step that carries the megabytes itself, with no task breakdown.
+  const flat = progressSnapshot({ vms: [{ phase: "CopyDisks", steps: [
+    { name: "DiskTransfer", unit: "MB", progress: { completed: 512, total: 20480 }, tasks: [] },
+  ] }] });
+  assert.equal(flat.bytes, 512 * MB);
+  assert.equal(flat.total, 20480 * MB);
+
+  // Steps with no megabytes anywhere contribute nothing at all, rather than
+  // contributing task counts that look like bytes.
+  const none = progressSnapshot({ vms: [{ phase: "Pending", steps: [
+    { name: "Initialize", phase: "Completed", progress: { completed: 1, total: 1 }, tasks: [] },
+  ] }] });
+  assert.equal(none.total, 0);
+});
+
+test("a rate that rounds to zero never produces an ETA", async () => {
+  const { liveEta } = await import("../../src/services/vm-migration.js");
+  const MB = 1048576;
+
+  // What the console showed: "About 1 min remaining (1-1 min) high confidence.
+  // Measured over the last 1 minute(s) at 0 MiB/s." Three claims that
+  // contradict each other. A trickle makes the arithmetic work and the
+  // sentence nonsense.
+  const trickle = [
+    { at: 0, bytes: 19000 * MB, total: 20480 * MB },
+    { at: 60000, bytes: 19000 * MB + 1024, total: 20480 * MB },
+  ];
+  const e = liveEta(trickle);
+  assert.equal(e.state, "crawling");
+  assert.equal(e.etaMinutes, null, "no forecast from a rate this small");
+  assert.equal(e.confidence, "n/a", "and never 'high confidence'");
+  assert.match(e.basis, /Too slow to forecast from/);
+
+  // A real rate still forecasts as before.
+  const real = [
+    { at: 0, bytes: 0, total: 20480 * MB },
+    { at: 60000, bytes: 600 * MB, total: 20480 * MB },
+  ];
+  const ok = liveEta(real);
+  assert.equal(ok.state, "transferring");
+  assert.equal(ok.mbps, 10);
+  assert.ok(ok.etaMinutes.likely > 0);
+});
+
+test("a warm cutover is proposed for the same day, a cold one is not", async () => {
+  const { proposeWindow } = await import("../../src/services/vm-migration.js");
+  const est = { wallClockMinutes: { low: 15, likely: 21, high: 38 }, downtimeMinutes: { low: 5, likely: 7, high: 12 } };
+  const now = Date.parse("2026-09-09T09:00:00Z");
+  const hoursOut = (w) => (Date.parse(w.start) - now) / 3600000;
+
+  // A warm precopy starts immediately and then waits. Every hour of waiting
+  // spends one of the VM's 28 changed-block snapshots and grows the delta that
+  // the cutover has to copy — so a day's wait lengthens the very outage the
+  // window was sized for.
+  const warm = proposeWindow({ est, warm: true, vmCount: 1, now });
+  assert.ok(hoursOut(warm) <= 6, `warm cutover should be same-day, was +${hoursOut(warm)}h`);
+  assert.match(warm.basis, /28 of them/, "the reason is given to the change board");
+
+  // A cold migration has not touched the source yet, so notice is free.
+  const cold = proposeWindow({ est, warm: false, vmCount: 1, now });
+  assert.ok(hoursOut(cold) >= 20);
+  assert.ok(!/28 of them/.test(cold.basis), "and the warm reasoning is not pasted onto it");
+
+  assert.equal(hoursOut(proposeWindow({ est, warm: true, vmCount: 1, now, leadHours: 2 })), 2);
 });

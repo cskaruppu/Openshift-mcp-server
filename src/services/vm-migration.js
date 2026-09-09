@@ -957,13 +957,30 @@ const _samples = new Map();          // planName -> [{ at, bytes, total }]
 const MAX_SAMPLES = 240;             // ~40 min at 10s, plenty for a rolling window
 
 /** Bytes done and total across every VM in a plan, from MTV's own pipeline. */
+/** Forklift annotates anything counted in megabytes. Everything else is tasks. */
+const isMB = (x) => /^mb$/i.test(String(x?.unit || ""));
+const MB = 1048576;
+
 export function progressSnapshot(status) {
   let bytes = 0, total = 0, activeVMs = 0;
   for (const v of status?.vms || []) {
     for (const s of v.steps || []) {
-      if (!s.progress) continue;
-      bytes += Number(s.progress.completed || 0);
-      total += Number(s.progress.total || 0);
+      // Only what is actually measured in megabytes. A step's own progress is
+      // in whatever that step counts — DiskTransfer counts TASKS ("Completed 0
+      // of 1 DiskTransfer tasks") while the megabytes sit on its tasks, one per
+      // disk. Adding the two together produced a total of 20481 and a transfer
+      // rate computed from it, which is why the console disagreed with MTV.
+      const mbTasks = (s.tasks || []).filter((t) => isMB(t) && t.progress);
+      if (mbTasks.length) {
+        for (const t of mbTasks) {
+          bytes += Number(t.progress.completed || 0) * MB;
+          total += Number(t.progress.total || 0) * MB;
+        }
+      } else if (isMB(s) && s.progress) {
+        // Some steps carry the megabytes themselves, with no task breakdown.
+        bytes += Number(s.progress.completed || 0) * MB;
+        total += Number(s.progress.total || 0) * MB;
+      }
     }
     if (v.phase && !/Completed|Failed|Canceled|Pending/i.test(v.phase)) activeVMs++;
   }
@@ -1045,6 +1062,19 @@ export function liveEta(samples = [], { windowSize = 6, awaitingCutover = false 
   }
 
   const mbps = moved / 1048576 / secs;                       // MiB/s, right now
+
+  // A rate that rounds to zero cannot support an ETA. "About 1 min remaining
+  // at 0 MiB/s, high confidence" was three claims that contradicted each
+  // other, and it is what a trickle of bytes produces: the arithmetic works,
+  // the sentence does not. Below a tenth of a MiB/s this is a crawl, and the
+  // honest report is that it is crawling rather than a number derived from it.
+  if (mbps < 0.1) {
+    return {
+      state: "crawling", mbps: Math.round(mbps * 100) / 100, percent, etaMinutes: null, confidence: "n/a",
+      basis: `Only ${(moved / 1048576).toFixed(1)} MiB has moved in the last ${Math.round(secs / 60) || 1} minute(s). Too slow to forecast from — check the transfer pod, the source host and the network before trusting any estimate.`,
+    };
+  }
+
   const remainingMiB = Math.max(0, (total - bytes) / 1048576);
   const likely = remainingMiB / mbps / 60;
 
@@ -2024,6 +2054,19 @@ function normalisePlanVM(v) {
   const pipeline = (v.pipeline || []).map((s) => ({
     name: s.name, phase: s.phase,
     progress: s.progress ? { completed: s.progress.completed, total: s.progress.total } : null,
+    // THE UNIT MATTERS, and leaving it out is what broke the transfer figures.
+    // Forklift reports a step's progress in whatever unit that step counts in,
+    // and says which by annotating it — {"unit": "MB"} on anything measured in
+    // megabytes. The DiskTransfer STEP counts tasks ("Completed 0 of 1
+    // DiskTransfer tasks"); the megabytes live on its TASKS, one per disk.
+    // Summing them together added 20480 MB to 1 task and called the result a
+    // byte count.
+    unit: s.annotations?.unit || null,
+    tasks: (s.tasks || []).map((t) => ({
+      name: t.name, phase: t.phase,
+      unit: t.annotations?.unit || null,
+      progress: t.progress ? { completed: t.progress.completed, total: t.progress.total } : null,
+    })),
   }));
   const done = pipeline.filter((s) => s.phase === "Completed").length;
   const err = (v.error?.reasons || []).join("; ") || v.error?.phase || null;
@@ -2478,7 +2521,20 @@ export function cutoverDecision({ gate, window: win, state, now = Date.now() } =
  */
 export function proposeWindow({ est, warm, vmCount = 1, now = Date.now(), leadHours = null, minHours = null } = {}) {
   if (!est) return null;
-  const lead = leadHours ?? Number(process.env.MIGRATION_CR_LEAD_HOURS ?? 24);
+  // Lead time differs by strategy, and getting this wrong costs more than a
+  // late start. A COLD migration has not touched the source yet, so a day's
+  // notice for the change board is free.
+  //
+  // A WARM one is the opposite: the precopy begins as soon as the plan runs and
+  // then WAITS. Every hour it waits, MTV takes another CBT snapshot to keep
+  // tracking changes — and a VM supports at most 28 of them, so a day of
+  // waiting spends most of the budget on nothing. The delta to copy at cutover
+  // grows the whole time too, which lengthens the very outage the window is
+  // sized for. So a warm cutover is proposed for the same day, close enough to
+  // the precopy finishing that little of either is wasted.
+  const lead = leadHours ?? Number(
+    warm ? (process.env.MIGRATION_WARM_LEAD_HOURS ?? 4) : (process.env.MIGRATION_CR_LEAD_HOURS ?? 24),
+  );
   const floorHours = minHours ?? Number(process.env.MIGRATION_MIN_WINDOW_HOURS ?? 4);
   const n = Math.max(1, vmCount);
 
@@ -2528,6 +2584,10 @@ export function proposeWindow({ est, warm, vmCount = 1, now = Date.now(), leadHo
       `Expected service impact: ${impact.likely} min (${impact.low}-${impact.high}). ${warm
         ? "The guest keeps serving users while its disks copy; only the cutover is downtime."
         : "The guest is powered off for the whole copy."}`,
+      // Why a warm cutover is proposed for today rather than tomorrow. A change
+      // board asked to approve a same-day outage is entitled to the reason.
+      warm ? "" : null,
+      warm ? "Scheduled for the same day on purpose: a warm precopy keeps taking a changed-block snapshot every hour while it waits, a VM supports at most 28 of them, and the delta to copy at cutover grows for as long as the wait lasts. Cutting over close to the precopy finishing keeps the outage as short as it was estimated." : null,
     ].filter((x) => x !== null).join("\n"),
   };
 }

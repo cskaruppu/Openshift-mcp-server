@@ -1476,12 +1476,8 @@ const PHASE = {
   failed:             { label: "failed",     bg: "rgba(220,38,38,.12)",   fg: "#dc2626" },
 };
 
-/** Bytes as the unit a person says out loud, not as a number of bytes. */
-function bytesGiB(n) {
-  if (!n) return "0 GiB";
-  const g = n / 1073741824;
-  return g >= 1024 ? `${(g / 1024).toFixed(2)} TiB` : g >= 10 ? `${Math.round(g)} GiB` : `${g.toFixed(1)} GiB`;
-}
+/** Megabytes, the unit MTV's own console reports a disk transfer in. */
+function mib(n) { return Math.round((n || 0) / 1048576).toLocaleString(); }
 
 function MigrationAgent({ clusters, activeCluster }) {
   const [cluster, setCluster] = useState(activeCluster || "local");
@@ -2266,8 +2262,10 @@ function MigrationAgent({ clusters, activeCluster }) {
                     background: st.eta.state === "stalled" ? "rgba(220,38,38,.07)" : st.eta.state === "awaiting-cutover" ? "rgba(245,158,11,.09)" : "rgba(14,165,160,.07)",
                     border: `1px solid ${st.eta.state === "stalled" ? "rgba(220,38,38,.3)" : st.eta.state === "awaiting-cutover" ? "rgba(245,158,11,.4)" : "rgba(14,165,160,.3)"}` }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: "0.79rem" }}>
-                      <b style={{ color: st.eta.state === "stalled" ? "#dc2626" : st.eta.state === "awaiting-cutover" ? "#b45309" : "#0ea5a0" }}>
+                      <b style={{ color: st.eta.state === "stalled" || st.eta.state === "crawling" ? "#dc2626"
+                        : st.eta.state === "awaiting-cutover" ? "#b45309" : "#0ea5a0" }}>
                         {st.eta.state === "stalled" ? "⚠ Transfer stalled"
+                          : st.eta.state === "crawling" ? "⚠ Barely moving"
                           : st.eta.state === "awaiting-cutover" ? "◷ Copied — waiting for cutover"
                           : st.eta.state === "complete" ? "✅ Transfer complete"
                           : `⏱ About ${st.eta.etaMinutes.likely} min remaining`}
@@ -2282,21 +2280,39 @@ function MigrationAgent({ clusters, activeCluster }) {
                             color: st.eta.confidence === "high" ? "#16a34a" : st.eta.confidence === "medium" ? "#b45309" : "#64748b" }}>
                             {st.eta.confidence} confidence
                           </span>
-                          {/* How much has actually moved. "62%" is a ratio;
-                              "310 GiB of 500 GiB at 84 MiB/s" is the thing
-                              someone reads out on a bridge call. */}
-                          <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem",
-                            fontVariantNumeric: "tabular-nums" }}>
-                            {st.progress?.total
-                              ? <><b style={{ color: "var(--text)" }}>{bytesGiB(st.progress.bytes)}</b> of {bytesGiB(st.progress.total)} · </>
-                              : null}
-                            {st.eta.mbps} MiB/s · {st.eta.percent}%
-                            {st.progress?.activeVMs ? ` · ${st.progress.activeVMs} VM(s) copying` : ""}
-                          </span>
+
                         </>
                       )}
                     </div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{st.eta.basis}</div>
+                    {/* The same three numbers MTV's own console shows, in the
+                        same units, so the two screens can be read side by side
+                        without anyone reconciling them. Shown for every moving
+                        state, not only the one that happens to have an ETA. */}
+                    {st.progress?.total > 0 && (
+                      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap",
+                        marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+                        <span style={{ fontSize: "0.95rem", fontWeight: 800 }}>
+                          {mib(st.progress.bytes)} <span style={{ fontWeight: 400, color: "var(--text2)" }}>of</span> {mib(st.progress.total)} MB
+                        </span>
+                        <span style={{ fontSize: "0.86rem", fontWeight: 700,
+                          color: st.eta.mbps > 0 ? "#0ea5a0" : "#dc2626" }}>
+                          {st.eta.mbps == null ? "—" : st.eta.mbps} MiB/s
+                        </span>
+                        <span style={{ fontSize: "0.79rem", color: "var(--text2)" }}>{st.eta.percent}%</span>
+                        {st.progress.activeVMs > 0 && (
+                          <span style={{ fontSize: "0.79rem", color: "var(--text2)" }}>
+                            {st.progress.activeVMs} VM{st.progress.activeVMs === 1 ? "" : "s"} copying
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {st.progress?.total > 0 && (
+                      <div style={{ height: 6, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 4, overflow: "hidden" }}>
+                        <div style={{ width: `${st.eta.percent}%`, height: "100%",
+                          background: st.eta.state === "stalled" || st.eta.state === "crawling" ? "#dc2626" : "#0ea5a0" }} />
+                      </div>
+                    )}
+                    <div style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 3 }}>{st.eta.basis}</div>
                     {/* The forecast, judged against the transfer actually
                         happening. The useful moment to learn the estimate was
                         wrong is now, while someone can still say so. */}
@@ -2325,11 +2341,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                         )}
                       </div>
                     )}
-                    {st.eta.state === "transferring" && (
-                      <div style={{ height: 4, borderRadius: 999, background: "rgba(127,127,127,.15)", marginTop: 5, overflow: "hidden" }}>
-                        <div style={{ width: `${st.eta.percent}%`, height: "100%", background: "#0ea5a0" }} />
-                      </div>
-                    )}
+
                     {/* The approved outage, judged against the rate this
                         precopy is measuring. Surfaced here as well as on the
                         change request, because the person watching this screen
