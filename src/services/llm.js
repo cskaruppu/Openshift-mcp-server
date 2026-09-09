@@ -261,6 +261,87 @@ async function callViaRelay(messages, opts) {
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Token usage, in one shape, from any provider.
+ *
+ * This exists because the number was being fetched correctly and thrown away.
+ * Providers return their response body as `raw`, and usage lives INSIDE it —
+ * but both readers looked for `result.usage` at the top level, so every token
+ * count in this product has been null since the day it was added. The console
+ * rendered "2 calls" with no tokens beside it and looked like a provider
+ * problem; it was a shape mismatch one level up.
+ *
+ * The second trap, which is why this is a function and not two lines: the
+ * providers do not agree on field names. OpenAI and Azure report
+ * prompt/completion/total; Anthropic reports input/output and no total at all.
+ * Reading only the OpenAI shape would fix this for some deployments and leave
+ * it silently broken for others — the worse outcome, because it would then
+ * look fixed.
+ *
+ * Returns nulls rather than zeros when a provider reports nothing. A cost of
+ * "0 tokens" is a claim; "not reported" is the truth, and the provenance
+ * summary already distinguishes them.
+ */
+export function normaliseUsage(raw) {
+  const u = raw?.usage || raw?.response?.usage || null;
+  if (!u) return { promptTokens: null, completionTokens: null, totalTokens: null };
+
+  // OpenAI / Azure / most OpenAI-compatible gateways.
+  if (u.total_tokens != null || u.prompt_tokens != null) {
+    const p = u.prompt_tokens ?? null, c = u.completion_tokens ?? null;
+    return {
+      promptTokens: p, completionTokens: c,
+      totalTokens: u.total_tokens ?? (p != null && c != null ? p + c : null),
+    };
+  }
+  // Anthropic — different names, and no total, so it is computed.
+  if (u.input_tokens != null || u.output_tokens != null) {
+    const p = u.input_tokens ?? null, c = u.output_tokens ?? null;
+    return { promptTokens: p, completionTokens: c, totalTokens: p != null && c != null ? p + c : null };
+  }
+  return { promptTokens: null, completionTokens: null, totalTokens: null };
+}
+
+/**
+ * What a call cost, in money rather than tokens.
+ *
+ * Tokens are an engineering unit. A change board and a budget holder think in
+ * currency, and "8,412 tokens" answers a question nobody asked. Prices move,
+ * so they are configuration: MODEL_PRICING as JSON, keyed by a substring of the
+ * model name, in units of currency per million tokens.
+ *
+ * An unpriced model returns null rather than zero — a cost of nothing is a
+ * claim, and quietly pricing an unknown model at zero is how a spend report
+ * ends up wrong in the safe-looking direction.
+ */
+export function modelPricing() {
+  try {
+    const raw = process.env.MODEL_PRICING;
+    if (raw) return JSON.parse(raw);
+  } catch { /* a malformed override falls back to the defaults below */ }
+  // Per MILLION tokens, in USD. Deliberately a small, current list rather than
+  // an exhaustive one that rots — anything unlisted reports no cost.
+  return {
+    "gpt-4o-mini": { in: 0.15, out: 0.60 },
+    "gpt-4o": { in: 2.50, out: 10.00 },
+    "gpt-4.1-mini": { in: 0.40, out: 1.60 },
+    "gpt-4.1": { in: 2.00, out: 8.00 },
+    "claude-haiku": { in: 0.80, out: 4.00 },
+    "claude-sonnet": { in: 3.00, out: 15.00 },
+    "claude-opus": { in: 15.00, out: 75.00 },
+  };
+}
+
+export function estimateCost(model, promptTokens, completionTokens, prices = null) {
+  if (!model || promptTokens == null || completionTokens == null) return null;
+  const table = prices || modelPricing();
+  const key = Object.keys(table).find((k) => String(model).toLowerCase().includes(k.toLowerCase()));
+  if (!key) return null;
+  const p = table[key];
+  const usd = (promptTokens / 1e6) * p.in + (completionTokens / 1e6) * p.out;
+  return { usd: Math.round(usd * 1e6) / 1e6, model: key, currency: "USD" };
+}
+
 // Non-streaming call — returns { text, toolCalls }
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
@@ -279,7 +360,8 @@ export async function callLLM({ messages, ...opts }) {
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, false);
     else if (o.provider === "ollama") result = await callOllama(messages, o, false);
     else result = { text: "", toolCalls: [] };
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: result?.usage, conversationId: opts.conversationId });
+    // Usage lives inside the provider's raw body, not beside it.
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message });
@@ -310,7 +392,7 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, true, hooks);
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
     else result = { text: "", toolCalls: [] };
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: result?.usage, conversationId: opts.conversationId, streaming: true });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, streaming: true });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message, streaming: true });
@@ -382,11 +464,11 @@ export async function classifyJSONWithMeta({ prompt, system, ...opts }) {
       maxTokens: 400,
       ...opts,
     });
+    const usage = normaliseUsage(r?.raw);
     const meta = {
       ok: true, ...base,
-      promptTokens: r?.usage?.prompt_tokens ?? null,
-      completionTokens: r?.usage?.completion_tokens ?? null,
-      totalTokens: r?.usage?.total_tokens ?? null,
+      ...usage,
+      cost: estimateCost(base.model, usage.promptTokens, usage.completionTokens),
       durationMs: Date.now() - t0,
       error: null,
     };

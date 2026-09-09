@@ -145,6 +145,10 @@ export async function recordMigration(entry = {}) {
     actualMinutes: entry.actualMinutes ?? null,
     measuredMbps: entry.measuredMbps ?? null,
     verification: entry.verification || null,
+    // What the model cost THIS migration. Recorded here because the analysis
+    // that produced it lives in a browser session that ends, while the question
+    // "what did the September wave cost us?" is asked long afterwards.
+    ai: entry.ai || null,
     note: entry.note || null,
     recordedBy: entry.actor || "agent",
   };

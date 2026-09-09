@@ -1546,7 +1546,18 @@ export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, 
     promptTokens: reported.length ? sum("promptTokens") : null,
     completionTokens: reported.length ? sum("completionTokens") : null,
     totalTokens: reported.length ? sum("totalTokens") : null,
-    tokensReported: reported.length === used.length,
+    // True only when EVERY call reported. When some did and some did not the
+    // sum is a floor, not a total, and the console says "at least" — silently
+    // summing partial data is how a cost figure stops being believable.
+    tokensReported: used.length > 0 && reported.length === used.length,
+    tokensPartial: reported.length > 0 && reported.length < used.length,
+    // Tokens are an engineering unit; a budget holder thinks in currency.
+    // Summed from what each call actually cost, so a wave that used two models
+    // is priced correctly rather than at one model's rate.
+    costUsd: reported.length
+      ? Math.round(used.reduce((n, u) => n + (u.cost?.usd || 0), 0) * 1e6) / 1e6
+      : null,
+    priced: used.filter((u) => u.cost).length,
     durationMs: sum("durationMs"),
     corrections: overrides,
     touchpoints: used.map((u) => ({ touchpoint: u.touchpoint, ok: u.ok, error: u.error || null })),
@@ -3781,6 +3792,12 @@ export async function archiveMigration(planName, { outcome, status = null, verif
     verification: verification
       ? { verdict: verification.verdict, headline: verification.headline, counts: verification.counts }
       : null,
+    // The AI provenance travelled onto the Plan when the plan was created, so
+    // it is still here at the terminal event — days later, from a different
+    // session, after the browser that ran the assessment has long closed.
+    ai: (() => {
+      try { return JSON.parse(ann["tcs.agentic-ai/ai-provenance"] || "null"); } catch { return null; }
+    })(),
     finishedAt: stages.finished || new Date().toISOString(),
   });
 }

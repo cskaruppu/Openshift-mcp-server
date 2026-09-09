@@ -439,10 +439,18 @@ export default function FleetAnalysis({
             ["Target cluster", analysis.cluster || "—"],
             ["Guest matrix", matrix?.asOf || "—"],
             // What the model cost, next to everything else about provenance.
+            // Calls, tokens and cost are three different numbers and the first
+            // was being read as the other two. They are labelled, in that order.
             ["AI usage", analysis.ai
               ? (analysis.ai.consulted
                   ? `${analysis.ai.calls} call${analysis.ai.calls === 1 ? "" : "s"} · ${analysis.ai.model || "model"}`
-                    + (analysis.ai.totalTokens != null ? ` · ${analysis.ai.totalTokens.toLocaleString()} tokens` : "")
+                    + (analysis.ai.totalTokens != null
+                        // "at least" when only some calls reported usage: the
+                        // sum is a floor, and a cost figure that rounds up
+                        // partial data quietly is not one worth quoting.
+                        ? ` · ${analysis.ai.tokensPartial ? "at least " : ""}${analysis.ai.totalTokens.toLocaleString()} tokens`
+                        : " · tokens not reported by the provider")
+                    + (analysis.ai.costUsd != null ? ` · $${analysis.ai.costUsd < 0.01 ? analysis.ai.costUsd.toFixed(4) : analysis.ai.costUsd.toFixed(2)}` : "")
                     + (analysis.ai.corrections ? ` · ${analysis.ai.corrections} corrected` : "")
                   : "no model consulted — rules only")
               : "—"],
@@ -457,6 +465,18 @@ export default function FleetAnalysis({
           {total} VM{total === 1 ? "" : "s"} · {totalCpu} vCPU · {gib(totalMemoryGiB)} RAM ·
           {" "}{gib(totalDiskGiB)} to move · {poweredOn} running · {warmEligible} can migrate warm
         </div>
+        {/* Why the call count is small enough to look broken. It is the
+            headline claim of this whole design, and leaving it unexplained
+            invites someone to read two calls as a failure rather than as the
+            point. */}
+        {analysis.ai?.consulted && (
+          <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 5 }}>
+            {analysis.ai.calls} call{analysis.ai.calls === 1 ? "" : "s"} covers all {total} machine{total === 1 ? "" : "s"}:
+            the supportability verdict, every readiness check, the capacity check and the transfer estimate are computed
+            from rules, and the model is asked only to recommend a migration method for the fleet in one pass.
+            {analysis.ai.corrections ? ` ${analysis.ai.corrections} of its recommendations were overruled by policy before you saw them.` : ""}
+          </div>
+        )}
       </div>
 
       {/* ── Will it fit? ─────────────────────────────────────────────────── */}

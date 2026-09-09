@@ -2337,6 +2337,15 @@ function MigrationAgent({ clusters, activeCluster }) {
                   {a.verification?.verdict && (
                     <span style={{ color: "var(--text2)" }}>verification {a.verification.verdict.replace(/-/g, " ")}</span>
                   )}
+                  {/* What the model cost THIS migration, kept with the run
+                      rather than in the session that produced it. */}
+                  {a.ai?.consulted && (
+                    <span style={{ color: "var(--text2)" }}>
+                      AI {a.ai.calls} call{a.ai.calls === 1 ? "" : "s"}
+                      {a.ai.totalTokens != null ? ` · ${a.ai.tokensPartial ? "≥" : ""}${a.ai.totalTokens.toLocaleString()} tokens` : ""}
+                      {a.ai.costUsd != null ? ` · $${a.ai.costUsd < 0.01 ? a.ai.costUsd.toFixed(4) : a.ai.costUsd.toFixed(2)}` : ""}
+                    </span>
+                  )}
                   <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
                     {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
                   </span>
