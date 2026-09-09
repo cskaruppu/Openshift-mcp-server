@@ -2057,6 +2057,120 @@ function MigrationAgent({ clusters, activeCluster }) {
         </div>
       )}
 
+      {/* ── What has run here before ───────────────────────────────────
+          OUTSIDE the step flow, deliberately. This first lived inside step 4,
+          so the only way to see past migrations was to start a new one — and
+          once a wave had finished there were no active plans to land anyone on
+          step 4 either, which made finished history unreachable. Someone
+          opening this agent to ask "what did we migrate last week?" arrives on
+          step 1, so that is where it has to be.
+
+          A migration outlives the browser tab that started it: running plans
+          are read from the cluster, finished ones from the durable store. So
+          this survives closing the window, a refresh, a rollback deleting the
+          Plan, and a different person opening it tomorrow. */}
+      {/* Shown when there is EITHER a live plan on the cluster or a finished
+          migration in the store. Requiring a live plan was the second half of
+          why this never appeared: once a wave finishes — or a rollback deletes
+          the Plan — `plans` is empty, and the archived runs were hidden behind
+          a guard that had nothing to do with them. */}
+      {(history?.plans?.length > 0 || history?.archived?.length > 0) && (
+        <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "9px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <b style={{ fontSize: "0.82rem" }}>Migration history</b>
+            <span style={{ fontSize: "0.77rem", color: "var(--text2)" }}>
+              {history.note}
+              {history.archived?.length ? ` ${history.archived.length} kept in the history store.` : ""}
+            </span>
+            <button onClick={() => setShowHistory((v) => !v)} style={{ ...S, marginLeft: "auto",
+              padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
+              {showHistory ? "Hide" : `Show all ${history.plans.length + (history.archived?.length || 0)}`}
+            </button>
+          </div>
+          {/* Finished migrations, from the durable store. These survive the
+              Plan being deleted — which a rollback does — so this is the
+              only place a rolled-back migration can still be seen. */}
+          {showHistory && (history.archived || []).map((a) => (
+            <div key={a.id} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
+              fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
+              <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                background: a.outcome === "migrated" ? "rgba(22,163,74,.14)" : "rgba(220,38,38,.12)",
+                color: a.outcome === "migrated" ? "#16a34a" : "#dc2626" }}>
+                {a.outcome === "rolled-back" ? "rolled back" : a.outcome}
+              </span>
+              <b>{a.planName}</b>
+              <span style={{ color: "var(--text2)" }}>
+                {a.strategy} · {a.vmCount} VM{a.vmCount === 1 ? "" : "s"}
+                {a.totalGiB ? ` · ${a.totalGiB} GiB` : ""}
+                {a.vmNames?.length ? ` · ${a.vmNames.slice(0, 3).join(", ")}${a.vmNames.length > 3 ? ` +${a.vmNames.length - 3}` : ""}` : ""}
+              </span>
+              {a.changeRequest && <span style={{ color: "var(--text2)" }}>{a.changeRequest}</span>}
+              {/* Promised against measured — the pair worth keeping, because
+                  the next estimate is only as good as this measurement. */}
+              {a.actualMinutes != null && (
+                <span style={{ color: "var(--text2)" }}>
+                  took {a.actualMinutes} min{a.estimatedMinutes != null ? ` (estimated ${a.estimatedMinutes})` : ""}
+                </span>
+              )}
+              {a.verification?.verdict && (
+                <span style={{ color: "var(--text2)" }}>verification {a.verification.verdict.replace(/-/g, " ")}</span>
+              )}
+              {/* What the model cost THIS migration, kept with the run
+                  rather than in the session that produced it. */}
+              {a.ai?.consulted && (
+                <span style={{ color: "var(--text2)" }}>
+                  AI {a.ai.calls} call{a.ai.calls === 1 ? "" : "s"}
+                  {a.ai.totalTokens != null ? ` · ${a.ai.tokensPartial ? "≥" : ""}${a.ai.totalTokens.toLocaleString()} tokens` : ""}
+                  {a.ai.costUsd != null ? ` · $${a.ai.costUsd < 0.01 ? a.ai.costUsd.toFixed(4) : a.ai.costUsd.toFixed(2)}` : ""}
+                </span>
+              )}
+              <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
+                {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
+              </span>
+              {a.note && <div style={{ width: "100%", color: "var(--text2)", fontSize: "0.75rem" }}>{a.note}</div>}
+            </div>
+          ))}
+          {showHistory && history.archiveNote && (
+            <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
+              ⚠ {history.archiveNote}
+            </div>
+          )}
+          {showHistory && history.durable && (
+            <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
+              Finished migrations are kept for {history.retentionDays} days. The change requests in ServiceNow
+              remain the durable record beyond that, with the migration document attached to each.
+            </div>
+          )}
+          {showHistory && history.plans.map((h) => (
+            <div key={h.planName} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
+              fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
+              <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                background: PHASE[h.phase]?.bg || "rgba(100,116,139,.12)", color: PHASE[h.phase]?.fg || "#64748b" }}>
+                {PHASE[h.phase]?.label || h.phase}
+              </span>
+              <b>{h.planName}</b>
+              <span style={{ color: "var(--muted,#5a6373)" }}>
+                {h.strategy} · {h.vms} VM{h.vms === 1 ? "" : "s"}{h.totalGiB ? ` · ${h.totalGiB} GiB` : ""}
+                {h.targetNamespace ? ` → ${h.targetNamespace}` : ""}
+              </span>
+              {h.gate?.number && <span style={{ color: "var(--muted,#5a6373)" }}>{h.gate.number}</span>}
+              <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem" }}>
+                {h.finishedAt ? `finished ${new Date(h.finishedAt).toLocaleString()}`
+                  : h.createdAt ? `started ${new Date(h.createdAt).toLocaleString()}` : ""}
+              </span>
+              {/* Anything still moving can be opened again from here —
+                  that is the whole point of the panel. */}
+              {h.active && !plans.some((p) => p.planName === h.planName) && (
+                <button onClick={() => { setPlans((ps) => [...ps, { planName: h.planName, strategy: h.strategy, vms: h.vms }]); refreshStatus([h.planName]); }}
+                  style={{ ...S, padding: "2px 9px", fontSize: "0.73rem", fontWeight: 700, cursor: "pointer" }}>
+                  Reopen
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {ready?.ok && step === 1 && (
         <>
           {/* ── Discover ──────────────────────────────────────────────────── */}
@@ -2295,105 +2409,7 @@ function MigrationAgent({ clusters, activeCluster }) {
             </div>
           )}
 
-          {/* ── What has run here before ───────────────────────────────────
-              A migration outlives the browser tab that started it. This is
-              read from the Plans on the cluster, so it survives closing the
-              window, a refresh, and a different person opening it tomorrow. */}
-          {history?.available && history.plans.length > 0 && (
-            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "9px 12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <b style={{ fontSize: "0.82rem" }}>Migration history</b>
-                <span style={{ fontSize: "0.77rem", color: "var(--muted,#5a6373)" }}>{history.note}</span>
-                <button onClick={() => setShowHistory((v) => !v)} style={{ ...S, marginLeft: "auto",
-                  padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
-                  {showHistory ? "Hide" : `Show all ${history.plans.length + (history.archived?.length || 0)}`}
-                </button>
-              </div>
-              {/* Finished migrations, from the durable store. These survive the
-                  Plan being deleted — which a rollback does — so this is the
-                  only place a rolled-back migration can still be seen. */}
-              {showHistory && (history.archived || []).map((a) => (
-                <div key={a.id} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
-                  fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
-                  <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
-                    background: a.outcome === "migrated" ? "rgba(22,163,74,.14)" : "rgba(220,38,38,.12)",
-                    color: a.outcome === "migrated" ? "#16a34a" : "#dc2626" }}>
-                    {a.outcome === "rolled-back" ? "rolled back" : a.outcome}
-                  </span>
-                  <b>{a.planName}</b>
-                  <span style={{ color: "var(--text2)" }}>
-                    {a.strategy} · {a.vmCount} VM{a.vmCount === 1 ? "" : "s"}
-                    {a.totalGiB ? ` · ${a.totalGiB} GiB` : ""}
-                    {a.vmNames?.length ? ` · ${a.vmNames.slice(0, 3).join(", ")}${a.vmNames.length > 3 ? ` +${a.vmNames.length - 3}` : ""}` : ""}
-                  </span>
-                  {a.changeRequest && <span style={{ color: "var(--text2)" }}>{a.changeRequest}</span>}
-                  {/* Promised against measured — the pair worth keeping, because
-                      the next estimate is only as good as this measurement. */}
-                  {a.actualMinutes != null && (
-                    <span style={{ color: "var(--text2)" }}>
-                      took {a.actualMinutes} min{a.estimatedMinutes != null ? ` (estimated ${a.estimatedMinutes})` : ""}
-                    </span>
-                  )}
-                  {a.verification?.verdict && (
-                    <span style={{ color: "var(--text2)" }}>verification {a.verification.verdict.replace(/-/g, " ")}</span>
-                  )}
-                  {/* What the model cost THIS migration, kept with the run
-                      rather than in the session that produced it. */}
-                  {a.ai?.consulted && (
-                    <span style={{ color: "var(--text2)" }}>
-                      AI {a.ai.calls} call{a.ai.calls === 1 ? "" : "s"}
-                      {a.ai.totalTokens != null ? ` · ${a.ai.tokensPartial ? "≥" : ""}${a.ai.totalTokens.toLocaleString()} tokens` : ""}
-                      {a.ai.costUsd != null ? ` · $${a.ai.costUsd < 0.01 ? a.ai.costUsd.toFixed(4) : a.ai.costUsd.toFixed(2)}` : ""}
-                    </span>
-                  )}
-                  <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
-                    {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
-                  </span>
-                  {a.note && <div style={{ width: "100%", color: "var(--text2)", fontSize: "0.75rem" }}>{a.note}</div>}
-                </div>
-              ))}
-              {showHistory && history.archiveNote && (
-                <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
-                  ⚠ {history.archiveNote}
-                </div>
-              )}
-              {showHistory && history.durable && (
-                <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
-                  Finished migrations are kept for {history.retentionDays} days. The change requests in ServiceNow
-                  remain the durable record beyond that, with the migration document attached to each.
-                </div>
-              )}
-              {showHistory && history.plans.map((h) => (
-                <div key={h.planName} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
-                  fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
-                  <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
-                    background: PHASE[h.phase]?.bg || "rgba(100,116,139,.12)", color: PHASE[h.phase]?.fg || "#64748b" }}>
-                    {PHASE[h.phase]?.label || h.phase}
-                  </span>
-                  <b>{h.planName}</b>
-                  <span style={{ color: "var(--muted,#5a6373)" }}>
-                    {h.strategy} · {h.vms} VM{h.vms === 1 ? "" : "s"}{h.totalGiB ? ` · ${h.totalGiB} GiB` : ""}
-                    {h.targetNamespace ? ` → ${h.targetNamespace}` : ""}
-                  </span>
-                  {h.gate?.number && <span style={{ color: "var(--muted,#5a6373)" }}>{h.gate.number}</span>}
-                  <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem" }}>
-                    {h.finishedAt ? `finished ${new Date(h.finishedAt).toLocaleString()}`
-                      : h.createdAt ? `started ${new Date(h.createdAt).toLocaleString()}` : ""}
-                  </span>
-                  {/* Anything still moving can be opened again from here —
-                      that is the whole point of the panel. */}
-                  {h.active && !plans.some((p) => p.planName === h.planName) && (
-                    <button onClick={() => { setPlans((ps) => [...ps, { planName: h.planName, strategy: h.strategy, vms: h.vms }]); refreshStatus([h.planName]); }}
-                      style={{ ...S, padding: "2px 9px", fontSize: "0.73rem", fontWeight: 700, cursor: "pointer" }}>
-                      Reopen
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* ── Plans + progress ─────────────────────────────────────────── */}
+                    {/* ── Plans + progress ─────────────────────────────────────────── */}
           {plans.map((p) => {
             const st = status[p.planName] || {};
             return (
