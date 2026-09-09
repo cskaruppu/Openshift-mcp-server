@@ -92,8 +92,29 @@ export function AutomationHub({ open, onClose }) {
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
           <span style={{ width: 40, height: 40, borderRadius: 11, background: "linear-gradient(135deg,#3d5afe,#7a3dff 55%,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.25rem", boxShadow: "0 6px 16px rgba(61,90,254,0.35)" }}>🤖</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: "1.12rem", color: "var(--fg,#151a29)", letterSpacing: "-0.01em" }}>Automation Hub</div>
-            <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>Fleet-wide agent-driven deployment &amp; incident remediation</div>
+            {/* Product lockup, then the module — the pattern the app header
+                already sets, so the two agree rather than each inventing a
+                treatment. TCS carries the brand accent at 800; the platform
+                name is the title; the module sits after a rule in secondary
+                ink. A real 1px rule rather than a "|" glyph: a pipe sits on
+                the text baseline and reads as punctuation, not as a divider.
+
+                "Agentic AI" appears in both halves of the full name, so the
+                second one is set lighter than "Automation Hub" beside it —
+                the module is what you are looking at, the qualifier is not. */}
+            <div className="ah-lockup">
+              <span className="ah-lockup-brand">TCS</span>
+              <span className="ah-lockup-product">Agentic AI for Hybrid Infrastructure</span>
+              <span className="ah-lockup-rule" aria-hidden="true" />
+              {/* One flex item, so the module name never breaks across lines.
+                  "Agentic AI-Led" on one line and "Automation Hub" on the next
+                  reads as two things rather than one name. */}
+              <span className="ah-lockup-mod">
+                <span className="ah-lockup-qual">Agentic AI-Led</span>
+                <span className="ah-lockup-module">Automation Hub</span>
+              </span>
+            </div>
+            <div style={{ fontSize: "0.78rem", color: "var(--text2)" }}>Fleet-wide agent-driven deployment &amp; incident remediation</div>
           </div>
           {presenting && (
             <button onClick={() => setShowNotes((v) => !v)} title="Show or hide the explanatory notes"

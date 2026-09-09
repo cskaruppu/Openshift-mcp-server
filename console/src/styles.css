@@ -7112,3 +7112,43 @@ h3.widget-title {
   color-scheme: dark;
 }
 .light-theme .ah-ink { --text2: #475569; color-scheme: light; }
+
+/* ── Automation Hub: the product lockup ─────────────────────────────────────
+   Matches the pattern App.jsx already sets for the main header — TCS in the
+   brand accent at 800, the platform name as the title — so the modal and the
+   app agree instead of each inventing a treatment. What is added here is the
+   MODULE half, after a divider.
+
+   The divider is a 1px element, not a "|" character. A pipe glyph sits on the
+   text baseline, inherits the font's weight and colour, and reads as
+   punctuation inside the sentence rather than as a separator between two
+   names.
+
+   The full name says "Agentic AI" twice — once in the platform, once in the
+   module. Rather than change the name, the second one is set lighter than
+   "Automation Hub" next to it: the module is what you are looking at, and
+   "Agentic AI-Led" only qualifies it. Weight carries the hierarchy so the
+   repetition stops competing with itself.
+
+   Wraps rather than truncates. This is a long string, and a product name
+   clipped mid-word in a header looks like a defect.                        */
+.ah-lockup {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px;
+  font-size: 1.12rem; letter-spacing: -0.01em; line-height: 1.3;
+}
+.ah-lockup-brand   { color: var(--accent); font-weight: 800; letter-spacing: .5px; }
+.ah-lockup-product { color: var(--text); font-weight: 800; }
+/* The module name is one flex item so it wraps whole. Split across lines it
+   reads as two separate things rather than one name. */
+.ah-lockup-mod     { display: inline-flex; align-items: baseline; gap: 6px; }
+.ah-lockup-qual    { color: var(--text2); font-weight: 500; font-size: 0.86em; }
+.ah-lockup-module  { color: var(--text); font-weight: 700; font-size: 0.92em; }
+.ah-lockup-rule {
+  width: 1px; align-self: stretch; min-height: 1.05em;
+  background: var(--border2); margin: 0 2px; flex: 0 0 auto;
+}
+/* Deliberately no viewport media query here. The modal's width is not the
+   viewport's — it is a fraction of it — so a @media rule fires at the wrong
+   moments and either hides the divider on a wide screen or leaves it stranded
+   on a narrow one. flex-wrap moves the module to its own line when it no
+   longer fits, which is the actual condition that matters. */
