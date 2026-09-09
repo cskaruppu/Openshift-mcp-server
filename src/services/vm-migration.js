@@ -1887,7 +1887,7 @@ export async function planStatusWithEta(planName) {
     windowFit: (() => {
       const need = measuredOutage(status, eta);
       const w = _lastWindow.get(planName);
-      return need && w ? windowFit({ win: w, neededMinutes: need.minutes.high }) : null;
+      return need && w ? windowFit({ win: w, neededMinutes: need.implementationMinutes, impactMinutes: need.minutes.likely }) : null;
     })(),
   };
 }
@@ -2029,15 +2029,17 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   const est = await estimatePlan(plan).catch(() => null);
   // Sized by strategy, because the two are not the same outage: a cold
   // migration is down for the whole copy, a warm one only for the cutover.
-  const proposed = proposeWindow({ est, warm });
+  const proposed = proposeWindow({ est, warm, vmCount: vms.length });
   const window = est
     ? [
         `Data to move       : ${est.totalGiB} GiB`,
         `Estimated transfer : ${est.wallClockMinutes.likely} min (${est.wallClockMinutes.low}-${est.wallClockMinutes.high})`,
         `Estimated downtime : ${est.downtimeMinutes.likely} min (${est.downtimeMinutes.low}-${est.downtimeMinutes.high})`,
         `Basis              : ${est.throughputMBps} MiB/s ${est.measured ? `measured from ${est.samples} completed migration(s) on this cluster` : "(conservative default — this cluster has completed no migrations yet)"}. ${est.note || ""}`.trim(),
-        proposed ? `Requested window   : ${proposed.minutes} min. ${proposed.basis}` : null,
-        proposed ? "                     The start below is a proposal — move it to suit, and the scheduled cutover follows wherever you put it." : null,
+        "",
+        proposed ? proposed.basis : null,
+        proposed ? "" : null,
+        proposed ? "The start is a proposal — move it to suit your maintenance calendar, and the scheduled cutover follows wherever you put it." : null,
       ].filter(Boolean).join("\n")
     : "Transfer time will be measured live once the migration starts.";
 
@@ -2317,46 +2319,91 @@ export function cutoverDecision({ gate, window: win, state, now = Date.now() } =
 /**
  * The window to ask the change board for. Pure.
  *
- * The distinction that makes this right, and that is easy to get wrong: for a
- * COLD migration the transfer IS the outage, so the window has to cover the
- * whole copy. For a WARM one the copy happens while the guest serves users and
- * only the cutover is downtime — so asking for a window the length of the
- * transfer asks the board to approve an outage twenty times longer than the one
- * that will happen, and sets a window that closes before the precopy has even
- * finished on a large VM.
+ * The mistake this replaces is worth naming, because it is the obvious one: a
+ * change window is NOT the outage. They are two different fields on the change
+ * record and two different promises. start_date/end_date is the IMPLEMENTATION
+ * WINDOW — the period the work is authorised to happen in. The outage is the
+ * service impact inside it, and for a warm migration it is a small fraction of
+ * it. Sizing the window from the downtime asked a board to authorise fifteen
+ * minutes of work, which no change board would accept and no engineer could
+ * work inside.
  *
- * The start is a PROPOSAL. The board moves it whenever it likes; the drift
- * check below follows wherever they put it.
+ * What an implementation window has to cover, and what every change process
+ * asks for:
+ *
+ *   pre-checks    the plan, the approval, the state of the source
+ *   the work      the cutover for warm; the whole copy for cold
+ *   verification  boot, address, disks, and someone testing the application
+ *   BACKOUT       the one people leave out. If the cutover fails at minute ten
+ *                 of a fifteen-minute window there is no authorised time left
+ *                 to put it back, and now you are running unapproved work in
+ *                 the middle of an incident.
+ *   contingency   because the estimate is an estimate
+ *
+ * Floored at a standard maintenance slot (MIGRATION_MIN_WINDOW_HOURS, default
+ * 4h), because that is the granularity real change calendars and freeze
+ * periods work in — nobody schedules a 22-minute slot.
+ *
+ * Both numbers are returned and both go on the record: the board authorises a
+ * window of hours in which the service is down for minutes, and saying so is
+ * the difference between an honest change request and an alarming one.
  */
-export function proposeWindow({ est, warm, now = Date.now(), leadHours = null } = {}) {
+export function proposeWindow({ est, warm, vmCount = 1, now = Date.now(), leadHours = null, minHours = null } = {}) {
   if (!est) return null;
   const lead = leadHours ?? Number(process.env.MIGRATION_CR_LEAD_HOURS ?? 24);
-  // The high end, not the likely one: a window sized on the median estimate is
-  // one the work overruns half the time.
-  const minutes = Math.max(15, Math.ceil(warm ? est.downtimeMinutes.high : est.wallClockMinutes.high));
-  // Rounded up to the next quarter hour — a change window starting at 22:07 is
-  // a machine talking to a person.
-  const start = new Date(Math.ceil((now + lead * 3600000) / 900000) * 900000);
+  const floorHours = minHours ?? Number(process.env.MIGRATION_MIN_WINDOW_HOURS ?? 4);
+  const n = Math.max(1, vmCount);
+
+  // The high end of the estimate throughout, not the median: a window sized on
+  // the likely figure is one the work overruns half the time.
+  const work = Math.ceil(warm ? est.downtimeMinutes.high : est.wallClockMinutes.high);
+  const precheck = 15;
+  const verify = Math.max(15, 10 * n);
+  // Powering the source VMs back on and confirming them. This is what the
+  // window has to still have room for when something goes wrong late in it.
+  const backout = 30 + 5 * n;
+  const contingency = Math.max(15, Math.ceil(work * 0.3));
+
+  const computed = precheck + work + verify + backout + contingency;
+  const floorMin = floorHours * 60;
+  // Rounded up to the next half hour. Change calendars are not written in
+  // minutes, and a window ending at 03:07 invites someone to shave it.
+  const minutes = Math.max(floorMin, Math.ceil(computed / 30) * 30);
+
+  const start = new Date(Math.ceil((now + lead * 3600000) / 1800000) * 1800000);
   const end = new Date(start.getTime() + minutes * 60000);
+  // The service impact — a different promise from the window, stated as one.
+  const impact = warm ? est.downtimeMinutes : est.wallClockMinutes;
+
+  const hrs = (m) => (m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}m`);
   return {
-    start: start.toISOString(), end: end.toISOString(), minutes,
+    start: start.toISOString(), end: end.toISOString(), minutes, hours: minutes / 60,
     // ServiceNow wants "YYYY-MM-DD HH:MM:SS" in UTC.
     snowStart: start.toISOString().slice(0, 19).replace("T", " "),
     snowEnd: end.toISOString().slice(0, 19).replace("T", " "),
-    basis: warm
-      ? `The guest keeps running while its disks copy (about ${est.wallClockMinutes.likely} min), so the window covers the cutover only — ${minutes} min at the high end of the estimate.`
-      : `A cold migration powers the guest off for the whole copy, so the window covers all of it — ${minutes} min at the high end of the estimate.`,
+    components: { precheck, work, verify, backout, contingency, computed },
+    flooredToMinimum: minutes > Math.ceil(computed / 30) * 30,
+    serviceImpact: { minutes: impact, note: warm
+      ? "Downtime is the cutover only — the guest serves users while its disks copy."
+      : "A cold migration is down for the whole copy." },
+    basis: [
+      `Implementation window: ${hrs(minutes)}.`,
+      `  ${"Pre-checks".padEnd(18)} ${precheck} min`,
+      `  ${(warm ? "Cutover" : "Power off and copy").padEnd(18)} ${work} min`,
+      `  ${"Verification".padEnd(18)} ${verify} min`,
+      `  ${"Backout if needed".padEnd(18)} ${backout} min`,
+      `  ${"Contingency".padEnd(18)} ${contingency} min`,
+      // Only said when it is true: the floor applies to a small wave, not to a
+      // ten-hour copy that earned its window on its own.
+      minutes > Math.ceil(computed / 30) * 30 ? `  Floored at the ${floorHours}h standard maintenance slot.` : null,
+      "",
+      `Expected service impact: ${impact.likely} min (${impact.low}-${impact.high}). ${warm
+        ? "The guest keeps serving users while its disks copy; only the cutover is downtime."
+        : "The guest is powered off for the whole copy."}`,
+    ].filter((x) => x !== null).join("\n"),
   };
 }
 
-/**
- * Has the change board moved the window out from under a scheduled cutover?
- * Pure.
- *
- * A cutover stamped when the window said 22:00 fires at 22:00 even after the
- * board pushes the change to 02:00 — outside the window they approved, on a
- * decision made before they moved it. This is the read that catches it.
- */
 export function windowDrift(stamped, win, now = Date.now(), toleranceMs = 60000) {
   if (!stamped) return { drifted: false, reason: "No cutover is scheduled." };
   const at = Date.parse(stamped);
@@ -2378,26 +2425,31 @@ export function windowDrift(stamped, win, now = Date.now(), toleranceMs = 60000)
 }
 
 /**
- * Does the outage the board approved still fit what we are now measuring? Pure.
+ * Does the work still fit the window the board approved? Pure.
  *
- * The window was sized from an estimate. Once bytes are moving we are no longer
- * estimating — and the useful moment to learn the plan was wrong is BEFORE the
- * window opens, while somebody can still extend it or cut the wave down, not
- * halfway through an overrun.
+ * The comparison that matters is the IMPLEMENTATION need against the window —
+ * the copy or cutover, plus verifying it, plus enough left to put it back if it
+ * goes wrong. Comparing the outage alone against the window would say a
+ * 48-minute cutover "fits" a four-hour window right up to the moment it fails
+ * with twenty minutes left and nowhere to back out to.
+ *
+ * Both numbers are reported, because the board cares about both: whether the
+ * work fits the slot, and how long the service is actually down.
  */
-export function windowFit({ win, approvedMinutes = null, neededMinutes = null } = {}) {
+export function windowFit({ win, approvedMinutes = null, neededMinutes = null, impactMinutes = null } = {}) {
   const approved = approvedMinutes ?? (win?.known && win.start && win.end
     ? Math.round((Date.parse(win.end) - Date.parse(win.start)) / 60000) : null);
   if (approved == null || neededMinutes == null) {
     return { known: false, fits: null, note: "Not enough measured to judge the window yet." };
   }
   const fits = neededMinutes <= approved;
+  const hrs = (m) => (m >= 90 ? `${(m / 60).toFixed(1)}h` : `${m} min`);
   return {
-    known: true, fits, approvedMinutes: approved, neededMinutes,
+    known: true, fits, approvedMinutes: approved, neededMinutes, impactMinutes,
     overrunMinutes: fits ? 0 : neededMinutes - approved,
     note: fits
-      ? `The approved ${approved}-minute window still covers the ${neededMinutes} min now measured.`
-      : `The approved window is ${approved} min. At the rate now being measured the outage needs about ${neededMinutes} min — ${neededMinutes - approved} min more than was approved.`,
+      ? `The approved ${hrs(approved)} window still covers the ${hrs(neededMinutes)} the work now needs${impactMinutes != null ? `, of which ${hrs(impactMinutes)} is service impact` : ""}.`
+      : `The approved window is ${hrs(approved)}. At the rate now being measured the work needs about ${hrs(neededMinutes)} including verification and time to back out — ${hrs(neededMinutes - approved)} more than was approved.`,
     action: fits ? null : "Ask the change board to extend the window, or take fewer machines in this wave.",
   };
 }
@@ -2427,8 +2479,15 @@ export function measuredOutage(status = {}, live = null) {
     throughputMBps: live.mbps,
     concurrency: Math.min(2, vms.length),
   });
+  // The window has to hold the work, not only the outage: verifying it, and
+  // enough left to put it back. Same components proposeWindow sized it with,
+  // re-costed at the rate actually being achieved.
+  const n = vms.length;
+  const work = Math.ceil(status.warm ? est.downtimeMinutes.high : est.wallClockMinutes.high);
+  const implementation = 15 + work + Math.max(15, 10 * n) + (30 + 5 * n) + Math.max(15, Math.ceil(work * 0.3));
   return {
     minutes: est.downtimeMinutes,
+    implementationMinutes: implementation,
     mbps: live.mbps,
     basis: `Costed at the ${live.mbps} MiB/s this transfer is measuring, not at the rate the estimate assumed.`,
   };
@@ -2554,7 +2613,7 @@ export async function reconcileCutoverWindow(planName, { record = null, actor = 
   // ── 2. Tell the board if the outage no longer fits what they approved ───
   const need = measuredOutage(status, status.eta);
   if (need) {
-    const fit = windowFit({ win, neededMinutes: need.minutes.high });
+    const fit = windowFit({ win, neededMinutes: need.implementationMinutes, impactMinutes: need.minutes.likely });
     out.fit = { ...fit, measuredMbps: need.mbps };
     // Said once per plan. A work note on every ten-second poll is not a warning,
     // it is noise, and noise is how a real warning gets missed.
@@ -2565,7 +2624,7 @@ export async function reconcileCutoverWindow(planName, { record = null, actor = 
         const { updateRecord } = await import("../utils/servicenow-client.js");
         await updateRecord("change_request", gate.sysId, {
           work_notes: [
-            "[TCS Agentic AI] The approved window no longer covers the measured outage.",
+            "[TCS Agentic AI] The approved window no longer covers the work.",
             "",
             fit.note,
             need.basis,
@@ -2576,7 +2635,7 @@ export async function reconcileCutoverWindow(planName, { record = null, actor = 
           ].join("\n"),
         });
         await annotatePlan(planName, { [FIT_ANN]: new Date().toISOString() }).catch(() => {});
-        out.actions.push(`${gate.number} told the outage now needs ${fit.neededMinutes} min against an approved ${fit.approvedMinutes} min.`);
+        out.actions.push(`${gate.number} told the work now needs ${fit.neededMinutes} min against an approved ${fit.approvedMinutes} min.`);
       } catch (e) {
         out.actions.push(`Could not add the window-fit note: ${e.message}`);
       }

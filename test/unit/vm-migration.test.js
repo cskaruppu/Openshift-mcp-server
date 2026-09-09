@@ -1243,30 +1243,48 @@ test("cutover is refused without approval, scheduled outside the window, allowed
 // ---------------------------------------------------------------------------
 // The change window: sized by strategy, followed when it moves, judged live
 // ---------------------------------------------------------------------------
-test("the requested window is the outage, which is not the same as the transfer", async () => {
+test("the change window is the implementation window, not the outage", async () => {
   const { proposeWindow } = await import("../../src/services/vm-migration.js");
   const est = { wallClockMinutes: { low: 60, likely: 90, high: 120 }, downtimeMinutes: { low: 4, likely: 6, high: 11 } };
   const now = Date.parse("2026-09-08T10:03:00Z");
+  const w = (o) => proposeWindow({ est, now, leadHours: 24, minHours: 4, ...o });
 
-  // Cold: the guest is off for the whole copy, so the window covers all of it.
-  const cold = proposeWindow({ est, warm: false, now, leadHours: 24 });
-  assert.equal(cold.minutes, 120);
-  assert.match(cold.basis, /powers the guest off for the whole copy/);
+  // The error this replaces: a window sized from the downtime asked a board to
+  // authorise 15 minutes of work. start_date/end_date is the period the work is
+  // AUTHORISED to happen in; the outage is the service impact inside it.
+  const warm = w({ warm: true, vmCount: 1 });
+  assert.equal(warm.minutes, 240, "floored at a 4h standard maintenance slot");
+  assert.equal(warm.flooredToMinimum, true);
+  // And the outage is stated separately, as the much smaller number it is.
+  assert.equal(warm.serviceImpact.minutes.likely, 6);
+  assert.match(warm.basis, /Expected service impact: 6 min/);
 
-  // Warm: only the cutover is downtime. Asking for 120 minutes would ask the
-  // board to approve an outage eleven times longer than the one that happens.
-  const warm = proposeWindow({ est, warm: true, now, leadHours: 24 });
-  assert.equal(warm.minutes, 15, "floored at 15 min, from an 11-min cutover");
-  assert.match(warm.basis, /covers the cutover only/);
-  assert.ok(warm.minutes < cold.minutes);
+  // The window has to still contain a backout. A window with no room to put it
+  // back is unapproved work in the middle of an incident.
+  assert.ok(warm.components.backout > 0);
+  assert.ok(warm.components.verify > 0);
+  assert.ok(warm.components.contingency > 0);
 
-  // The high end, not the median: a window sized on the likely figure is one
-  // the work overruns half the time.
-  assert.equal(proposeWindow({ est: { ...est, downtimeMinutes: { low: 20, likely: 30, high: 45 } }, warm: true, now }).minutes, 45);
+  // Work big enough to earn its own window is not floored — it scales.
+  const big = proposeWindow({
+    est: { wallClockMinutes: { low: 150, likely: 232, high: 340 }, downtimeMinutes: { low: 150, likely: 232, high: 340 } },
+    warm: false, vmCount: 6, now, minHours: 4,
+  });
+  assert.equal(big.minutes, 600, "10h, from a 340-min copy plus verification, backout and contingency");
+  assert.equal(big.flooredToMinimum, false);
+  assert.ok(big.minutes > warm.minutes);
 
-  // Starts on a quarter hour, and in the format ServiceNow stores.
-  assert.equal(new Date(cold.start).getUTCMinutes() % 15, 0);
-  assert.match(cold.snowStart, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+  // Cold and warm differ in the SERVICE IMPACT, which is the honest place for
+  // the difference: cold is down for the whole copy, warm only for the cutover.
+  assert.equal(w({ warm: false, vmCount: 1 }).serviceImpact.minutes.likely, 90);
+  assert.equal(w({ warm: true, vmCount: 1 }).serviceImpact.minutes.likely, 6);
+
+  // Verification and backout scale with the number of machines.
+  assert.ok(w({ warm: true, vmCount: 10 }).components.verify > w({ warm: true, vmCount: 1 }).components.verify);
+
+  // Half-hour boundaries, and the format ServiceNow stores.
+  assert.equal(new Date(warm.start).getUTCMinutes() % 30, 0);
+  assert.match(warm.snowStart, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
   assert.equal(proposeWindow({ est: null, warm: true }), null);
 });
 
@@ -1300,10 +1318,13 @@ test("the approved window is judged against what the precopy is actually measuri
 
   // The window was sized from an estimate; the transfer has since told us what
   // this source and network really do.
-  const tight = windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T02:30:00Z" }, neededMinutes: 48 });
+  const tight = windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T02:30:00Z" }, neededMinutes: 48, impactMinutes: 12 });
   assert.equal(tight.fits, false);
   assert.equal(tight.approvedMinutes, 30);
   assert.equal(tight.overrunMinutes, 18);
+  // The judgement is about the WORK fitting the slot — verification and time
+  // to back out included, not the outage alone.
+  assert.match(tight.note, /verification and time to back out/);
   assert.match(tight.action, /extend the window|fewer machines/);
 
   const fine = windowFit({ win: { known: true, start: "2026-09-09T02:00:00Z", end: "2026-09-09T03:00:00Z" }, neededMinutes: 20 });
@@ -1322,6 +1343,9 @@ test("the approved window is judged against what the precopy is actually measuri
   const slow = measuredOutage(status, { state: "transferring", mbps: 20 });
   const fast = measuredOutage(status, { state: "transferring", mbps: 200 });
   assert.ok(slow.minutes.high > fast.minutes.high, "a slower measured rate costs a longer outage");
+  // And a longer implementation need, which is what the window is judged on.
+  assert.ok(slow.implementationMinutes > fast.implementationMinutes);
+  assert.ok(slow.implementationMinutes > slow.minutes.high, "the window must hold more than the outage");
   assert.match(slow.basis, /20 MiB\/s/);
 
   // And it is genuinely driven by the live reading, not by the default.

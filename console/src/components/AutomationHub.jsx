@@ -1364,6 +1364,15 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
           {win.known ? (win.open ? "✓ Inside the approved window" : win.expired ? "✖ Window closed" : "◷ Window not open yet") : "• No window on the change record"}
         </span>
         {win.known && <span style={{ color: "var(--muted,#5a6373)" }}>{when(win.start)} → {when(win.end)}</span>}
+        {/* The window and the outage are different promises and are shown as
+            two numbers. A four-hour window in which the service is down for
+            seven minutes is a normal change request; conflating them makes it
+            read as a four-hour outage. */}
+        {win.known && win.start && win.end && (
+          <span style={{ color: "var(--muted,#5a6373)" }}>
+            · {(Math.round((Date.parse(win.end) - Date.parse(win.start)) / 60000) / 60).toFixed(1)}h authorised
+          </span>
+        )}
       </div>
       <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 2 }}>{d.reason}</div>
       {d.fix && <div style={{ fontSize: "0.76rem", marginTop: 2 }}>→ {d.fix}</div>}
