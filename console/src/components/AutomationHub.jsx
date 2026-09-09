@@ -1562,6 +1562,61 @@ function snapshotCost(precopyDoneAt, atMs, max = 28) {
   };
 }
 
+/* Choosing the change window.
+   Blank means "use the proposal", which is the common case and stays one
+   click. Filling it in is for the person who knows the maintenance calendar —
+   a freeze period, a month-end, a window the board has already agreed. The
+   server validates whatever arrives, so this form is a convenience and never
+   the check. */
+function CrWindowPicker({ value, warm, onChange }) {
+  const [open, setOpen] = useState(false);
+  const fmt = (ms) => {
+    const d = new Date(ms);
+    return new Date(ms - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  const set = (k, v) => onChange({ ...(value || {}), [k]: v ? new Date(v).toISOString() : "" });
+
+  if (!open) {
+    return (
+      <div style={{ fontSize: "0.76rem", marginTop: 5, color: "var(--text2)" }}>
+        The change request will be raised with a window sized from this plan
+        {warm ? " — a same-day cutover, because a warm precopy spends a changed-block snapshot for every hour it waits" : ""}.{" "}
+        <button onClick={() => setOpen(true)} style={{ background: "none", border: "none", padding: 0,
+          font: "inherit", color: "#3d5afe", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
+          Choose the window myself
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 6,
+      padding: "7px 9px", borderRadius: 8, background: "rgba(61,90,254,.06)", border: "1px solid rgba(61,90,254,.3)" }}>
+      <span style={{ fontSize: "0.77rem", fontWeight: 700 }}>Change window</span>
+      <input type="datetime-local" min={fmt(Date.now())}
+        value={value?.start ? fmt(Date.parse(value.start)) : ""}
+        onChange={(e) => set("start", e.target.value)}
+        style={{ padding: "4px 8px", borderRadius: 7, fontFamily: "inherit", fontSize: "0.78rem",
+          border: "1px solid var(--border,#e4e8f1)", background: "var(--card,#fff)", color: "inherit" }} />
+      <span style={{ color: "var(--text2)" }}>→</span>
+      <input type="datetime-local" min={value?.start ? fmt(Date.parse(value.start)) : fmt(Date.now())}
+        value={value?.end ? fmt(Date.parse(value.end)) : ""}
+        onChange={(e) => set("end", e.target.value)}
+        style={{ padding: "4px 8px", borderRadius: 7, fontFamily: "inherit", fontSize: "0.78rem",
+          border: "1px solid var(--border,#e4e8f1)", background: "var(--card,#fff)", color: "inherit" }} />
+      <button onClick={() => { onChange(null); setOpen(false); }}
+        style={{ background: "none", border: "none", padding: 0, font: "inherit",
+          color: "var(--text2)", cursor: "pointer", textDecoration: "underline", fontSize: "0.76rem" }}>
+        use the proposal instead
+      </button>
+      {value?.start && value?.end && (
+        <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+          {((Date.parse(value.end) - Date.parse(value.start)) / 3600000).toFixed(1)}h authorised
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Megabytes, the unit MTV's own console reports a disk transfer in. */
 function mib(n) { return Math.round((n || 0) / 1048576).toLocaleString(); }
 
@@ -1581,6 +1636,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [cutovers, setCutovers] = useState({});        // planName -> cutover posture
   const [verifs, setVerifs] = useState({});            // planName -> verification result
   const [decoms, setDecoms] = useState({});            // planName -> decommission posture
+  const [crWindow, setCrWindow] = useState({});        // planName -> { start, end } chosen by the operator
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [history, setHistory] = useState(null);        // every plan on the cluster
   const [phase, setPhase] = useState(0);               // which analysis step is showing
@@ -1729,15 +1785,21 @@ function MigrationAgent({ clusters, activeCluster }) {
   // ── Change request: raise, then poll for the CAB's answer ────────────────
   // The verdict is written onto the Plan itself, so a console refresh — or a
   // different person tomorrow — sees the same gate.
-  const raiseCR = async (planName) => {
+  // The window is the operator's to choose; everything else about the request
+  // is computed from the plan. Passing nothing keeps the proposal.
+  const raiseCR = async (planName, window = null) => {
     setBusy(planName);
     try {
       // No estimate is sent: the server computes it from the plan's own
       // recorded footprint, so the CAB sees the number for the machines in
       // front of it rather than for the whole wave.
-      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`, {});
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/change-request`, window ? { window } : {});
       if (d.ok) {
-        showToast(d.alreadyRaised ? d.message : `${d.number} raised — awaiting approval`, "ok");
+        showToast(d.alreadyRaised ? d.message
+          : `${d.number} raised${d.attached ? " with the migration record attached" : ""} — awaiting approval`, "ok");
+        // A window shorter than the work is allowed but never silent.
+        if (d.warning) showToast(d.warning, "err");
+        setCrWindow((w) => ({ ...w, [planName]: null }));
         refreshStatus([planName]);
       } else showToast(d.error || "Could not raise the change request", "err");
     } catch (e) { showToast(e.message, "err"); }
@@ -2292,7 +2354,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                       enabled from the plan's own annotations, and the server
                       re-checks them — an enabled button is not authorisation. */}
                   {!st.gate?.number && st.gate?.required !== false && (
-                    <button onClick={() => raiseCR(p.planName)} disabled={!st.ready || busy === p.planName}
+                    <button onClick={() => raiseCR(p.planName, crWindow[p.planName] || null)} disabled={!st.ready || busy === p.planName}
                       title={!st.ready ? "MTV has not validated this plan yet" : "Raise the ServiceNow change request for this migration"}
                       style={{ ...S, padding: "4px 12px", fontWeight: 700, border: "none",
                         background: st.ready ? "#7c3aed" : "rgba(148,163,184,.3)", color: st.ready ? "#fff" : "inherit",
@@ -2323,6 +2385,19 @@ function MigrationAgent({ clusters, activeCluster }) {
                   </button>
                 </div>
                 {(st.critical || []).map((c, i) => <div key={i} style={{ color: "#dc2626", fontSize: "0.76rem", marginTop: 4 }}>✖ {c}</div>)}
+                {/* The window on the change request. Everything else about the
+                    request is computed from the plan — the machines, the
+                    estimate, the downtime, the backout — but the WINDOW belongs
+                    to whoever knows the change calendar, the freeze periods and
+                    the business, and that is never this tool. Left blank it
+                    uses the proposal sized from this plan's own footprint. */}
+                {!st.gate?.number && st.gate?.required !== false && st.ready && (
+                  <CrWindowPicker
+                    value={crWindow[p.planName] || null}
+                    warm={st.warm}
+                    onChange={(w) => setCrWindow((c) => ({ ...c, [p.planName]: w }))}
+                  />
+                )}
                 {/* Where this plan is, on the route this plan is actually on. */}
                 {st.journey && <Journey j={st.journey} />}
                 {st.gate && st.gate.required !== false && (

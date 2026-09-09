@@ -272,3 +272,111 @@ ${driftBlock}
 </footer>
 </body></html>`;
 }
+
+/**
+ * The document a change board actually needs attached to the request: what is
+ * being migrated, how, how long it takes, what it costs in downtime, and what
+ * a model touched.
+ *
+ * Built from the PLAN, not from whatever the browser was holding. A change
+ * request raised days later from a fresh session carries the same document,
+ * because the Plan carries the facts: the VM list, the source footprint
+ * recorded at creation, the estimate and the rate it assumed, and the AI
+ * provenance. Nothing here is re-derived from a source that may have moved.
+ */
+export function planReportHtml(plan = {}, meta = {}) {
+  const spec = plan.spec || {};
+  const ann = plan.metadata?.annotations || {};
+  const warm = spec.warm === true;
+  const name = plan.metadata?.name || "plan";
+  const est = meta.est || null;
+  const win = meta.window || null;
+
+  let sourceVms = [];
+  try { sourceVms = JSON.parse(ann["tcs.agentic-ai/source-vms"] || "[]"); } catch { sourceVms = []; }
+  const byName = Object.fromEntries(sourceVms.map((v) => [v.n, v]));
+  const vms = (spec.vms || []).map((v) => v.name || v.id).filter(Boolean);
+
+  let ai = null;
+  try { ai = JSON.parse(ann["tcs.agentic-ai/ai-provenance"] || "null"); } catch { ai = null; }
+
+  const rows = vms.map((n) => {
+    const s = byName[n] || {};
+    return `<tr>
+      <td class="mono">${esc(n)}</td>
+      <td>${s.c ?? "—"}</td>
+      <td>${s.m != null ? `${esc(s.m)} GiB` : "—"}</td>
+      <td>${s.g != null ? `${esc(s.g)} GiB` : "—"}</td>
+      <td>${s.d ?? "—"}</td>
+      <td class="mono">${esc((s.i || []).join(", ") || "—")}</td>
+    </tr>`;
+  }).join("");
+
+  const totalGiB = sourceVms.reduce((n, v) => n + (v.g || 0), 0) || Number(ann["tcs.agentic-ai/total-gib"] || 0);
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>${esc(name)} — migration change record</title>
+<style>
+  body { font: 14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif; color: #1e293b; margin: 28px; max-width: 900px; }
+  h1 { font-size: 19px; margin: 0 0 2px; } h2 { font-size: 15px; margin: 22px 0 7px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+  .sub { color: #475569; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; background: #f1f5f9; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; }
+  .mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  dl { display: grid; grid-template-columns: 210px 1fr; gap: 3px 12px; margin: 0; }
+  dt { color: #475569; } dd { margin: 0; }
+  pre { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; padding: 9px 11px; font-size: 12.5px; white-space: pre-wrap; }
+  footer { margin-top: 26px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #475569; font-size: 12px; }
+</style></head><body>
+<h1>${esc(name)}</h1>
+<div class="sub">Migration to OpenShift Virtualization · ${warm ? "warm" : "cold"} · ${vms.length} virtual machine${vms.length === 1 ? "" : "s"} · ${esc(Math.round(totalGiB))} GiB</div>
+
+<h2>What is being migrated</h2>
+<table><thead><tr><th>Virtual machine</th><th>vCPU</th><th>Memory</th><th>Storage</th><th>Disks</th><th>IP address</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="6">No VMs recorded on the plan.</td></tr>'}</tbody></table>
+
+<h2>How it moves</h2>
+<dl>
+  <dt>Strategy</dt><dd>${warm
+    ? "Warm — the guest keeps serving users while its disks copy. The only downtime is the cutover at the end."
+    : "Cold — the guest is powered off for the whole copy. The transfer is the outage."}</dd>
+  <dt>Source provider</dt><dd>${esc(spec.provider?.source?.name || "—")}</dd>
+  <dt>Target namespace</dt><dd>${esc(spec.targetNamespace || "—")}</dd>
+  <dt>Storage map</dt><dd>${esc(spec.map?.storage?.name || "—")}</dd>
+  <dt>Network map</dt><dd>${esc(spec.map?.network?.name || "—")}</dd>
+</dl>
+
+<h2>Time and impact</h2>
+${est ? `<dl>
+  <dt>Data to move</dt><dd>${esc(est.totalGiB)} GiB</dd>
+  <dt>Estimated transfer</dt><dd>${esc(est.wallClockMinutes.likely)} min (${esc(est.wallClockMinutes.low)}–${esc(est.wallClockMinutes.high)})</dd>
+  <dt>Expected service impact</dt><dd><b>${esc(est.downtimeMinutes.likely)} min</b> (${esc(est.downtimeMinutes.low)}–${esc(est.downtimeMinutes.high)})${warm ? " — the cutover only" : " — the whole copy"}</dd>
+  <dt>Basis</dt><dd>${esc(est.throughputMBps)} MiB/s, ${est.measured
+    ? `measured from ${esc(est.samples)} completed migration(s) on this cluster`
+    : "a conservative default — this cluster has completed no migrations yet"}</dd>
+</dl>` : "<p>The transfer time will be measured live once the migration starts.</p>"}
+${win ? `<pre>${esc(win.basis)}</pre>` : ""}
+
+<h2>Backing out</h2>
+<p>${warm
+  ? "Until the cutover the source VM keeps running and serving users — it is the way back at every moment before it. After the cutover the source is powered off and intact, and powering it back on restores service."
+  : "The source VM is powered off for the copy and is never deleted. Powering it back on restores service."}
+The migrated disks can be discarded; the migration only becomes irreversible when the source VMs are deleted, which is a separate change request raised after a soak period.</p>
+
+<h2>What a model contributed</h2>
+${ai?.consulted ? `<dl>
+  <dt>Consulted</dt><dd>${esc(ai.provider || "?")} / ${esc(ai.model || "?")}, ${esc(ai.calls)} call(s)${ai.totalTokens != null ? `, ${esc(ai.totalTokens)} tokens` : ""}</dd>
+  <dt>Advised on</dt><dd>${esc((ai.advisedByAI || []).join("; ") || "—")}</dd>
+  <dt>Overruled by policy</dt><dd>${esc(ai.corrections || 0)} recommendation(s) corrected before being shown</dd>
+</dl>` : "<p>No model was consulted. Every value in this record came from rules.</p>"}
+<p>The model advises; code decides; a person approves. It has no cluster access and no tools, and the
+supportability verdict, the readiness checks, the capacity check and the transfer estimate are all
+computed rather than generated.</p>
+
+<footer>
+Generated by TCS Agentic AI from plan <span class="mono">${esc(name)}</span> at ${esc(meta.at || new Date().toISOString())}.
+Every figure is read from the plan itself, so this record does not change if the source estate does.
+</footer>
+</body></html>`;
+}

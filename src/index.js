@@ -3052,9 +3052,15 @@ async function startSSE() {
           try {
             // The estimate is computed server-side from the plan's own
             // recorded footprint — a client-supplied figure could describe a
-            // different set of machines than the one being approved.
+            // different set of machines than the one being approved. The
+            // WINDOW is the operator's to choose, so that one is read from the
+            // request and validated rather than computed.
+            const body = await readJsonBody(req).catch(() => ({}));
             const out = await withClusterContext(url, async () => mig.raiseMigrationCR(m[1], {
               actor: req.user?.name || "operator", cluster,
+              // A window the operator chose, when they chose one. Absent means
+              // use the proposal computed from this plan's own footprint.
+              window: body?.window?.start && body?.window?.end ? body.window : null,
             }));
             return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
           } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }

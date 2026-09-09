@@ -1488,3 +1488,91 @@ test("a chosen cutover time is checked against both ends of the window", async (
   assert.ok(Date.parse("2026-09-10T20:00:00Z") > end, "after it closes must be rejected");
   assert.ok(Date.parse("2026-09-10T17:00:00Z") > start && Date.parse("2026-09-10T17:00:00Z") < end, "inside is allowed");
 });
+
+// ---------------------------------------------------------------------------
+// The change request's whole life: raised, attached, closed or cancelled
+// ---------------------------------------------------------------------------
+test("an operator's chosen window is checked for what is nonsensical, not for taste", async () => {
+  const { validateWindow } = await import("../../src/services/vm-migration.js");
+  const now = Date.parse("2026-09-10T09:00:00Z");
+  const at = (h) => new Date(now + h * 3600000).toISOString();
+
+  const ok = validateWindow({ start: at(24), end: at(28), now });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.minutes, 240);
+  assert.equal(ok.warning, null);
+  assert.match(ok.snowStart, /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/, "the format ServiceNow stores");
+
+  // Only the nonsensical is refused. A freeze period, a month-end or a window
+  // the board already agreed are all reasons this tool knows nothing about.
+  assert.equal(validateWindow({ start: at(28), end: at(24), now }).ok, false, "ends before it starts");
+  assert.equal(validateWindow({ start: at(-5), end: at(1), now }).ok, false, "starts in the past");
+  assert.equal(validateWindow({ start: "nonsense", end: at(4), now }).ok, false);
+
+  // A window shorter than the work is ALLOWED — a board may knowingly approve
+  // a tight one — but it is never accepted silently.
+  const tight = validateWindow({ start: at(24), end: at(24.5), needMinutes: 180, now });
+  assert.equal(tight.ok, true);
+  assert.match(tight.warning, /no room to put it back/);
+});
+
+test("the change request closes on evidence, and only on evidence", async () => {
+  const { closeMigrationCR } = await import("../../src/services/vm-migration.js");
+  // Nothing here reaches a cluster: an unknown plan is the first gate, and it
+  // is the one that proves closure is never assumed.
+  const missing = await closeMigrationCR("no-such-plan", { verification: { verdict: "passed" } });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /not found/);
+});
+
+test("the migration record attached to the change request is built from the plan", async () => {
+  const { planReportHtml } = await import("../../src/services/assessment-report.js");
+  const plan = {
+    metadata: {
+      name: "mig-linux-warm-dev-20260909",
+      annotations: {
+        "tcs.agentic-ai/total-gib": "20",
+        "tcs.agentic-ai/source-vms": JSON.stringify([{ n: "redhat2", c: 4, m: 16, g: 20, d: 1, i: ["10.4.2.11"] }]),
+        "tcs.agentic-ai/ai-provenance": JSON.stringify({ consulted: true, provider: "openai", model: "gpt-4o-mini", calls: 3, corrections: 1, advisedByAI: ["migration method"] }),
+      },
+    },
+    spec: {
+      warm: true, targetNamespace: "dev",
+      provider: { source: { name: "vcenter-prod" } },
+      map: { storage: { name: "storagemap" }, network: { name: "networkmap" } },
+      vms: [{ name: "redhat2" }],
+    },
+  };
+  const html = planReportHtml(plan, {
+    est: { totalGiB: 20, wallClockMinutes: { low: 15, likely: 21, high: 38 }, downtimeMinutes: { low: 5, likely: 7, high: 12 }, throughputMBps: 60, measured: false },
+    at: "2026-09-09T15:00:00Z",
+  });
+
+  // Everything a change board needs, from the plan rather than from a browser.
+  assert.match(html, /redhat2/);
+  assert.match(html, /4<\/td>/, "the vCPU the source had");
+  assert.match(html, /10\.4\.2\.11/);
+  assert.match(html, /warm/);
+  assert.match(html, /vcenter-prod/);
+  // The downtime, distinguished from the transfer — the number they approve.
+  assert.match(html, /Expected service impact/);
+  assert.match(html, /the cutover only/);
+  // The way back, stated.
+  assert.match(html, /Backing out/);
+  assert.match(html, /never deleted|way back/);
+  // And what a model touched.
+  assert.match(html, /gpt-4o-mini/);
+  assert.match(html, /1 recommendation\(s\) corrected/);
+
+  // A plan with no model consulted says so rather than omitting the section.
+  const noAi = planReportHtml({ ...plan, metadata: { ...plan.metadata, annotations: { ...plan.metadata.annotations, "tcs.agentic-ai/ai-provenance": "null" } } }, {});
+  assert.match(noAi, /No model was consulted/);
+
+  // Untrusted values are escaped — a VM name is not a place to inject markup.
+  const nasty = planReportHtml({
+    metadata: { name: "p", annotations: {} },
+    spec: { vms: [{ name: "<script>alert(1)</script>" }] },
+  }, {});
+  assert.ok(!nasty.includes("<script>alert(1)</script>"), "a VM name must never render as markup");
+  assert.match(nasty, /&lt;script&gt;/);
+});

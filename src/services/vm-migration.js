@@ -2183,7 +2183,35 @@ export async function estimatePlan(plan) {
 }
 
 /** Raise the CR for a plan and record it on the Plan. */
-export async function raiseMigrationCR(planName, { actor = "operator", cluster = "local" } = {}) {
+/**
+ * Validate a window an operator typed. Pure.
+ *
+ * The proposal is a starting point, not a rule — a change calendar, a freeze
+ * period or a business reason will move it, and the person raising the request
+ * knows those and this does not. What is checked is only what is nonsensical:
+ * backwards, in the past, or too short to contain the work it is being raised
+ * for. Anything else is their call.
+ */
+export function validateWindow({ start, end, needMinutes = null, now = Date.now() } = {}) {
+  const s = Date.parse(start), e = Date.parse(end);
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return { ok: false, error: "The window needs a start and an end I can read." };
+  if (e <= s) return { ok: false, error: "The window ends before it starts." };
+  if (s < now - 60000) return { ok: false, error: "The window starts in the past." };
+  const minutes = Math.round((e - s) / 60000);
+  // A window shorter than the work is not refused — a board may deliberately
+  // approve a tight one — but it is not accepted silently either.
+  const warning = needMinutes && minutes < needMinutes
+    ? `This window is ${minutes} min. The work needs about ${needMinutes} min including verification and time to back out, so there would be no room to put it back if it goes wrong.`
+    : null;
+  return {
+    ok: true, minutes, warning,
+    start: new Date(s).toISOString(), end: new Date(e).toISOString(),
+    snowStart: new Date(s).toISOString().slice(0, 19).replace("T", " "),
+    snowEnd: new Date(e).toISOString().slice(0, 19).replace("T", " "),
+  };
+}
+
+export async function raiseMigrationCR(planName, { actor = "operator", cluster = "local", window: chosen = null } = {}) {
   const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
   if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
 
@@ -2203,7 +2231,21 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   const est = await estimatePlan(plan).catch(() => null);
   // Sized by strategy, because the two are not the same outage: a cold
   // migration is down for the whole copy, a warm one only for the cutover.
-  const proposed = proposeWindow({ est, warm, vmCount: vms.length });
+  const computed = proposeWindow({ est, warm, vmCount: vms.length });
+  // The proposal is the default; a window the operator chose replaces it.
+  let proposed = computed;
+  if (chosen?.start && chosen?.end) {
+    const v = validateWindow({ start: chosen.start, end: chosen.end, needMinutes: computed?.components?.computed });
+    if (!v.ok) return { ok: false, error: v.error };
+    proposed = {
+      ...computed, ...v, chosen: true,
+      basis: [
+        `Implementation window: ${v.minutes >= 60 ? `${(v.minutes / 60).toFixed(1)}h` : `${v.minutes} min`}, chosen by ${actor}.`,
+        computed ? computed.basis.split("\n").slice(1).join("\n") : null,
+        v.warning ? `\nNOTE: ${v.warning}` : null,
+      ].filter(Boolean).join("\n"),
+    };
+  }
   const window = est
     ? [
         `Data to move       : ${est.totalGiB} GiB`,
@@ -2285,7 +2327,31 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
     risk: "low", approvedBy: actor,
   }).catch(() => {});
 
-  return { ok: true, number, sysId: rec.sys_id || null, gate: { ...approvalGate({ metadata: { annotations: { [CR_ANN.number]: number, [CR_ANN.state]: "submitted" } } }) } };
+  // The record a change board reads, attached rather than pasted. A
+  // description field is a poor place for a table of machines, and an
+  // attachment survives into the audit trail as a document.
+  let attached = null;
+  if (rec.sys_id) {
+    try {
+      const { planReportHtml } = await import("./assessment-report.js");
+      const { attachFile } = await import("../utils/servicenow-client.js");
+      const html = planReportHtml(plan, { est, window: proposed, at: new Date().toISOString() });
+      await attachFile("change_request", rec.sys_id, `${planName}-migration-record.html`, "text/html", Buffer.from(html, "utf8"));
+      attached = `${planName}-migration-record.html`;
+    } catch (e) {
+      // The change request exists and is the point; a failed attachment is
+      // reported rather than allowed to look like a failed raise.
+      attached = null;
+      await annotatePlan(planName, { "tcs.agentic-ai/cr-attachment-error": String(e.message).slice(0, 200) }).catch(() => {});
+    }
+  }
+
+  return {
+    ok: true, number, sysId: rec.sys_id || null, attached,
+    window: proposed ? { start: proposed.start, end: proposed.end, minutes: proposed.minutes, chosen: !!proposed.chosen } : null,
+    warning: proposed?.warning || null,
+    gate: { ...approvalGate({ metadata: { annotations: { [CR_ANN.number]: number, [CR_ANN.state]: "submitted" } } }) },
+  };
 }
 
 /** Ask ServiceNow where the CR stands and write the answer back onto the Plan. */
@@ -3063,7 +3129,21 @@ export async function rollbackMigration(planName, { deleteTargetVMs = true, acto
     }
   }
 
-  // 3. Retire the plan so it cannot be re-run by accident.
+  // 3. Cancel the change request — BEFORE the plan is deleted, because the
+  //    plan is where the change request's sys_id is recorded. Retiring the
+  //    plan first would strand the record open with nothing left to close it.
+  const crCancelled = await cancelMigrationCR(planName, {
+    reason: "The migration was rolled back and the change request is cancelled.",
+    detail: [
+      deleted.length ? `Removed from OpenShift: ${deleted.join(", ")}` : "Nothing had been created on OpenShift yet.",
+      failed.length ? `Could not remove: ${failed.map((f) => `${f.target} (${f.error})`).join("; ")}` : null,
+      decision.sourceAction ? `Manual step remaining: ${decision.sourceAction}` : null,
+    ].filter(Boolean).join("\n"),
+    actor, cluster,
+  }).catch((e) => ({ ok: false, error: e.message }));
+  if (crCancelled?.number) terminal.push(`# ServiceNow ${crCancelled.number} cancelled`);
+
+  // 4. Retire the plan so it cannot be re-run by accident.
   terminal.push(`$ oc delete plan ${planName} -n ${MTV_NS}`);
   try { await ocpDelete(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`); deleted.push(`plan/${planName}`); }
   catch (e) { failed.push({ target: `plan/${planName}`, error: e.message }); }
@@ -3077,6 +3157,7 @@ export async function rollbackMigration(planName, { deleteTargetVMs = true, acto
   return {
     ok: failed.length === 0,
     planName, decision, deleted, failed, terminal,
+    changeRequestCancelled: crCancelled?.ok ? crCancelled.number : null,
     // Said last because it is the part the platform cannot do for you.
     sourceAction: decision.sourceAction,
     message: decision.sourceAction
@@ -3140,7 +3221,17 @@ export async function verifyMigration(planName) {
   const summary = verifySummary(vms);
 
   _lastVerify.set(planName, { verdict: summary.verdict, at: Date.now() });
+
+  // The record closes on evidence. Guarded by an annotation, so the poll that
+  // runs this every few seconds closes it once and then leaves it alone.
+  let closed = null;
+  if (summary.verdict === "passed" || summary.verdict === "passed-with-warnings") {
+    const r = await closeMigrationCR(planName, { verification: summary }).catch((e) => ({ ok: false, error: e.message }));
+    closed = r?.ok && !r.alreadyClosed ? { number: r.number, closeCode: r.closeCode } : null;
+  }
+
   return {
+    changeRequestClosed: closed,
     ok: summary.verdict === "passed" || summary.verdict === "passed-with-warnings",
     planName, namespace: status.targetNamespace, verifiedAt: new Date().toISOString(),
     ...summary, vmChecks: vms,
@@ -3498,4 +3589,129 @@ export async function listPlans({ includeFinished = true, limit = 60 } = {}) {
       : plans.length ? `Nothing running. ${plans.length} past migration${plans.length === 1 ? "" : "s"}.`
       : "No migrations have been run from this cluster yet.",
   };
+}
+
+// ---------------------------------------------------------------------------
+// 10. Closing the loop on the change request
+// ---------------------------------------------------------------------------
+/**
+ * A change request that is never closed is a change process nobody trusts.
+ *
+ * The agent raises it, waits on it, and acts inside its window — so it is the
+ * agent's job to finish it. Two endings, and they are recorded differently
+ * because they mean different things: work that completed, and work that was
+ * undone.
+ *
+ * Written once. Both paths stamp the plan, so a poll that runs every ten
+ * seconds does not close the same record repeatedly or append the same note
+ * forever.
+ */
+const CLOSED_ANN = "tcs.agentic-ai/change-request-closed";
+
+/** ServiceNow's closed state. Configurable — instances customise these. */
+const closedState = () => process.env.SERVICENOW_CLOSED_STATE || "3";
+
+/**
+ * Close the change request as done, with what actually happened.
+ *
+ * Called when verification passes, so the record closes on evidence rather
+ * than on someone remembering to. A verification that failed or could not
+ * complete does NOT close anything — the whole point of the verdict is that it
+ * gates this.
+ */
+export async function closeMigrationCR(planName, { verification = null, actor = "agent", cluster = "local" } = {}) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
+  const gate = approvalGate(plan);
+  if (!gate.sysId) return { ok: false, error: "No change request is recorded on this plan." };
+  if (plan.metadata?.annotations?.[CLOSED_ANN]) {
+    return { ok: true, alreadyClosed: true, number: gate.number, at: plan.metadata.annotations[CLOSED_ANN] };
+  }
+  // Evidence, not optimism.
+  if (!verification || (verification.verdict !== "passed" && verification.verdict !== "passed-with-warnings")) {
+    return { ok: false, error: "The migration has not passed verification, so the change request is not closed." };
+  }
+
+  const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
+  const lines = [
+    `Migration completed and verified. ${verification.headline || ""}`.trim(),
+    "",
+    `Plan             : ${planName}`,
+    `Virtual machines : ${vms.join(", ")}`,
+    `Target namespace : ${plan.spec?.targetNamespace || "—"}`,
+    `Verification     : ${verification.verdict}`,
+    verification.counts
+      ? `Checks           : ${verification.counts.pass} passed, ${verification.counts.warn} warning(s), ${verification.counts.fail} failed, ${verification.counts.unchecked} could not run`
+      : null,
+    "",
+    // The sentence that matters to whoever reads this in six months.
+    "The source VMs are powered off and intact. This migration remains reversible until they are deleted, which is a separate change request raised after the soak period.",
+  ].filter(Boolean).join("\n");
+
+  try {
+    const { updateRecord } = await import("../utils/servicenow-client.js");
+    await updateRecord("change_request", gate.sysId, {
+      state: closedState(),
+      // "successful with issues" is a real outcome and hiding it helps nobody.
+      close_code: verification.verdict === "passed" ? "successful" : "successful_issues",
+      close_notes: lines,
+      work_end: new Date().toISOString().slice(0, 19).replace("T", " "),
+      work_notes: `[TCS Agentic AI] Closing ${gate.number}: migration verified.`,
+    });
+  } catch (e) {
+    return { ok: false, error: `Could not close ${gate.number}: ${e.message}` };
+  }
+
+  await annotatePlan(planName, { [CLOSED_ANN]: new Date().toISOString() }).catch(() => {});
+  await recordChange({
+    cluster, namespace: MTV_NS, resourceKind: "plan", resourceName: planName,
+    action: "close_migration_change_request", command: `# ServiceNow ${gate.number} closed`,
+    risk: "low", approvedBy: actor,
+  }).catch(() => {});
+  return { ok: true, number: gate.number, closeCode: verification.verdict === "passed" ? "successful" : "successful_issues" };
+}
+
+/**
+ * Cancel the change request because the work was undone.
+ *
+ * A rollback is not a failed change to be closed unsuccessfully and forgotten;
+ * it is a change that was carried out and reversed, and the record has to say
+ * what was reversed and what state things were left in. That is what the next
+ * person needs, and it is the difference between an audit trail and a log.
+ */
+export async function cancelMigrationCR(planName, { reason = "The migration was rolled back.", detail = null, actor = "agent", cluster = "local" } = {}) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  if (!plan) return { ok: false, error: `Plan "${planName}" not found.` };
+  const gate = approvalGate(plan);
+  if (!gate.sysId) return { ok: false, skipped: true, note: "No change request is recorded on this plan." };
+  if (plan.metadata?.annotations?.[CLOSED_ANN]) {
+    return { ok: true, alreadyClosed: true, number: gate.number };
+  }
+
+  const vms = (plan.spec?.vms || []).map((v) => v.name || v.id);
+  const notes = [
+    reason,
+    "",
+    `Plan             : ${planName}`,
+    `Virtual machines : ${vms.join(", ")}`,
+    detail ? "" : null,
+    detail || null,
+    "",
+    "State after the rollback: the migrated VMs and their disks were removed from OpenShift. The source VMs in VMware were never deleted — power them back on to restore service.",
+  ].filter((x) => x !== null).join("\n");
+
+  try {
+    const { cancelChangeRequest } = await import("../utils/servicenow-client.js");
+    await cancelChangeRequest(gate.sysId, { reason: notes });
+  } catch (e) {
+    return { ok: false, error: `Could not cancel ${gate.number}: ${e.message}` };
+  }
+
+  await annotatePlan(planName, { [CLOSED_ANN]: new Date().toISOString(), [CR_ANN.state]: "cancelled" }).catch(() => {});
+  await recordChange({
+    cluster, namespace: MTV_NS, resourceKind: "plan", resourceName: planName,
+    action: "cancel_migration_change_request", command: `# ServiceNow ${gate.number} cancelled`,
+    risk: "low", approvedBy: actor,
+  }).catch(() => {});
+  return { ok: true, number: gate.number, cancelled: true };
 }
