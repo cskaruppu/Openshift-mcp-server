@@ -1320,10 +1320,28 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
    in that order — what is waiting, what was approved, and only then what may be
    done — and the two things it offers are "now" and "when the window opens",
    because scheduling is what stops someone having to sit up until midnight. */
+/** datetime-local speaks local wall-clock with no zone, so the value has to be
+    built in local time — toISOString() would silently shift it by the offset. */
+function forInput(ms) {
+  const dt = new Date(ms);
+  return new Date(ms - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
   const loadedFor = useRef(null);
+  // EVERY hook runs before the early return below. Putting the picker's state
+  // after it meant this component ran two hooks while the posture was loading
+  // and three once it arrived — React #310, a blank screen with a minified
+  // error, on the first click into the agent.
+  const [override, setOverride] = useState("");
   useEffect(() => {
-    if (loadedFor.current !== planName) { loadedFor.current = planName; onLoad(); }
+    if (loadedFor.current !== planName) {
+      loadedFor.current = planName;
+      // A new plan's picker starts from that plan's own default, not from
+      // whatever was typed for the last one.
+      setOverride("");
+      onLoad();
+    }
   }, [planName]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const box = { marginTop: 7, padding: "9px 11px", borderRadius: 8,
@@ -1332,15 +1350,11 @@ export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
 
   const { state, window: win, decision: d, scheduled } = posture;
   const when = (t) => (t ? new Date(t).toLocaleString() : "—");
-  // datetime-local speaks local wall-clock with no zone, so the value has to be
-  // built in local time — toISOString() would silently shift it by the offset.
-  const forInput = (ms) => {
-    const dt = new Date(ms);
-    return new Date(ms - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-  };
-  // Defaults to the moment the panel would pick on its own, so "Schedule" with
-  // no edit does exactly what the button beside it says.
-  const [pick, setPick] = useState(() => (d?.at ? forInput(Date.parse(d.at)) : ""));
+  // The state holds only what the operator typed. The value shown falls back to
+  // the moment the panel would choose on its own, so "Schedule" with no edit
+  // does exactly what the button beside it says — and no effect is needed to
+  // keep the two in sync once the posture arrives.
+  const pick = override || (d?.at ? forInput(Date.parse(d.at)) : "");
   const chosenBudget = pick && posture.budget
     ? snapshotCost(posture.precopyDoneAt, new Date(pick).getTime(), posture.budget.max)
     : posture.budget;
@@ -1420,7 +1434,7 @@ export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
             value={pick}
             min={forInput(Math.max(Date.now(), Date.parse(win.start)))}
             max={forInput(Date.parse(win.end))}
-            onChange={(e) => setPick(e.target.value)}
+            onChange={(e) => setOverride(e.target.value)}
             style={{ padding: "4px 8px", borderRadius: 7, fontFamily: "inherit", fontSize: "0.78rem",
               border: "1px solid var(--border,#e4e8f1)", background: "var(--card,#fff)", color: "inherit" }}
           />

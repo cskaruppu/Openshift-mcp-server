@@ -11,7 +11,7 @@
     "evals": "node test/evals/run-evals.js",
     "test:smoke": "node test/smoke/mcp-smoke-test.mjs",
     "build:dashboard": "npm --prefix console ci && npm --prefix console run build",
-    "lint": "node --test test/unit/no-undefined-calls.test.js",
+    "lint": "node --test test/unit/no-undefined-calls.test.js test/unit/no-hooks-after-return.test.js",
     "bench:models": "node test/evals/model-bench.mjs",
     "docs:agents": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog.js",
     "docs:agents:xlsx": "PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://mcp-dashboard-openshift-mcp.apps.openshift.caaslab.local} node docs/generate-agent-catalog-excel.cjs",
