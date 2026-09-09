@@ -136,6 +136,51 @@ function FamilyRing({ label, counts, metrics, hero, onHover }) {
   );
 }
 
+/* The cost, and the arithmetic behind it.
+
+   A number on a screen invites "how did you get that?", and a cost figure that
+   cannot answer is worse than none — someone quotes it in a budget
+   conversation and cannot defend it. So the total is shown with the word
+   "est.", and one click gives the working: the rates, the token counts, when
+   the rates were last checked, and whether they are list price or the
+   organisation's own rate card.
+
+   The caveat is not buried. List price ignores enterprise agreements,
+   committed-use discounts and provisioned-throughput billing, so for most
+   organisations it is the wrong number until MODEL_PRICING is set. Saying so
+   is what makes the figure usable rather than merely present. */
+export function CostCell({ ai }) {
+  const [open, setOpen] = useState(false);
+  const b = ai.costBasis;
+  const money = (n) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+  return (
+    <div style={{ fontSize: "0.79rem" }}>
+      <button onClick={() => setOpen((v) => !v)} title="Show how this was calculated"
+        style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit",
+          cursor: "pointer", fontWeight: 700 }}>
+        {b?.unpriced ? "at least " : ""}{money(ai.costUsd)}
+        <span style={{ fontWeight: 400, color: "var(--text2)" }}>
+          {" "}est.{b?.source === "list-price" ? " · list price" : b?.source === "configured" ? " · your rates" : ""} ▾
+        </span>
+      </button>
+      {open && b && (
+        <div style={{ marginTop: 4, padding: "7px 9px", borderRadius: 7, background: "var(--bg2)",
+          border: "1px solid var(--border)", fontSize: "0.75rem", lineHeight: 1.55 }}>
+          {b.lines.map((l) => (
+            <div key={l} style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}>{l}</div>
+          ))}
+          {b.unpriced > 0 && (
+            <div style={{ marginTop: 3, color: "var(--st-warn-ink)" }}>
+              {b.unpriced} call{b.unpriced === 1 ? " is" : "s are"} not priced — the model was not in the rate card, so this total is a floor.
+            </div>
+          )}
+          <div data-prose style={{ marginTop: 4, color: "var(--text2)" }}>{b.caveat}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* A headline number is not a chart. Four of them, one per state, read faster
    than any pie would — and the pie would be wrong anyway (four slices, two of
    them small). */
@@ -438,6 +483,10 @@ export default function FleetAnalysis({
             ["Source platform", analysis.provider || "—"],
             ["Target cluster", analysis.cluster || "—"],
             ["Guest matrix", matrix?.asOf || "—"],
+            // Cost is its own cell rather than a suffix on the usage line: it
+            // is the number someone will question, so it needs room for the
+            // word "est." and a way to see the arithmetic.
+            ...(analysis.ai?.costUsd != null ? [["Estimated AI cost", <CostCell key="c" ai={analysis.ai} />]] : []),
             // What the model cost, next to everything else about provenance.
             // Calls, tokens and cost are three different numbers and the first
             // was being read as the other two. They are labelled, in that order.
@@ -450,7 +499,6 @@ export default function FleetAnalysis({
                         // partial data quietly is not one worth quoting.
                         ? ` · ${analysis.ai.tokensPartial ? "at least " : ""}${analysis.ai.totalTokens.toLocaleString()} tokens`
                         : " · tokens not reported by the provider")
-                    + (analysis.ai.costUsd != null ? ` · $${analysis.ai.costUsd < 0.01 ? analysis.ai.costUsd.toFixed(4) : analysis.ai.costUsd.toFixed(2)}` : "")
                     + (analysis.ai.corrections ? ` · ${analysis.ai.corrections} corrected` : "")
                   : "no model consulted — rules only")
               : "—"],

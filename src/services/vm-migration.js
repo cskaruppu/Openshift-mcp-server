@@ -1554,10 +1554,29 @@ export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, 
     // Tokens are an engineering unit; a budget holder thinks in currency.
     // Summed from what each call actually cost, so a wave that used two models
     // is priced correctly rather than at one model's rate.
-    costUsd: reported.length
+    costUsd: reported.length && used.some((u) => u.cost)
       ? Math.round(used.reduce((n, u) => n + (u.cost?.usd || 0), 0) * 1e6) / 1e6
       : null,
     priced: used.filter((u) => u.cost).length,
+    // The arithmetic, carried up so the console can answer "how did you get
+    // that?" without a second call. A cost figure that cannot explain itself
+    // gets quoted in a budget conversation and then cannot be defended.
+    costBasis: (() => {
+      const priced = used.filter((u) => u.cost);
+      if (!priced.length) return null;
+      const models = [...new Set(priced.map((u) => u.cost.model))];
+      const src = priced[0].cost.source, asOf = priced[0].cost.asOf;
+      return {
+        source: src, asOf, models,
+        // Per call, so a wave that used two models shows both lines rather
+        // than one blended rate that matches neither.
+        lines: priced.map((u) => `${u.touchpoint || "call"}: ${u.cost.basis}`),
+        caveat: priced[0].cost.caveat,
+        // Said plainly when only some calls could be priced: the total is a
+        // floor for the same reason the token sum is.
+        unpriced: used.length - priced.length,
+      };
+    })(),
     durationMs: sum("durationMs"),
     corrections: overrides,
     touchpoints: used.map((u) => ({ touchpoint: u.touchpoint, ok: u.ok, error: u.error || null })),

@@ -88,3 +88,71 @@ test("a partly-reported token sum is a floor, not a total", async () => {
   assert.equal(never.calls, 0);
   assert.equal(never.tokensReported, false);
 });
+
+test("a cost figure can explain itself, and says when it is the wrong number", async () => {
+  const { estimateCost } = await import("../../src/services/llm.js");
+
+  // The arithmetic, in the form someone reads back in a budget conversation.
+  const c = estimateCost("gpt-4o-mini", 1200, 300);
+  assert.match(c.basis, /1,200 prompt tokens x \$0\.15\/M/);
+  assert.match(c.basis, /300 completion tokens x \$0\.6\/M/);
+  assert.equal(c.rateIn, 0.15);
+  assert.equal(c.rateOut, 0.60);
+  assert.equal(c.matchedFrom, "gpt-4o-mini", "which name was priced, not just which rate");
+
+  // The caveat that makes the number honest. Most organisations do not pay
+  // list price, and a figure that implies they do is wrong in a direction
+  // nobody checks.
+  assert.equal(c.source, "list-price");
+  assert.ok(c.asOf, "rates carry the date they were last checked");
+  assert.match(c.caveat, /enterprise agreement|committed-use|provisioned-throughput/);
+  assert.match(c.caveat, /MODEL_PRICING/, "and how to make it exact");
+
+  // With a configured rate card the label changes, because now it IS their
+  // number rather than a published one.
+  process.env.MODEL_PRICING = JSON.stringify({ "our-model": { in: 1, out: 2 } });
+  process.env.MODEL_PRICING_AS_OF = "2026-04-01";
+  try {
+    const own = estimateCost("our-model-v2", 1_000_000, 1_000_000);
+    assert.equal(own.usd, 3);
+    assert.equal(own.source, "configured");
+    assert.equal(own.asOf, "2026-04-01");
+    assert.match(own.caveat, /your configured rates/);
+    assert.ok(!/list price/.test(own.caveat), "a configured rate is not labelled list price");
+  } finally {
+    delete process.env.MODEL_PRICING;
+    delete process.env.MODEL_PRICING_AS_OF;
+  }
+});
+
+test("the fleet roll-up carries the working, and flags an unpriced call", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const priced = (t, m) => ({
+    ok: true, touchpoint: t, model: m, promptTokens: 100, completionTokens: 50, totalTokens: 150,
+    cost: { usd: 0.0001, model: m, basis: `${t} basis`, source: "list-price", asOf: "2026-09-01", caveat: "list price caveat" },
+  });
+
+  const both = aiProvenance([priced("advice", "gpt-4o-mini"), priced("fleet", "gpt-4o-mini")]);
+  assert.equal(both.costBasis.lines.length, 2, "one line per call");
+  assert.match(both.costBasis.lines[0], /advice: advice basis/);
+  assert.equal(both.costBasis.unpriced, 0);
+  assert.equal(both.costBasis.source, "list-price");
+
+  // A wave that used two models shows both, rather than one blended rate that
+  // matches neither.
+  const mixed = aiProvenance([priced("advice", "gpt-4o-mini"), priced("fleet", "gpt-4o")]);
+  assert.deepEqual(mixed.costBasis.models.sort(), ["gpt-4o", "gpt-4o-mini"]);
+
+  // A model absent from the rate card leaves the total a FLOOR, and says so.
+  const partial = aiProvenance([
+    priced("advice", "gpt-4o-mini"),
+    { ok: true, touchpoint: "fleet", model: "prod-deployment-01", promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+  ]);
+  assert.equal(partial.costBasis.unpriced, 1);
+  assert.equal(partial.costUsd, 0.0001, "only what could actually be priced");
+
+  // Nothing priceable at all is null, never zero.
+  const none = aiProvenance([{ ok: true, touchpoint: "advice", model: "prod-deployment-01", totalTokens: 150 }]);
+  assert.equal(none.costUsd, null);
+  assert.equal(none.costBasis, null);
+});

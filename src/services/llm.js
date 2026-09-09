@@ -317,29 +317,79 @@ export function normaliseUsage(raw) {
 export function modelPricing() {
   try {
     const raw = process.env.MODEL_PRICING;
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const t = JSON.parse(raw);
+      // A configured table is the organisation's own rate card, which is the
+      // only one that can be right — list price ignores enterprise agreements,
+      // committed-use discounts and Azure PTU billing entirely.
+      return { table: t, source: "configured", asOf: process.env.MODEL_PRICING_AS_OF || null };
+    }
   } catch { /* a malformed override falls back to the defaults below */ }
-  // Per MILLION tokens, in USD. Deliberately a small, current list rather than
-  // an exhaustive one that rots — anything unlisted reports no cost.
   return {
-    "gpt-4o-mini": { in: 0.15, out: 0.60 },
-    "gpt-4o": { in: 2.50, out: 10.00 },
-    "gpt-4.1-mini": { in: 0.40, out: 1.60 },
-    "gpt-4.1": { in: 2.00, out: 8.00 },
-    "claude-haiku": { in: 0.80, out: 4.00 },
-    "claude-sonnet": { in: 3.00, out: 15.00 },
-    "claude-opus": { in: 15.00, out: 75.00 },
+    // Per MILLION tokens, in USD. Deliberately a small list rather than an
+    // exhaustive one that rots — anything unlisted reports NO cost.
+    table: {
+      "gpt-4o-mini": { in: 0.15, out: 0.60 },
+      "gpt-4o": { in: 2.50, out: 10.00 },
+      "gpt-4.1-mini": { in: 0.40, out: 1.60 },
+      "gpt-4.1": { in: 2.00, out: 8.00 },
+      "claude-haiku": { in: 0.80, out: 4.00 },
+      "claude-sonnet": { in: 3.00, out: 15.00 },
+      "claude-opus": { in: 15.00, out: 75.00 },
+    },
+    source: "list-price",
+    asOf: "2026-09-01",
   };
 }
 
+/**
+ * What a call cost, WITH THE ARITHMETIC THAT PRODUCED IT.
+ *
+ * A number on a screen invites the question "how did you get that?", and a
+ * cost figure that cannot answer it is worse than no cost figure — someone
+ * will quote it in a budget conversation and be unable to defend it.
+ *
+ * So this returns the working, not just the total: which price entry matched,
+ * the two rates, the two token counts, when the rates were last checked, and
+ * whether they are the organisation's own rate card or published list price.
+ * The console shows the total and can show the rest on demand.
+ *
+ * The honest caveats, stated rather than implied:
+ *
+ *   LIST PRICE IS NOT YOUR PRICE. Enterprise agreements, committed-use
+ *   discounts and Azure provisioned throughput all change it, and this cannot
+ *   see any of them. Set MODEL_PRICING to your own rate card and the label
+ *   changes from "list price" to "your configured rates".
+ *
+ *   AN UNMATCHED MODEL COSTS NOTHING KNOWN, not nothing. A deployment named
+ *   "prod-deployment-01" matches no entry, so it returns null and the console
+ *   shows tokens without a figure — rather than a confident $0.00.
+ */
 export function estimateCost(model, promptTokens, completionTokens, prices = null) {
   if (!model || promptTokens == null || completionTokens == null) return null;
-  const table = prices || modelPricing();
-  const key = Object.keys(table).find((k) => String(model).toLowerCase().includes(k.toLowerCase()));
+  const cfg = prices
+    ? { table: prices, source: "supplied", asOf: null }
+    : modelPricing();
+  const key = Object.keys(cfg.table).find((k) => String(model).toLowerCase().includes(k.toLowerCase()));
   if (!key) return null;
-  const p = table[key];
-  const usd = (promptTokens / 1e6) * p.in + (completionTokens / 1e6) * p.out;
-  return { usd: Math.round(usd * 1e6) / 1e6, model: key, currency: "USD" };
+  const p = cfg.table[key];
+  const inUsd = (promptTokens / 1e6) * p.in;
+  const outUsd = (completionTokens / 1e6) * p.out;
+  const usd = Math.round((inUsd + outUsd) * 1e6) / 1e6;
+  const money = (n) => `$${n < 0.01 ? n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") : n.toFixed(2)}`;
+  return {
+    usd, currency: "USD", model: key, matchedFrom: model,
+    rateIn: p.in, rateOut: p.out,
+    promptTokens, completionTokens,
+    source: cfg.source, asOf: cfg.asOf,
+    // The sentence someone reads when they ask where the number came from.
+    basis: `${promptTokens.toLocaleString()} prompt tokens x $${p.in}/M + ${completionTokens.toLocaleString()} completion tokens x $${p.out}/M = ${money(usd)}`,
+    caveat: cfg.source === "configured"
+      ? `Priced with your configured rates for ${key}${cfg.asOf ? `, as of ${cfg.asOf}` : ""}.`
+      : cfg.source === "list-price"
+        ? `Priced at published list price for ${key} as of ${cfg.asOf}. It does not reflect any enterprise agreement, committed-use discount or provisioned-throughput billing — set MODEL_PRICING to your own rate card for an exact figure.`
+        : `Priced with supplied rates for ${key}.`,
+  };
 }
 
 // Non-streaming call — returns { text, toolCalls }
