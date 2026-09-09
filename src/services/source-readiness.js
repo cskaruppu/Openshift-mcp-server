@@ -119,10 +119,16 @@ export function runSourceChecks(vm = {}) {
   });
 
   // ── Things that make the migration fail late, or land badly ─────────────
+  // Snapshots do not stop a cold migration; they stop a WARM one outright.
+  // Forklift takes its own snapshot to track changed blocks and refuses to
+  // stack it on an existing chain — "VMHasSnapshots/NotValid". Reporting this
+  // as "transfers are slower" was too soft: it reads as advice when it is a
+  // hard rule, and the plan was created before anyone found out.
   check("snapshots", "Snapshots", vm.hasSnapshot, (v) => v && {
-    severity: "warning", blocks: false, required: true, title: "The VM has snapshots",
-    detail: `A snapshot chain means the transfer copies the chain, not a single flat disk${vm.warmEligible ? ", and a warm migration takes another snapshot on top of it" : ""}. Transfers are slower and more likely to fail.`,
-    action: "Consolidate or delete the snapshots in vCenter before migrating, then re-run discovery.",
+    severity: "warning", blocks: false, blocksWarm: true, required: true,
+    title: "The VM has pre-existing snapshots — warm migration is not possible",
+    detail: "MTV takes its own snapshot to track changed blocks and will not stack it on an existing chain, so a warm plan containing this VM fails validation with VMHasSnapshots/NotValid. A cold migration still works, but copies the whole chain rather than one flat disk, so it is slower.",
+    action: "In vCenter: right-click the VM → Snapshots → Manage Snapshots → Delete All, then check whether Consolidation is needed. Re-run discovery afterwards. Or migrate this VM cold.",
   });
 
   // Matched by what is WRONG, not by what looks right: vSphere's value for a

@@ -54,13 +54,17 @@ test("a disconnected source VM blocks, since its inventory is stale", () => {
 
 // ── Non-blocking, but the ones that ruin a cutover ─────────────────────────
 
-test("snapshots are flagged as required work, and warm migration is called out", () => {
-  const cold = find(runSourceChecks({ disks: [], hasSnapshot: true }), "snapshots");
-  assert.equal(cold.blocks, false);
-  assert.equal(cold.required, true);
-  assert.match(cold.action, /Consolidate/);
-  const warm = find(runSourceChecks({ disks: [], hasSnapshot: true, warmEligible: true }), "snapshots");
-  assert.match(warm.detail, /another snapshot on top/);
+test("snapshots are named as the hard rule they are, not as slower transfers", () => {
+  const f = find(runSourceChecks({ disks: [], hasSnapshot: true }), "snapshots");
+  // A cold migration still works — it just copies the chain — so this does not
+  // block outright. Warm is impossible, and that is stated as a rule rather
+  // than as advice, because MTV enforces it whatever the report says.
+  assert.equal(f.blocks, false);
+  assert.equal(f.blocksWarm, true);
+  assert.equal(f.required, true);
+  assert.match(f.title, /warm migration is not possible/i);
+  assert.match(f.detail, /VMHasSnapshots/);
+  assert.match(f.action, /Manage Snapshots|Consolidation/);
 });
 
 test("a vTPM names the cluster setting it depends on", () => {
@@ -143,4 +147,43 @@ test("report strings agree in number — these end up in a change record", () =>
 
   const ind = find(runSourceChecks({ disks: [{ name: "d", mode: "independent_persistent" }] }), "independentDisk");
   assert.match(ind.detail, /d is excluded/);
+});
+
+test("pre-existing snapshots rule out warm migration, and are caught before the plan exists", async () => {
+  const { normaliseInventoryVM } = await import("../../src/services/vm-migration.js");
+  const base = { name: "redhat2", powerState: "poweredOn", changeTrackingEnabled: true };
+
+  // CBT on and powered on is not enough. Forklift refuses to stack its own
+  // tracking snapshot on an existing chain, so this VM can never go warm —
+  // and finding that out from MTV after the plan is created is exactly the
+  // failure this assessment exists to prevent.
+  const snapped = normaliseInventoryVM({ ...base, snapshot: { id: "snapshot-42" } });
+  assert.equal(snapped.hasSnapshot, true);
+  assert.equal(snapped.warmEligible, false);
+  assert.match(snapped.warmBlockedReason, /pre-existing snapshots/i);
+  assert.match(snapped.warmBlockedReason, /Consolidate or delete|migrate cold/i);
+
+  // Without one, warm is on the table as before.
+  const clean = normaliseInventoryVM({ ...base, snapshot: null });
+  assert.equal(clean.hasSnapshot, false);
+  assert.equal(clean.warmEligible, true);
+  assert.equal(clean.warmBlockedReason, null);
+
+  // An inventory that says nothing about snapshots leaves warm available and
+  // reports the check as unrun — it does not guess in either direction.
+  const quiet = normaliseInventoryVM({ ...base });
+  assert.equal(quiet.hasSnapshot, null);
+  assert.equal(quiet.warmEligible, true);
+
+  // Forklift's own array form.
+  assert.equal(normaliseInventoryVM({ ...base, snapshot: [{ id: "s1" }] }).warmEligible, false);
+  assert.equal(normaliseInventoryVM({ ...base, snapshot: [] }).warmEligible, true);
+
+  // The readiness finding names the rule rather than describing it as slowness.
+  const { runSourceChecks } = await import("../../src/services/source-readiness.js");
+  const f = runSourceChecks({ hasSnapshot: true }).findings.find((x) => x.id === "snapshots");
+  assert.equal(f.blocksWarm, true);
+  assert.equal(f.blocks, false, "a cold migration still works");
+  assert.match(f.detail, /VMHasSnapshots/);
+  assert.match(f.action, /Manage Snapshots|Consolidat/i);
 });

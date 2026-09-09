@@ -253,6 +253,11 @@ export function normaliseInventoryVM(v = {}) {
   const totalBytes = disks.reduce((n, d) => n + (d.capacity || d.Capacity || 0), 0);
   const cbt = v.changeTrackingEnabled ?? v.changeTrackingSupported ?? null;
   const powered = /poweredOn|up|ACTIVE|running/i.test(String(v.powerState || v.status || ""));
+  // Tri-state on purpose: true, false, or null when the inventory said nothing.
+  // Forklift reports a snapshot as a reference object, not a count.
+  const snapshot = v.snapshot === undefined ? null
+    : Array.isArray(v.snapshot) ? v.snapshot.length > 0
+    : !!(v.snapshot && (v.snapshot.id || v.snapshot.kind || v.snapshot.name));
 
   // Addresses come from the guest agent (VMware Tools / qemu-ga). A VM with no
   // agent reports none — that is worth showing rather than leaving blank, since
@@ -296,9 +301,7 @@ export function normaliseInventoryVM(v = {}) {
     connectionState: v.connectionState ?? null,
     faultToleranceEnabled: bool(v.faultToleranceEnabled),
     // Forklift reports a snapshot as a reference object, not a count.
-    hasSnapshot: v.snapshot === undefined ? null
-      : Array.isArray(v.snapshot) ? v.snapshot.length > 0
-      : !!(v.snapshot && (v.snapshot.id || v.snapshot.kind || v.snapshot.name)),
+    hasSnapshot: snapshot,
     secureBoot: bool(v.secureBoot ?? v.bootOptions?.efiSecureBootEnabled),
     tpmEnabled: bool(v.tpmEnabled ?? v.tpmPresent),
     // What VMware currently PROMISES this VM. None of it survives migration,
@@ -332,10 +335,22 @@ export function normaliseInventoryVM(v = {}) {
 
     // Migration-relevant facts
     changeTrackingEnabled: cbt === true,
-    warmEligible: cbt === true && powered,
-    warmBlockedReason: cbt === true
-      ? (powered ? null : "The VM is powered off — warm migration has nothing to track. Use cold.")
-      : "Changed block tracking is not enabled on this VM, so an incremental copy is impossible. Use cold, or enable CBT and rediscover.",
+    // Three things have to be true for warm, and the third was missing: a VM
+    // with a pre-existing snapshot chain cannot go warm at all. Forklift takes
+    // its own snapshots to track changed blocks and refuses to stack them on
+    // someone else's — "VMHasSnapshots/NotValid". Leaving it out meant the
+    // report offered warm, the plan was created, and MTV rejected it at
+    // validation, which is the one place this tool exists to save you from.
+    //
+    // Only a reported snapshot blocks. An inventory that says nothing about
+    // snapshots leaves warm on the table and is raised as a check that could
+    // not run, rather than being guessed either way.
+    warmEligible: cbt === true && powered && snapshot !== true,
+    warmBlockedReason: snapshot === true
+      ? "The VM has pre-existing snapshots in vCenter. Warm migration takes its own snapshot to track changes and will not stack on an existing chain. Consolidate or delete them in vCenter and re-run discovery, or migrate cold."
+      : cbt === true
+        ? (powered ? null : "The VM is powered off — warm migration has nothing to track. Use cold.")
+        : "Changed block tracking is not enabled on this VM, so an incremental copy is impossible. Use cold, or enable CBT and rediscover.",
     datastores: [...new Set(disks.map((d) => d.datastore?.id || d.datastore?.name || d.Datastore).filter(Boolean))],
     networks: (v.networks || v.Networks || []).map((n) => n.id || n.name || n).filter(Boolean),
 
