@@ -7102,5 +7102,13 @@ h3.widget-title {
    are left alone on purpose — pointing them at the theme tokens turns the
    hub's surfaces dark, and ~90 hardcoded accent colours inside those cards
    were chosen against white.                                                */
-.ah-ink { --text2: #b8bec9; --muted: #475569; }
-.light-theme .ah-ink { --text2: #475569; }
+.ah-ink {
+  --text2: #b8bec9; --muted: #475569;
+  /* Native controls — the date picker's calendar icon and popup, select
+     dropdowns, scrollbars — are painted by the browser, not by these tokens.
+     Without color-scheme it paints them for a light page, so the cutover
+     picker's icon came out dark on a dark panel. Declaring the scheme is the
+     only way to reach that chrome. */
+  color-scheme: dark;
+}
+.light-theme .ah-ink { --text2: #475569; color-scheme: light; }

@@ -1447,3 +1447,44 @@ test("a warm cutover is proposed for the same day, a cold one is not", async () 
 
   assert.equal(hoursOut(proposeWindow({ est, warm: true, vmCount: 1, now, leadHours: 2 })), 2);
 });
+
+test("waiting is priced against the CBT snapshot budget a warm migration lives on", async () => {
+  const { cbtSnapshotBudget } = await import("../../src/services/vm-migration.js");
+  const done = "2026-09-09T16:00:00Z";
+  const plus = (h) => new Date(Date.parse(done) + h * 3600000).toISOString();
+
+  // A warm precopy keeps taking a changed-block snapshot every hour while it
+  // waits, and a VM holds at most 28. Offering a free choice of cutover time
+  // makes "next week" one click — so the cost is priced as it is chosen.
+  assert.equal(cbtSnapshotBudget(done, plus(2)).risk, "fine");
+  assert.equal(cbtSnapshotBudget(done, plus(2)).note, null, "no warning when there is nothing to warn about");
+
+  const tight = cbtSnapshotBudget(done, plus(22));
+  assert.equal(tight.risk, "tight");
+  assert.match(tight.note, /little margin/);
+
+  const over = cbtSnapshotBudget(done, plus(40));
+  assert.equal(over.risk, "over");
+  assert.equal(over.snapshotsUsed, 40);
+  assert.match(over.note, /likely to fail after having copied everything/);
+
+  // Without a completion time the wait is measured from now and said to be
+  // approximate, rather than reported as fact.
+  assert.equal(cbtSnapshotBudget(null, plus(2)).measured, false);
+  assert.equal(cbtSnapshotBudget(done, "not a time").known, false);
+  assert.equal(cbtSnapshotBudget("not a time", plus(2)).known, false);
+});
+
+test("a chosen cutover time is checked against both ends of the window", async () => {
+  const { cutoverWindow } = await import("../../src/services/vm-migration.js");
+  // The window parse is what scheduleCutover validates against; the hole was
+  // that only the closing end was checked, so a cutover could be scheduled
+  // BEFORE the window opened — the one thing the gate exists to prevent, and
+  // trivially easy once a free choice of time is offered.
+  const w = cutoverWindow({ start_date: "2026-09-10 15:30:00", end_date: "2026-09-10 19:30:00" }, Date.parse("2026-09-10T10:00:00Z"));
+  assert.equal(w.known, true);
+  const start = Date.parse(w.start), end = Date.parse(w.end);
+  assert.ok(Date.parse("2026-09-10T14:00:00Z") < start, "before the window opens must be rejected");
+  assert.ok(Date.parse("2026-09-10T20:00:00Z") > end, "after it closes must be rejected");
+  assert.ok(Date.parse("2026-09-10T17:00:00Z") > start && Date.parse("2026-09-10T17:00:00Z") < end, "inside is allowed");
+});

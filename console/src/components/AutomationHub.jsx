@@ -1320,7 +1320,7 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
    in that order — what is waiting, what was approved, and only then what may be
    done — and the two things it offers are "now" and "when the window opens",
    because scheduling is what stops someone having to sit up until midnight. */
-function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
+export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
   const loadedFor = useRef(null);
   useEffect(() => {
     if (loadedFor.current !== planName) { loadedFor.current = planName; onLoad(); }
@@ -1332,6 +1332,18 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
 
   const { state, window: win, decision: d, scheduled } = posture;
   const when = (t) => (t ? new Date(t).toLocaleString() : "—");
+  // datetime-local speaks local wall-clock with no zone, so the value has to be
+  // built in local time — toISOString() would silently shift it by the offset.
+  const forInput = (ms) => {
+    const dt = new Date(ms);
+    return new Date(ms - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  // Defaults to the moment the panel would pick on its own, so "Schedule" with
+  // no edit does exactly what the button beside it says.
+  const [pick, setPick] = useState(() => (d?.at ? forInput(Date.parse(d.at)) : ""));
+  const chosenBudget = pick && posture.budget
+    ? snapshotCost(posture.precopyDoneAt, new Date(pick).getTime(), posture.budget.max)
+    : posture.budget;
   const btn = (bg) => ({ padding: "5px 13px", borderRadius: 8, border: "none", fontWeight: 700,
     fontSize: "0.79rem", fontFamily: "inherit", cursor: busy ? "wait" : "pointer", background: bg, color: "#fff" });
 
@@ -1386,12 +1398,53 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
         </button>
         {d.mode === "schedule" && (
           <button disabled={busy} onClick={() => onGo(d.at)} style={btn("#3d5afe")}>
-            ◷ Schedule for {when(d.at)}
+            ◷ At the window opening — {when(d.at)}
           </button>
         )}
-        <span data-prose style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
-          The guest shuts down, the last changed blocks copy, the VM starts on OpenShift. Until then it keeps serving users.
-        </span>
+      </div>
+
+      {/* ── Or a moment of your choosing ─────────────────────────────────────
+          "Now" and "when the window opens" are the two common answers; they are
+          not the only ones. A person who knows their traffic drops at 02:00
+          should be able to say so without waiting up for it.
+
+          The picker is CLAMPED to the approved window rather than validated
+          after the fact, so the out-of-window choice is not offered in the
+          first place. The server checks both ends again regardless — an input
+          attribute is a convenience, never the gate. */}
+      {d.allowed && win.known && win.start && win.end && (
+        <div style={{ display: "flex", gap: 8, marginTop: 7, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ fontSize: "0.77rem", fontWeight: 600 }}>Or cut over at</label>
+          <input
+            type="datetime-local"
+            value={pick}
+            min={forInput(Math.max(Date.now(), Date.parse(win.start)))}
+            max={forInput(Date.parse(win.end))}
+            onChange={(e) => setPick(e.target.value)}
+            style={{ padding: "4px 8px", borderRadius: 7, fontFamily: "inherit", fontSize: "0.78rem",
+              border: "1px solid var(--border,#e4e8f1)", background: "var(--card,#fff)", color: "inherit" }}
+          />
+          <button disabled={busy || !pick} onClick={() => onGo(new Date(pick).toISOString())}
+            style={{ ...btn(pick ? "#3d5afe" : "#9ca3af"), cursor: pick ? btn().cursor : "not-allowed" }}>
+            ◷ Schedule
+          </button>
+          <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+            within {when(win.start)} → {when(win.end)}
+          </span>
+        </div>
+      )}
+
+      {/* Waiting is not free on a warm migration, and the cost is invisible
+          until it bites. Shown against the moment currently chosen. */}
+      {chosenBudget?.known && chosenBudget.risk !== "fine" && (
+        <div style={{ marginTop: 6, fontSize: "0.77rem",
+          color: chosenBudget.risk === "over" ? "#dc2626" : "#b45309" }}>
+          {chosenBudget.risk === "over" ? "✖" : "⚠"} {chosenBudget.note}
+        </div>
+      )}
+
+      <div data-prose style={{ fontSize: "0.74rem", color: "var(--text2)", marginTop: 6 }}>
+        The guest shuts down, the last changed blocks copy, the VM starts on OpenShift. Until then it keeps serving users.
       </div>
     </div>
   );
@@ -1475,6 +1528,25 @@ const PHASE = {
   migrated:           { label: "migrated",   bg: "rgba(22,163,74,.14)",   fg: "#16a34a" },
   failed:             { label: "failed",     bg: "rgba(220,38,38,.12)",   fg: "#dc2626" },
 };
+
+/* Mirrors cbtSnapshotBudget on the server so the warning tracks the picker as
+   it is edited. The server's answer is the one that counts; this only decides
+   whether to show a caution before anyone commits to a time. */
+function snapshotCost(precopyDoneAt, atMs, max = 28) {
+  const from = precopyDoneAt ? Date.parse(precopyDoneAt) : Date.now();
+  if (!Number.isFinite(from) || !Number.isFinite(atMs)) return null;
+  const waitHours = Math.max(0, (atMs - from) / 3600000);
+  const used = Math.ceil(waitHours);
+  const risk = used >= max ? "over" : used >= max * 0.75 ? "tight" : "fine";
+  return {
+    known: true, waitHours: Math.round(waitHours * 10) / 10, snapshotsUsed: used, max, risk,
+    note: risk === "over"
+      ? `Waiting ${Math.round(waitHours)}h needs about ${used} changed-block snapshots and a VM supports ${max}. The migration is likely to fail after having copied everything. Cut over sooner.`
+      : risk === "tight"
+        ? `Waiting ${Math.round(waitHours)}h uses roughly ${used} of the ${max} changed-block snapshots this VM can hold. It will probably work, with little margin.`
+        : null,
+  };
+}
 
 /** Megabytes, the unit MTV's own console reports a disk transfer in. */
 function mib(n) { return Math.round((n || 0) / 1048576).toLocaleString(); }

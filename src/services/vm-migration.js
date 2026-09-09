@@ -2053,6 +2053,9 @@ export async function planStatusWithEta(planName) {
 function normalisePlanVM(v) {
   const pipeline = (v.pipeline || []).map((s) => ({
     name: s.name, phase: s.phase,
+    // When the step finished — the precopy's completion is the clock the CBT
+    // snapshot budget runs against.
+    startedAt: s.started || null, completedAt: s.completed || null,
     progress: s.progress ? { completed: s.progress.completed, total: s.progress.total } : null,
     // THE UNIT MATTERS, and leaving it out is what broke the transfer figures.
     // Forklift reports a step's progress in whatever unit that step counts in,
@@ -2681,6 +2684,42 @@ export function measuredOutage(status = {}, live = null) {
   };
 }
 
+/**
+ * What waiting costs a warm migration. Pure.
+ *
+ * A warm precopy does not idle while it waits for a cutover. MTV keeps taking a
+ * changed-block snapshot — hourly by default — so the copy stays current, and a
+ * VM supports at most 28 of them. Run out and the migration fails, having
+ * already copied everything.
+ *
+ * This is invisible until it bites, which is exactly why offering a free choice
+ * of cutover time needs it: "next Tuesday" is one click and 140 snapshots.
+ *
+ * @param {string|null} precopyDoneAt  when the disk copy finished
+ * @param {string|number} cutoverAt    the moment being considered
+ */
+export function cbtSnapshotBudget(precopyDoneAt, cutoverAt, { now = Date.now(), intervalMinutes = 60, max = 28 } = {}) {
+  const at = typeof cutoverAt === "number" ? cutoverAt : Date.parse(cutoverAt);
+  if (!Number.isFinite(at)) return { known: false, note: "No cutover time to judge." };
+  // Without a completion time the wait is measured from now, which understates
+  // it — so the verdict is reported as approximate rather than as fact.
+  const from = precopyDoneAt ? Date.parse(precopyDoneAt) : now;
+  if (!Number.isFinite(from)) return { known: false, note: "The precopy completion time was not reported." };
+
+  const waitHours = Math.max(0, (at - from) / 3600000);
+  const used = Math.ceil((waitHours * 60) / intervalMinutes);
+  const risk = used >= max ? "over" : used >= max * 0.75 ? "tight" : "fine";
+  return {
+    known: true, measured: !!precopyDoneAt,
+    waitHours: Math.round(waitHours * 10) / 10, snapshotsUsed: used, max, risk,
+    note: risk === "over"
+      ? `Waiting ${Math.round(waitHours)}h needs about ${used} changed-block snapshots and a VM supports ${max}. The migration is likely to fail after having copied everything. Cut over sooner, or re-run the copy.`
+      : risk === "tight"
+        ? `Waiting ${Math.round(waitHours)}h uses roughly ${used} of the ${max} changed-block snapshots this VM can hold. It will probably work, with little margin.`
+        : null,
+  };
+}
+
 /** The Migration that is actually running this plan — the newest, not the first. */
 export async function activeMigration(planName) {
   const list = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/migrations`).catch(() => ({ items: [] }));
@@ -2711,11 +2750,21 @@ export async function cutoverPosture(planName) {
   }
   const win = record ? cutoverWindow(record) : { known: false, open: false, note: lookupError || "No change record to read a window from." };
   const mig = state.awaitingCutover ? await activeMigration(planName) : null;
+  // When the copy actually finished — the clock the snapshot budget runs
+  // against. The latest across the plan's VMs, since the wait starts when the
+  // last one is ready.
+  const precopyDoneAt = (status.vms || [])
+    .flatMap((v) => (v.steps || []).filter((st) => /disk\s*transfer|copydisks/i.test(st.name || "")).map((st) => st.completedAt))
+    .filter(Boolean).sort().at(-1) || null;
+  const scheduled = mig?.spec?.cutover || null;
   return {
     found: true, planName, state, gate: status.gate, window: win,
-    scheduled: mig?.spec?.cutover || null,
+    scheduled, precopyDoneAt,
     migrationName: mig?.metadata?.name || null,
     decision: cutoverDecision({ gate: status.gate, window: win, state }),
+    // What the window's own end would cost, so the console can warn before a
+    // person picks the far end of it.
+    budget: win.known && win.end ? cbtSnapshotBudget(precopyDoneAt, win.end) : null,
   };
 }
 
@@ -2849,8 +2898,21 @@ export async function scheduleCutover(planName, { at = null, actor = "operator",
   // the console offering a control is not the same as the board approving it.
   const requested = at ? Date.parse(at) : null;
   if (at && !Number.isFinite(requested)) return { ok: false, error: `"${at}" is not a time I can read.`, posture };
-  if (at && posture.window?.known && posture.window.end && requested > Date.parse(posture.window.end)) {
-    return { ok: false, error: "That moment is after the approved change window closes.", posture };
+  // A chosen time is checked against BOTH ends of the window and against the
+  // clock. Only the closing end was checked, which let a cutover be scheduled
+  // before the window opened — the one thing this gate exists to prevent, and
+  // easy to do the moment a free choice of time is offered.
+  if (at && posture.window?.known) {
+    const { start, end } = posture.window;
+    if (end && requested > Date.parse(end)) {
+      return { ok: false, error: `That is after the approved window closes at ${new Date(end).toISOString()}.`, posture };
+    }
+    if (start && requested < Date.parse(start)) {
+      return { ok: false, error: `That is before the approved window opens at ${new Date(start).toISOString()}.`, posture };
+    }
+  }
+  if (at && requested < Date.now() - 60000) {
+    return { ok: false, error: "That moment has already passed.", posture };
   }
   if (!d.allowed) return { ok: false, error: d.reason, fix: d.fix, posture };
 
@@ -2898,9 +2960,13 @@ export async function scheduleCutover(planName, { at = null, actor = "operator",
     } catch { /* the cutover is set; a missing work note must not undo it */ }
   }
 
+  const budget = cbtSnapshotBudget(posture.precopyDoneAt, when);
   return {
     ok: true, planName, migrationName: posture.migrationName, cutover: when,
     mode: d.mode, workNoteAdded: noted,
+    // Not a refusal — the change board approved the window. But a wait long
+    // enough to exhaust the snapshot budget is worth saying out loud.
+    budget: budget.known && budget.risk !== "fine" ? budget : null,
     message: d.mode === "now"
       ? "Cutover started. The guests shut down, the final changes copy, and the VMs start on OpenShift."
       : `Cutover scheduled for ${new Date(when).toLocaleString()}. MTV performs it without anyone being present.`,
