@@ -35,6 +35,33 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const isAre = (n) => (n === 1 ? "is" : "are");
 const mapsMap = (n) => (n === 1 ? "maps" : "map");
 
+/** "a snapshot" / "3 snapshots" — the inventory does not always give a count. */
+function snapshotCount(vm) {
+  const n = vm.snapshotDetail?.count;
+  return n > 1 ? `${n} pre-existing snapshots` : "a pre-existing snapshot";
+}
+
+/**
+ * What is actually known about the snapshots, and what is not.
+ *
+ * The age is what decides whether one is safe to delete, and Forklift's
+ * inventory carries a reference rather than a snapshot tree — so most of the
+ * time the honest answer is that it has to be looked up in vCenter. A review
+ * that silently omits the date reads as though there were nothing to know.
+ */
+function describeSnapshots(detail) {
+  if (!detail?.items?.length) return null;
+  const parts = detail.items.slice(0, 3).map((s) => {
+    const bits = [s.name || s.id || "snapshot"];
+    if (s.createdAt) bits.push(`taken ${new Date(s.createdAt).toISOString().slice(0, 16).replace("T", " ")}`);
+    if (s.sizeGiB) bits.push(`${s.sizeGiB} GiB`);
+    if (s.description) bits.push(`“${String(s.description).slice(0, 80)}”`);
+    return bits.join(", ");
+  });
+  const more = detail.items.length > 3 ? ` +${detail.items.length - 3} more` : "";
+  return `Reported: ${parts.join("; ")}${more}.${detail.note ? ` ${detail.note}` : ""}`;
+}
+
 /** Devices that have no equivalent on OpenShift Virtualization. */
 const DEVICE_PATTERNS = [
   [/pcipassthrough|passthru|passthrough/i, "PCI passthrough device"],
@@ -126,8 +153,15 @@ export function runSourceChecks(vm = {}) {
   // hard rule, and the plan was created before anyone found out.
   check("snapshots", "Snapshots", vm.hasSnapshot, (v) => v && {
     severity: "warning", blocks: false, blocksWarm: true, required: true,
-    title: "The VM has pre-existing snapshots — warm migration is not possible",
-    detail: "MTV takes its own snapshot to track changed blocks and will not stack it on an existing chain, so a warm plan containing this VM fails validation with VMHasSnapshots/NotValid. A cold migration still works, but copies the whole chain rather than one flat disk, so it is slower.",
+    title: `The VM has ${snapshotCount(vm)} — warm migration is not possible`,
+    detail: [
+      "MTV takes its own snapshot to track changed blocks and will not stack it on an existing chain, so a warm plan containing this VM fails validation with VMHasSnapshots/NotValid. A cold migration still works, but copies the whole chain rather than one flat disk, so it is slower.",
+      // What we can actually see about it. The age is the thing that decides
+      // whether it is safe to delete, and it usually is not reported — saying
+      // so is the point, because a review that quietly omits the date reads as
+      // if there were nothing to know.
+      describeSnapshots(vm.snapshotDetail),
+    ].filter(Boolean).join(" "),
     action: "In vCenter: right-click the VM → Snapshots → Manage Snapshots → Delete All, then check whether Consolidation is needed. Re-run discovery afterwards. Or migrate this VM cold.",
   });
 

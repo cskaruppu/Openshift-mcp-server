@@ -187,3 +187,60 @@ test("pre-existing snapshots rule out warm migration, and are caught before the 
   assert.match(f.detail, /VMHasSnapshots/);
   assert.match(f.action, /Manage Snapshots|Consolidat/i);
 });
+
+test("the snapshot review shows what is known and names what is not", async () => {
+  const { snapshotDetail, snapshotPolicy, normaliseInventoryVM } = await import("../../src/services/vm-migration.js");
+
+  // Forklift's actual shape: a reference. No date, no size, no description —
+  // and the age is the thing that decides whether it is safe to delete, so the
+  // gap is reported rather than papered over.
+  const ref = snapshotDetail({ id: "snapshot-4021", kind: "VirtualMachineSnapshot" });
+  assert.equal(ref.count, 1);
+  assert.equal(ref.items[0].createdAt, null);
+  assert.equal(ref.datesKnown, false);
+  assert.match(ref.note, /not when it was taken/);
+
+  // When a richer object does come back, it is read rather than ignored.
+  const full = snapshotDetail([
+    { id: "s1", name: "before-patching", createTime: "2026-03-02T09:14:00Z", size: 21474836480 },
+    { id: "s2", name: "before-upgrade", createTime: "2026-08-30T22:00:00Z" },
+  ]);
+  assert.equal(full.count, 2);
+  assert.equal(full.datesKnown, true);
+  assert.equal(full.note, null);
+  assert.equal(full.items[0].sizeGiB, 20);
+
+  assert.equal(snapshotDetail(null), null);
+  assert.equal(snapshotDetail([]), null);
+
+  // The review reaches the finding, including the "we cannot see the date" note.
+  const { runSourceChecks } = await import("../../src/services/source-readiness.js");
+  const f = runSourceChecks({ hasSnapshot: true, snapshotDetail: ref }).findings.find((x) => x.id === "snapshots");
+  assert.match(f.title, /a pre-existing snapshot/);
+  assert.match(f.detail, /snapshot-4021/);
+  assert.match(f.detail, /not when it was taken/);
+  assert.match(runSourceChecks({ hasSnapshot: true, snapshotDetail: full }).findings
+    .find((x) => x.id === "snapshots").title, /2 pre-existing snapshots/);
+
+  // ── Should one be TAKEN before migrating? Almost always no. ─────────────
+  const clean = normaliseInventoryVM({ name: "app-01", powerState: "poweredOn", changeTrackingEnabled: true, snapshot: null });
+
+  // Warm: not a trade-off, fatal. Offering "snapshot then proceed" here would
+  // recreate the very failure the assessment now catches.
+  const warm = snapshotPolicy(clean, "warm");
+  assert.equal(warm.recommend, "no");
+  assert.match(warm.why, /impossible/);
+  assert.equal(warm.canAutomate, false, "the agent reads the source; it cannot write to it");
+
+  // Cold: the powered-off source VM is already the restore point.
+  const cold = snapshotPolicy(clean, "cold");
+  assert.equal(cold.recommend, "not-needed");
+  assert.match(cold.why, /never modifies or deletes the source/);
+  assert.match(cold.then, /change policy requires/, "the legitimate yes case is offered, not argued with");
+
+  // One that already has a snapshot is told to clear it first, whatever the
+  // strategy — that question comes before the take-one-or-not question.
+  const dirty = normaliseInventoryVM({ name: "redhat2", powerState: "poweredOn", changeTrackingEnabled: true, snapshot: { id: "s1" } });
+  assert.equal(snapshotPolicy(dirty, "cold").recommend, "remove");
+  assert.equal(snapshotPolicy(dirty, "warm").recommend, "remove");
+});

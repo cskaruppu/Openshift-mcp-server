@@ -238,6 +238,108 @@ export async function discoverVMs(providerUid, { search = "" } = {}) {
   return q ? vms.filter((v) => v.name.toLowerCase().includes(q)) : vms;
 }
 
+/**
+ * What the inventory reports about a snapshot, without filling in the gaps.
+ *
+ * Forklift's vSphere VM model carries `snapshot` as a Ref — id and kind — so
+ * the creation time, name and description that a person actually wants are
+ * usually not there. They are read when present and reported as missing when
+ * not; a snapshot review that guesses a date is worse than one that says it
+ * cannot see it, because the whole question is "is this old enough to delete".
+ */
+export function snapshotDetail(raw) {
+  if (raw === undefined || raw === null) return null;
+  const list = Array.isArray(raw) ? raw : [raw];
+  const items = list
+    .filter((s) => s && (s.id || s.name || s.kind))
+    .map((s) => ({
+      id: s.id || s.Id || null,
+      name: s.name || s.Name || null,
+      // vSphere calls it createTime; other shapes have been seen. Read them
+      // all, invent none.
+      createdAt: s.createTime || s.createdAt || s.created || null,
+      description: s.description || s.Description || null,
+      sizeGiB: s.size ? Math.round(s.size / 1073741824) : null,
+    }));
+  if (!items.length) return null;
+  const dated = items.filter((s) => s.createdAt).length;
+  return {
+    count: items.length,
+    items,
+    // Said out loud so the console never has to work it out, and never has to
+    // choose between showing a blank and showing a guess.
+    datesKnown: dated === items.length,
+    note: dated === items.length
+      ? null
+      : "The migration inventory reports that a snapshot exists but not when it was taken — that detail lives in vCenter. Check it there before deciding whether it is safe to delete.",
+  };
+}
+
+/**
+ * Should a snapshot be taken on the source before migrating? Pure.
+ *
+ * The honest answer is almost always no, and it is worth saying why rather than
+ * offering a button:
+ *
+ *   For WARM it is not a trade-off, it is fatal. A pre-existing snapshot is
+ *   precisely what makes Forklift refuse a warm plan, so "take a snapshot then
+ *   proceed" would recreate the failure the assessment now catches.
+ *
+ *   For COLD the rollback already exists. MTV never modifies or deletes the
+ *   source: it powers the guest off, reads the disks, and leaves the VM sitting
+ *   there. A powered-off source VM IS a complete, bootable restore point — a
+ *   better one than a snapshot, because it does not depend on a delta chain.
+ *   A snapshot on top of it makes the disks a chain, so the copy is slower and
+ *   likelier to fail, and it has to be deleted afterwards anyway.
+ *
+ * The case where the answer is yes is a real one and is not argued with: a
+ * change policy that requires a restore point for every change, or someone
+ * making guest-level changes to the source before cutover. So this returns a
+ * recommendation and the exact command, and leaves the decision where it
+ * belongs.
+ *
+ * @param {object} vm      normalised inventory VM
+ * @param {string} strategy "warm" | "cold" | null when not yet chosen
+ */
+export function snapshotPolicy(vm = {}, strategy = null) {
+  const name = vm.name || "the VM";
+  // The agent reads the source through Forklift's inventory, which is
+  // read-only. It cannot take or delete a snapshot, and says so rather than
+  // offering a control that would fail.
+  const commands = {
+    review: `Get-VM ${name} | Get-Snapshot | Select Name,Created,SizeGB,Description`,
+    take: `Get-VM ${name} | New-Snapshot -Name "pre-migration" -Description "Restore point before migration to OpenShift Virtualization"`,
+    remove: `Get-VM ${name} | Get-Snapshot | Remove-Snapshot -RemoveChildren -Confirm:$false`,
+  };
+
+  if (vm.hasSnapshot === true) {
+    return {
+      recommend: "remove", canAutomate: false, commands,
+      headline: "A snapshot already exists — deal with it before deciding anything else.",
+      why: strategy === "warm" || vm.warmEligible !== false
+        ? "A warm migration is impossible until it is gone: Forklift takes its own snapshot to track changed blocks and will not stack it on an existing chain."
+        : "A cold migration will work, but it copies the whole chain rather than one flat disk, so it is slower and likelier to fail.",
+      then: "Delete it in vCenter, check whether consolidation is needed, and re-run discovery.",
+    };
+  }
+
+  if (strategy === "warm") {
+    return {
+      recommend: "no", canAutomate: false, commands,
+      headline: "Do not take a snapshot before a warm migration.",
+      why: "It would make the warm migration impossible — a pre-existing snapshot is exactly what Forklift refuses. The source keeps running throughout the copy and is only powered off at cutover, so it remains the way back the whole time.",
+      then: "Proceed without one.",
+    };
+  }
+
+  return {
+    recommend: "not-needed", canAutomate: false, commands,
+    headline: "A snapshot is not needed, and costs transfer time.",
+    why: "MTV never modifies or deletes the source. It powers the guest off, reads the disks, and leaves the VM in place — a powered-off source VM is already a complete restore point, and a better one than a snapshot because it does not depend on a delta chain. Adding a snapshot turns the disks into a chain, so the copy is slower.",
+    then: "Take one only if your change policy requires a restore point for every change, or if someone will make changes inside the guest before cutover. If you do, take it after the guest is powered off, and delete it once the decommission request is closed.",
+  };
+}
+
 /** One shape regardless of provider flavour, so the card never branches. */
 /** Tri-state: true / false / null when the source never mentioned the fact. */
 function bool(v) {
@@ -302,6 +404,13 @@ export function normaliseInventoryVM(v = {}) {
     faultToleranceEnabled: bool(v.faultToleranceEnabled),
     // Forklift reports a snapshot as a reference object, not a count.
     hasSnapshot: snapshot,
+    // Whatever the inventory says ABOUT that snapshot. Forklift's vSphere model
+    // carries a Ref — an id and a kind — so in practice the creation time and
+    // description are usually absent. They are read anyway rather than assumed
+    // missing, and the console says "not reported by the inventory" instead of
+    // inventing a date. Reading when a snapshot was taken properly needs the
+    // vCenter API, which this agent does not have.
+    snapshotDetail: snapshotDetail(v.snapshot),
     secureBoot: bool(v.secureBoot ?? v.bootOptions?.efiSecureBootEnabled),
     tpmEnabled: bool(v.tpmEnabled ?? v.tpmPresent),
     // What VMware currently PROMISES this VM. None of it survives migration,
@@ -1056,6 +1165,10 @@ export function analyseFleet(vms = [], { targetFreeGiB = null, capacity = null, 
       diskCount: v.diskCount || 0,
       warmEligible: v.warmEligible === true,
       warmBlockedReason: v.warmBlockedReason || null,
+      // What is known about any existing snapshot, and whether one should be
+      // taken. Carried per VM because both answers are per VM.
+      snapshot: v.snapshotDetail || null,
+      snapshotPolicy: snapshotPolicy(v, v.warmEligible === true ? "warm" : "cold"),
       blockers: support.blockers, warnings: support.warnings, notes: support.notes,
       checks: support.checks,
       sourceQoS: support.sourceQoS,

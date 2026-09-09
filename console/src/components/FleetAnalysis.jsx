@@ -698,6 +698,55 @@ export default function FleetAnalysis({
                             </div>
                           </div>
                         ))}
+                        {/* Snapshots, reviewed and answered. Two questions get
+                            asked here and they are different: what is already
+                            there, and whether to add one. The second answer is
+                            almost always "no", and the reason matters more
+                            than the answer — a snapshot taken to be careful is
+                            what makes a warm migration impossible. */}
+                        {r.snapshotPolicy && (
+                          <div style={{ marginTop: 6, paddingTop: 5, borderTop: "1px solid var(--border)", fontSize: "0.76rem" }}>
+                            <b>Snapshots · </b>
+                            {r.snapshot ? (
+                              <span>
+                                {r.snapshot.count} on the source
+                                {r.snapshot.items.map((sn) => (
+                                  <span key={sn.id || sn.name} style={{ color: "var(--text2)" }}>
+                                    {" · "}{sn.name || sn.id}
+                                    {sn.createdAt ? ` (taken ${new Date(sn.createdAt).toLocaleString()})` : ""}
+                                    {sn.sizeGiB ? `, ${sn.sizeGiB} GiB` : ""}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : <span style={{ color: "var(--text2)" }}>none reported on the source</span>}
+                            <div style={{ marginTop: 2, fontWeight: 700,
+                              color: r.snapshotPolicy.recommend === "remove" ? "var(--st-warn-ink)" : "var(--st-good-ink)" }}>
+                              {r.snapshotPolicy.headline}
+                            </div>
+                            <div style={{ color: "var(--text2)" }}>{r.snapshotPolicy.why}</div>
+                            <div>→ {r.snapshotPolicy.then}</div>
+                            {/* The agent reads the source platform; it cannot
+                                write to it. So it hands over the command
+                                rather than a button that would fail. */}
+                            <div data-prose style={{ marginTop: 3, color: "var(--text2)" }}>
+                              This agent has read-only access to vCenter and cannot take or delete a snapshot. To review them there:{" "}
+                              <code style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem",
+                                background: "var(--bg2)", padding: "1px 5px", borderRadius: 4 }}>
+                                {r.snapshotPolicy.commands.review}
+                              </code>
+                            </div>
+                            {r.snapshot && (
+                              <div data-prose style={{ marginTop: 2, color: "var(--text2)" }}>
+                                To remove:{" "}
+                                <code style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem",
+                                  background: "var(--bg2)", padding: "1px 5px", borderRadius: 4 }}>
+                                  {r.snapshotPolicy.commands.remove}
+                                </code>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* How much of the assessment was actually possible.
                             A check the inventory could not answer is never
                             presented as a check that passed. */}
