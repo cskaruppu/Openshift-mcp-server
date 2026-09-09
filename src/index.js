@@ -3084,6 +3084,18 @@ async function startSSE() {
         }
       }
 
+      // Every plan on the cluster, running or finished. The console rebuilds
+      // from this on open — closing the window must not lose a migration that
+      // is still copying, and a cold wave runs for hours.
+      if (url.pathname === "/api/migration/plans" && req.method === "GET") {
+        try {
+          const out = await withClusterContext(url, async () => mig.listPlans({
+            includeFinished: url.searchParams.get("history") !== "false",
+          }));
+          return sendJson(res, 200, out ?? { available: false, plans: [], note: "Selected cluster is not reachable." });
+        } catch (err) { return sendJson(res, 400, { available: false, plans: [], error: err.message }); }
+      }
+
       // The cutover: where the plan stands, what the board approved, and what
       // may be done about it. Read-only — asked before anything goes down.
       {

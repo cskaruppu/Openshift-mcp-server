@@ -1154,12 +1154,12 @@ function Journey({ j }) {
               background: bad ? "rgba(220,38,38,.1)" : done ? "rgba(22,163,74,.1)" : here ? "rgba(61,90,254,.1)" : "rgba(127,127,127,.07)",
               border: `1px solid ${bad ? "rgba(220,38,38,.4)" : done ? "rgba(22,163,74,.3)" : here ? "rgba(61,90,254,.4)" : "transparent"}`,
             }}>
-              <div style={{ fontWeight: 700, color: bad ? "#dc2626" : done ? "#16a34a" : here ? "#3d5afe" : "var(--muted,#5a6373)" }}>
+              <div style={{ fontWeight: 700, color: bad ? "#dc2626" : done ? "#16a34a" : here ? "#3d5afe" : "var(--text2)" }}>
                 {bad ? "✖" : done ? "✓" : here ? "▸" : "·"} {s.label}
               </div>
               {/* The step in front of you is the only one worth explaining
                   in place; the rest are a tooltip away. */}
-              {here && <div data-prose style={{ color: "var(--muted,#5a6373)", marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>}
+              {here && <div data-prose style={{ color: "var(--text2)", marginTop: 1, lineHeight: 1.35 }}>{s.detail}</div>}
             </div>
           );
         })}
@@ -1204,12 +1204,12 @@ function VerifyPanel({ planName, result, busy, onRun }) {
           {result ? `Verification — ${result.verdict?.replace(/-/g, " ")}` : "Verifying…"}
         </b>
         {result?.coverage && (
-          <span style={{ color: "var(--muted,#5a6373)", fontSize: "0.75rem" }}>
+          <span style={{ color: "var(--text2)", fontSize: "0.75rem" }}>
             {result.coverage.ran} of {result.coverage.total} checks ran
           </span>
         )}
         <button onClick={onRun} disabled={busy} style={{ marginLeft: "auto", padding: "3px 10px", borderRadius: 7,
-          border: "1px solid var(--border,#e4e8f1)", background: "transparent", color: "var(--muted,#5a6373)",
+          border: "1px solid var(--border,#e4e8f1)", background: "transparent", color: "var(--text2)",
           fontFamily: "inherit", fontSize: "0.75rem", fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
           {busy ? "…" : "↻ Re-check"}
         </button>
@@ -1227,7 +1227,7 @@ function VerifyPanel({ planName, result, busy, onRun }) {
                 <span aria-hidden style={{ color: t.color, fontWeight: 800 }}>{t.icon}</span>
                 <div>
                   <span style={{ fontWeight: 600 }}>{c.label}</span>{" "}
-                  <span style={{ color: "var(--muted,#5a6373)" }}>{c.detail || c.why}</span>
+                  <span style={{ color: "var(--text2)" }}>{c.detail || c.why}</span>
                   {c.action && <div style={{ marginTop: 1 }}>→ {c.action}</div>}
                 </div>
               </div>
@@ -1266,7 +1266,7 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
         <b style={{ fontSize: "0.79rem", color: good ? "#16a34a" : "#64748b" }}>
           {good ? "✓" : "◷"} Decommission — {gate.number} · {gate.state}
         </b>
-        <div style={{ fontSize: "0.77rem", color: "var(--muted,#5a6373)", marginTop: 2 }}>{gate.next}</div>
+        <div style={{ fontSize: "0.77rem", color: "var(--text2)", marginTop: 2 }}>{gate.next}</div>
       </div>
     );
   }
@@ -1275,13 +1275,13 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
     <div style={box("rgba(100,116,139,.06)", "rgba(100,116,139,.3)")}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
         <b style={{ fontSize: "0.79rem" }}>Retire the source VMs</b>
-        <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>{posture.next}</span>
+        <span style={{ fontSize: "0.76rem", color: "var(--text2)" }}>{posture.next}</span>
       </div>
       {blockers.map((b) => (
         <div key={b.code} style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 3 }}>⚠ {b.message}</div>
       ))}
       {!blockers.length && soak && (
-        <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{soak.note}</div>
+        <div style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>{soak.note}</div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button disabled={busy || blockers.length > 0} onClick={() => onRaise(false)}
@@ -1301,7 +1301,7 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
             Waive the {soak?.days}-day soak
           </button>
         )}
-        <span data-prose style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>
+        <span data-prose style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
           This raises a change request. It deletes nothing — the VMware team carries it out, and until they do,
           powering the source back on is still the way back.
         </span>
@@ -1328,7 +1328,7 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
 
   const box = { marginTop: 7, padding: "9px 11px", borderRadius: 8,
     background: "rgba(245,158,11,.07)", border: "1px solid rgba(245,158,11,.35)" };
-  if (!posture) return <div style={{ ...box, fontSize: "0.77rem", color: "var(--muted,#5a6373)" }}>Reading the approved change window…</div>;
+  if (!posture) return <div style={{ ...box, fontSize: "0.77rem", color: "var(--text2)" }}>Reading the approved change window…</div>;
 
   const { state, window: win, decision: d, scheduled } = posture;
   const when = (t) => (t ? new Date(t).toLocaleString() : "—");
@@ -1341,7 +1341,7 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
     return (
       <div style={{ ...box, background: "rgba(14,165,160,.07)", borderColor: "rgba(14,165,160,.35)" }}>
         <b style={{ color: "#0ea5a0", fontSize: "0.79rem" }}>◷ Cutover scheduled — {when(scheduled)}</b>
-        <div data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>
+        <div data-prose style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>
           MTV performs the cutover at that moment on its own. Nobody needs to be watching this screen, and the
           change record carries the same timestamp.
         </div>
@@ -1354,7 +1354,7 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
       <b style={{ color: "#b45309", fontSize: "0.79rem" }}>
         ◷ Waiting for cutover · {state.vms.map((v) => v.name).join(", ")}
       </b>
-      <div data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 3 }}>{state.reason}</div>
+      <div data-prose style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>{state.reason}</div>
 
       {/* What the board approved. Stated even when it is nothing, because
           "no window recorded" and "outside the window" are different facts and
@@ -1363,18 +1363,18 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
         <span style={{ fontWeight: 700, color: win.known ? (win.open ? "#16a34a" : "#b45309") : "#64748b" }}>
           {win.known ? (win.open ? "✓ Inside the approved window" : win.expired ? "✖ Window closed" : "◷ Window not open yet") : "• No window on the change record"}
         </span>
-        {win.known && <span style={{ color: "var(--muted,#5a6373)" }}>{when(win.start)} → {when(win.end)}</span>}
+        {win.known && <span style={{ color: "var(--text2)" }}>{when(win.start)} → {when(win.end)}</span>}
         {/* The window and the outage are different promises and are shown as
             two numbers. A four-hour window in which the service is down for
             seven minutes is a normal change request; conflating them makes it
             read as a four-hour outage. */}
         {win.known && win.start && win.end && (
-          <span style={{ color: "var(--muted,#5a6373)" }}>
+          <span style={{ color: "var(--text2)" }}>
             · {(Math.round((Date.parse(win.end) - Date.parse(win.start)) / 60000) / 60).toFixed(1)}h authorised
           </span>
         )}
       </div>
-      <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 2 }}>{d.reason}</div>
+      <div style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 2 }}>{d.reason}</div>
       {d.fix && <div style={{ fontSize: "0.76rem", marginTop: 2 }}>→ {d.fix}</div>}
 
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -1389,13 +1389,92 @@ function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
             ◷ Schedule for {when(d.at)}
           </button>
         )}
-        <span data-prose style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)" }}>
+        <span data-prose style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
           The guest shuts down, the last changed blocks copy, the VM starts on OpenShift. Until then it keeps serving users.
         </span>
       </div>
     </div>
   );
 }
+
+/* The work the assessment does, in the order it does it. Named steps rather
+   than a percentage: the request is a single call, so a progress bar would be
+   inventing a number. What a waiting person actually wants to know is what it
+   is doing and whether it has stopped, and a named step answers both. */
+const ANALYSIS_PHASES = [
+  "Reading the source inventory",
+  "Matching guest operating systems against the Red Hat support matrix",
+  "Running the source-side readiness checks",
+  "Checking whether the target cluster has room",
+  "Comparing resource guarantees before and after",
+  "Asking the model for a migration method per machine",
+  "Assembling the report",
+];
+
+/* Shown while the assessment runs. A spinner says "wait"; this says what it is
+   doing, how much of it there is, and — if it takes long enough to worry
+   about — that it is the model that is slow, not the tool that is broken. */
+export function AnalysisProgress({ count, phase, slow }) {
+  return (
+    <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "16px 18px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+        <span aria-hidden style={{ width: 14, height: 14, borderRadius: 999, border: "2px solid rgba(61,90,254,.25)",
+          borderTopColor: "#3d5afe", display: "inline-block", animation: "ah-spin .8s linear infinite" }} />
+        <b style={{ fontSize: "0.88rem" }}>Analysing {count} virtual machine{count === 1 ? "" : "s"}…</b>
+        <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>
+          This runs against the source inventory and the target cluster, so it takes a moment.
+        </span>
+      </div>
+      <style>{"@keyframes ah-spin{to{transform:rotate(360deg)}}"}</style>
+
+      <div style={{ marginTop: 11 }}>
+        {ANALYSIS_PHASES.map((label, i) => {
+          const done = i < phase, here = i === phase;
+          return (
+            <div key={label} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0",
+              fontSize: "0.79rem", color: done ? "var(--text)" : here ? "var(--text)" : "var(--text2)",
+              opacity: done || here ? 1 : 0.55 }}>
+              <span aria-hidden style={{ color: done ? "#16a34a" : here ? "#3d5afe" : "var(--text2)", fontWeight: 800 }}>
+                {done ? "✓" : here ? "▸" : "·"}
+              </span>
+              <span style={{ fontWeight: here ? 700 : 400 }}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Never leave someone waiting with no explanation and no way out. */}
+      {slow && (
+        <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, fontSize: "0.78rem",
+          background: "rgba(245,158,11,.09)", border: "1px solid rgba(245,158,11,.35)" }}>
+          <b style={{ color: "#b45309" }}>This is taking longer than usual.</b>{" "}
+          <span style={{ color: "var(--text2)" }}>
+            The assessment itself is rules-based and fast; the wait is almost always the language model being asked for a
+            migration method per machine. The report will arrive with rules-only recommendations if the model does not answer.
+          </span>
+        </div>
+      )}
+
+      {/* A skeleton of what is coming, so the page does not jump when it lands. */}
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 9 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} style={{ height: 74, borderRadius: 10, background: "rgba(127,127,127,.07)",
+            border: "1px solid var(--border,#e4e8f1)" }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The states a plan can be in, named the same way everywhere they appear. */
+const PHASE = {
+  validating:         { label: "validating", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
+  ready:              { label: "ready",      bg: "rgba(61,90,254,.12)",   fg: "#3d5afe" },
+  transferring:       { label: "transferring", bg: "rgba(245,158,11,.14)", fg: "#b45309" },
+  "awaiting-cutover": { label: "awaiting cutover", bg: "rgba(245,158,11,.18)", fg: "#b45309" },
+  migrated:           { label: "migrated",   bg: "rgba(22,163,74,.14)",   fg: "#16a34a" },
+  failed:             { label: "failed",     bg: "rgba(220,38,38,.12)",   fg: "#dc2626" },
+};
 
 /** Bytes as the unit a person says out loud, not as a number of bytes. */
 function bytesGiB(n) {
@@ -1421,6 +1500,10 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [verifs, setVerifs] = useState({});            // planName -> verification result
   const [decoms, setDecoms] = useState({});            // planName -> decommission posture
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
+  const [history, setHistory] = useState(null);        // every plan on the cluster
+  const [phase, setPhase] = useState(0);               // which analysis step is showing
+  const [slowAnalysis, setSlowAnalysis] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(null);
   // The workbench is a three-step wizard: pick what moves, understand whether
   // it CAN move, then move it. Each step is a decision the next one depends on,
@@ -1496,13 +1579,21 @@ function MigrationAgent({ clusters, activeCluster }) {
   // do from an assessment of the machines you already chose.
   const runAnalysis = async () => {
     if (!vms?.length) { showToast("Discover the VMs first", "err"); return; }
-    setBusy("analyse"); setStep(2);
+    setBusy("analyse"); setStep(2); setAnalysis(null);
+    // The request is one call, so these are the steps it is KNOWN to work
+    // through rather than measured progress, and they are labelled that way:
+    // an honest "this is what it is doing" beats a bar that pretends to know
+    // how far along it is. What they buy is the answer to the only question a
+    // waiting person has — is it stuck.
+    setPhase(0);
+    const ticker = setInterval(() => setPhase((i) => Math.min(i + 1, ANALYSIS_PHASES.length - 1)), 2600);
+    const slow = setTimeout(() => setSlowAnalysis(true), 45000);
     try {
       const d = await post("/api/migration/analyse", { vms, provider });
       setAnalysis(d);
       setAdvice({ source: d.adviceSource, advice: d.advice || [], note: d.adviceNote });
     } catch (e) { showToast(e.message, "err"); setStep(1); }
-    finally { setBusy(null); }
+    finally { clearInterval(ticker); clearTimeout(slow); setSlowAnalysis(false); setBusy(null); }
   };
 
   // The evidence pack. Generated server-side so it carries the report id,
@@ -1581,13 +1672,33 @@ function MigrationAgent({ clusters, activeCluster }) {
     finally { setBusy(null); }
   };
 
+  // On open, rebuild from the cluster rather than from whatever this tab
+  // happened to remember. Closing the window during a migration lost the view
+  // of work that was still running — the Plans were always there.
+  const loadPlans = useCallback(async () => {
+    try {
+      const d = await get("/api/migration/plans");
+      setHistory(d);
+      const live = (d.plans || []).filter((p) => p.active);
+      if (live.length) {
+        setPlans(live.map((p) => ({ planName: p.planName, strategy: p.strategy, vms: p.vms })));
+        refreshStatus(live.map((p) => p.planName));
+        // Land the operator on the plans, not on a discovery form, when
+        // something is already moving.
+        setStep(4);
+      }
+    } catch { /* an unreachable cluster is reported by the panels themselves */ }
+  }, [cluster]);      // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadPlans(); }, [loadPlans]);
+
   const createPlans = async () => {
     setBusy("plan");
     try {
       // The AI record travels with the plan so the change request can state
       // what a model touched, even when raised days later from a fresh session.
       const d = await post("/api/migration/plans", { selection, targetProvider: target.targetProvider, ai: analysis?.ai || null });
-      if (d.ok) { setPlans(d.created || []); showToast(`${d.created.length} plan(s) created — nothing has moved yet`, "ok"); }
+      if (d.ok) { setPlans(d.created || []); loadPlans(); showToast(`${d.created.length} plan(s) created — nothing has moved yet`, "ok"); }
       else showToast(d.errors?.[0]?.message || d.error || "Could not create plans", "err");
       if (d.created?.length) refreshStatus(d.created.map((p) => p.planName));
     } catch (e) { showToast(e.message, "err"); }
@@ -1879,7 +1990,12 @@ function MigrationAgent({ clusters, activeCluster }) {
       )}
 
       {/* ── Step 2 · Analysis ─────────────────────────────────────────────── */}
-      {ready?.ok && step === 2 && (
+      {/* FleetAnalysis renders nothing without an analysis, which left a blank
+          screen for the length of the assessment. */}
+      {ready?.ok && step === 2 && !analysis && (
+        <AnalysisProgress count={vms?.length || 0} phase={phase} slow={slowAnalysis} />
+      )}
+      {ready?.ok && step === 2 && analysis && (
         <FleetAnalysis
           analysis={analysis}
           suggestions={analysis?.suggestions || []}
@@ -2030,6 +2146,50 @@ function MigrationAgent({ clusters, activeCluster }) {
             </div>
           )}
 
+          {/* ── What has run here before ───────────────────────────────────
+              A migration outlives the browser tab that started it. This is
+              read from the Plans on the cluster, so it survives closing the
+              window, a refresh, and a different person opening it tomorrow. */}
+          {history?.available && history.plans.length > 0 && (
+            <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "9px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <b style={{ fontSize: "0.82rem" }}>Migration history</b>
+                <span style={{ fontSize: "0.77rem", color: "var(--muted,#5a6373)" }}>{history.note}</span>
+                <button onClick={() => setShowHistory((v) => !v)} style={{ ...S, marginLeft: "auto",
+                  padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
+                  {showHistory ? "Hide" : `Show all ${history.plans.length}`}
+                </button>
+              </div>
+              {showHistory && history.plans.map((h) => (
+                <div key={h.planName} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
+                  fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
+                  <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                    background: PHASE[h.phase]?.bg || "rgba(100,116,139,.12)", color: PHASE[h.phase]?.fg || "#64748b" }}>
+                    {PHASE[h.phase]?.label || h.phase}
+                  </span>
+                  <b>{h.planName}</b>
+                  <span style={{ color: "var(--muted,#5a6373)" }}>
+                    {h.strategy} · {h.vms} VM{h.vms === 1 ? "" : "s"}{h.totalGiB ? ` · ${h.totalGiB} GiB` : ""}
+                    {h.targetNamespace ? ` → ${h.targetNamespace}` : ""}
+                  </span>
+                  {h.gate?.number && <span style={{ color: "var(--muted,#5a6373)" }}>{h.gate.number}</span>}
+                  <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem" }}>
+                    {h.finishedAt ? `finished ${new Date(h.finishedAt).toLocaleString()}`
+                      : h.createdAt ? `started ${new Date(h.createdAt).toLocaleString()}` : ""}
+                  </span>
+                  {/* Anything still moving can be opened again from here —
+                      that is the whole point of the panel. */}
+                  {h.active && !plans.some((p) => p.planName === h.planName) && (
+                    <button onClick={() => { setPlans((ps) => [...ps, { planName: h.planName, strategy: h.strategy, vms: h.vms }]); refreshStatus([h.planName]); }}
+                      style={{ ...S, padding: "2px 9px", fontSize: "0.73rem", fontWeight: 700, cursor: "pointer" }}>
+                      Reopen
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* ── Plans + progress ─────────────────────────────────────────── */}
           {plans.map((p) => {
             const st = status[p.planName] || {};
@@ -2128,7 +2288,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                           <span style={{ marginLeft: "auto", color: "var(--muted,#5a6373)", fontSize: "0.74rem",
                             fontVariantNumeric: "tabular-nums" }}>
                             {st.progress?.total
-                              ? <><b style={{ color: "var(--fg,#151a29)" }}>{bytesGiB(st.progress.bytes)}</b> of {bytesGiB(st.progress.total)} · </>
+                              ? <><b style={{ color: "var(--text)" }}>{bytesGiB(st.progress.bytes)}</b> of {bytesGiB(st.progress.total)} · </>
                               : null}
                             {st.eta.mbps} MiB/s · {st.eta.percent}%
                             {st.progress?.activeVMs ? ` · ${st.progress.activeVMs} VM(s) copying` : ""}

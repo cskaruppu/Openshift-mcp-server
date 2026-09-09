@@ -3169,3 +3169,79 @@ export async function checkDecommissionApproval(planName) {
   } } });
   return { ok: true, gate: next, note: next.next };
 }
+
+// ---------------------------------------------------------------------------
+// 9. What is already running — the console is a view, not the record
+// ---------------------------------------------------------------------------
+/**
+ * Every plan this agent has created on the cluster, running or finished.
+ *
+ * This exists because of a real defect: the console only ever knew about plans
+ * it had created in that browser tab. Closing the migration window dropped a
+ * migration that was still copying — and a cold wave runs for hours, so the
+ * window WILL be closed while it does. The work was never lost, only the view
+ * of it, which is the more embarrassing kind of loss: the cluster knew, the
+ * change record knew, and the screen showed nothing.
+ *
+ * The Plan is the record. The console reads it back on every open and rebuilds
+ * from it, so what is on screen after a refresh is what is true on the cluster,
+ * not what happened to be in a variable.
+ */
+export async function listPlans({ includeFinished = true, limit = 60 } = {}) {
+  const list = await ocpGet(
+    `/${FORKLIFT}/namespaces/${MTV_NS}/plans?labelSelector=${encodeURIComponent("app.kubernetes.io/managed-by=tcs-agentic-ai")}`,
+  ).catch(() => null);
+  if (!list?.items) return { available: false, plans: [], note: "The migration plans could not be read from this cluster." };
+
+  const plans = list.items.map((p) => {
+    const st = {
+      ready: isTrue(p, "Ready"), executing: isTrue(p, "Executing"),
+      succeeded: isTrue(p, "Succeeded"), failed: isTrue(p, "Failed"), canceled: isTrue(p, "Canceled"),
+    };
+    const vms = (p.status?.migration?.vms || []).map(normalisePlanVM);
+    const warm = p.spec?.warm === true;
+    // "Waiting" is a state of its own and the one most worth seeing from the
+    // outside: a warm plan whose precopy finished is not running and not done,
+    // it is holding for a person, possibly since yesterday.
+    const awaiting = warm && vms.some((v) => /^(copyingpaused|copying_paused|precopy)$/i.test(String(v.phase || "")));
+    const phase = st.failed || st.canceled ? "failed"
+      : st.succeeded ? "migrated"
+      : awaiting ? "awaiting-cutover"
+      : st.executing ? "transferring"
+      : st.ready ? "ready" : "validating";
+    return {
+      planName: p.metadata?.name,
+      createdAt: p.metadata?.creationTimestamp || null,
+      strategy: warm ? "warm" : "cold",
+      osFamily: p.metadata?.labels?.["tcs.agentic-ai/os-family"] || null,
+      targetNamespace: p.spec?.targetNamespace || null,
+      vms: (p.spec?.vms || []).length,
+      vmNames: (p.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
+      totalGiB: Number(p.metadata?.annotations?.["tcs.agentic-ai/total-gib"] || 0) || null,
+      phase, active: !st.succeeded && !st.failed && !st.canceled,
+      gate: approvalGate(p),
+      decommission: decommissionGate(p),
+      // When it finished, so history sorts by something meaningful.
+      finishedAt: vms.map((v) => v.completed).filter(Boolean).sort().at(-1) || null,
+    };
+  });
+
+  // Newest first; anything still moving floats above the finished work
+  // regardless of age, because that is what someone opening this needs.
+  plans.sort((a, b) => (a.active === b.active
+    ? String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+    : a.active ? -1 : 1));
+
+  const active = plans.filter((p) => p.active);
+  return {
+    available: true,
+    plans: (includeFinished ? plans : active).slice(0, limit),
+    activeCount: active.length,
+    finishedCount: plans.length - active.length,
+    // The sentence someone needs on opening the agent, before they read anything.
+    note: active.length
+      ? `${active.length} migration${active.length === 1 ? "" : "s"} in progress.`
+      : plans.length ? `Nothing running. ${plans.length} past migration${plans.length === 1 ? "" : "s"}.`
+      : "No migrations have been run from this cluster yet.",
+  };
+}
