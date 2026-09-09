@@ -3143,6 +3143,20 @@ export async function rollbackMigration(planName, { deleteTargetVMs = true, acto
   }).catch((e) => ({ ok: false, error: e.message }));
   if (crCancelled?.number) terminal.push(`# ServiceNow ${crCancelled.number} cancelled`);
 
+  // History too, and for the same reason the cancel goes here: everything this
+  // record is built from lives on the Plan, which step 4 deletes. A rollback
+  // that leaves no trace of what was rolled back is the worst case for the
+  // person who has to explain it later.
+  await archiveMigration(planName, {
+    outcome: "rolled-back", status,
+    note: [
+      deleted.length ? `Removed from OpenShift: ${deleted.join(", ")}` : "Nothing had been created on OpenShift.",
+      failed.length ? `Could not remove: ${failed.map((f) => `${f.target} (${f.error})`).join("; ")}` : null,
+      decision.sourceAction || null,
+    ].filter(Boolean).join(" "),
+    actor, cluster,
+  }).catch(() => {});
+
   // 4. Retire the plan so it cannot be re-run by accident.
   terminal.push(`$ oc delete plan ${planName} -n ${MTV_NS}`);
   try { await ocpDelete(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`); deleted.push(`plan/${planName}`); }
@@ -3228,6 +3242,10 @@ export async function verifyMigration(planName) {
   if (summary.verdict === "passed" || summary.verdict === "passed-with-warnings") {
     const r = await closeMigrationCR(planName, { verification: summary }).catch((e) => ({ ok: false, error: e.message }));
     closed = r?.ok && !r.alreadyClosed ? { number: r.number, closeCode: r.closeCode } : null;
+    // History is written once, at the same moment and behind the same guard —
+    // closeMigrationCR reports alreadyClosed on every later poll, so a
+    // successful close is exactly the "this finished, once" signal.
+    if (closed) await archiveMigration(planName, { outcome: "migrated", verification: summary }).catch(() => {});
   }
 
   return {
@@ -3714,4 +3732,55 @@ export async function cancelMigrationCR(planName, { reason = "The migration was 
     risk: "low", approvedBy: actor,
   }).catch(() => {});
   return { ok: true, number: gate.number, cancelled: true };
+}
+
+/**
+ * Write one migration into the durable history, at a terminal event.
+ *
+ * Everything is gathered from the Plan and its status — which is why this must
+ * be called while the Plan still exists, and why it needs no state carried
+ * across the migration's lifetime. Called once per run: on a verified success,
+ * and on a rollback just before the Plan is deleted.
+ *
+ * Never allowed to throw into its caller. A migration that succeeded must not
+ * report failure because a history row could not be written, and a rollback
+ * must complete regardless.
+ */
+export async function archiveMigration(planName, { outcome, status = null, verification = null, note = null, actor = "agent", cluster = "local" } = {}) {
+  const plan = await ocpGet(`/${FORKLIFT}/namespaces/${MTV_NS}/plans/${planName}`).catch(() => null);
+  const st = status || await planStatus(planName).catch(() => null);
+  if (!plan && !st?.found) return { ok: false, error: `Plan "${planName}" is gone — nothing left to archive.` };
+
+  const { stagesFrom, recordMigration } = await import("./migration-history.js");
+  const ann = plan?.metadata?.annotations || {};
+  const gate = approvalGate(plan || {});
+  const mig = await activeMigration(planName).catch(() => null);
+  const stages = stagesFrom(plan || {}, st || {}, { cutover: mig?.spec?.cutover || null, verifiedAt: verification ? new Date().toISOString() : null });
+
+  // Planned against measured. Kept as a pair, because next time's estimate is
+  // only as good as last time's measurement — and an estimate nobody ever
+  // checked is a number, not a forecast.
+  const planned = st?.planned || null;
+  const actualMinutes = stages.transferStarted && stages.finished
+    ? Math.round((Date.parse(stages.finished) - Date.parse(stages.transferStarted)) / 60000)
+    : null;
+
+  return recordMigration({
+    planName, cluster, outcome, actor, note,
+    strategy: (plan?.spec?.warm ?? st?.warm) ? "warm" : "cold",
+    vmNames: (plan?.spec?.vms || []).map((v) => v.name || v.id).filter(Boolean),
+    totalGiB: Number(ann["tcs.agentic-ai/total-gib"] || 0) || st?.totalGiB || null,
+    targetNamespace: plan?.spec?.targetNamespace || st?.targetNamespace || null,
+    sourceProvider: plan?.spec?.provider?.source?.name || st?.sourceProvider || null,
+    changeRequest: gate.number || null,
+    approvedBy: gate.number ? gate.state : null,
+    stages,
+    estimatedMinutes: planned?.minutes ?? null,
+    measuredMbps: planned?.mbps ?? null,
+    actualMinutes,
+    verification: verification
+      ? { verdict: verification.verdict, headline: verification.headline, counts: verification.counts }
+      : null,
+    finishedAt: stages.finished || new Date().toISOString(),
+  });
 }

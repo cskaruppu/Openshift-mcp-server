@@ -3090,6 +3090,21 @@ async function startSSE() {
         }
       }
 
+      // Migrations that have FINISHED, from the durable store rather than from
+      // the cluster — a rollback deletes the Plan, so the cluster cannot answer
+      // "what happened here last month".
+      if (url.pathname === "/api/migration/history" && req.method === "GET") {
+        try {
+          const { listMigrations } = await import("./services/migration-history.js");
+          const out = await listMigrations({
+            limit: Number(url.searchParams.get("limit")) || 50,
+            cluster: url.searchParams.get("cluster") || cluster || null,
+            planName: url.searchParams.get("plan") || null,
+          });
+          return sendJson(res, 200, out);
+        } catch (err) { return sendJson(res, 400, { migrations: [], error: err.message }); }
+      }
+
       // Every plan on the cluster, running or finished. The console rebuilds
       // from this on open — closing the window must not lose a migration that
       // is still copying, and a cold wave runs for hours.

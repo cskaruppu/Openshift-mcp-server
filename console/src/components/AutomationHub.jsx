@@ -1821,8 +1821,13 @@ function MigrationAgent({ clusters, activeCluster }) {
   // of work that was still running — the Plans were always there.
   const loadPlans = useCallback(async () => {
     try {
-      const d = await get("/api/migration/plans");
-      setHistory(d);
+      const [d, past] = await Promise.all([
+        get("/api/migration/plans"),
+        // Finished migrations outlive the Plans that ran them, so they come
+        // from the durable store rather than from the cluster.
+        get("/api/migration/history?limit=25").catch(() => ({ migrations: [] })),
+      ]);
+      setHistory({ ...d, archived: past.migrations || [], durable: past.durable, retentionDays: past.retentionDays, archiveNote: past.note });
       const live = (d.plans || []).filter((p) => p.active);
       if (live.length) {
         setPlans(live.map((p) => ({ planName: p.planName, strategy: p.strategy, vms: p.vms })));
@@ -2301,9 +2306,54 @@ function MigrationAgent({ clusters, activeCluster }) {
                 <span style={{ fontSize: "0.77rem", color: "var(--muted,#5a6373)" }}>{history.note}</span>
                 <button onClick={() => setShowHistory((v) => !v)} style={{ ...S, marginLeft: "auto",
                   padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
-                  {showHistory ? "Hide" : `Show all ${history.plans.length}`}
+                  {showHistory ? "Hide" : `Show all ${history.plans.length + (history.archived?.length || 0)}`}
                 </button>
               </div>
+              {/* Finished migrations, from the durable store. These survive the
+                  Plan being deleted — which a rollback does — so this is the
+                  only place a rolled-back migration can still be seen. */}
+              {showHistory && (history.archived || []).map((a) => (
+                <div key={a.id} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
+                  fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
+                  <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
+                    background: a.outcome === "migrated" ? "rgba(22,163,74,.14)" : "rgba(220,38,38,.12)",
+                    color: a.outcome === "migrated" ? "#16a34a" : "#dc2626" }}>
+                    {a.outcome === "rolled-back" ? "rolled back" : a.outcome}
+                  </span>
+                  <b>{a.planName}</b>
+                  <span style={{ color: "var(--text2)" }}>
+                    {a.strategy} · {a.vmCount} VM{a.vmCount === 1 ? "" : "s"}
+                    {a.totalGiB ? ` · ${a.totalGiB} GiB` : ""}
+                    {a.vmNames?.length ? ` · ${a.vmNames.slice(0, 3).join(", ")}${a.vmNames.length > 3 ? ` +${a.vmNames.length - 3}` : ""}` : ""}
+                  </span>
+                  {a.changeRequest && <span style={{ color: "var(--text2)" }}>{a.changeRequest}</span>}
+                  {/* Promised against measured — the pair worth keeping, because
+                      the next estimate is only as good as this measurement. */}
+                  {a.actualMinutes != null && (
+                    <span style={{ color: "var(--text2)" }}>
+                      took {a.actualMinutes} min{a.estimatedMinutes != null ? ` (estimated ${a.estimatedMinutes})` : ""}
+                    </span>
+                  )}
+                  {a.verification?.verdict && (
+                    <span style={{ color: "var(--text2)" }}>verification {a.verification.verdict.replace(/-/g, " ")}</span>
+                  )}
+                  <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
+                    {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
+                  </span>
+                  {a.note && <div style={{ width: "100%", color: "var(--text2)", fontSize: "0.75rem" }}>{a.note}</div>}
+                </div>
+              ))}
+              {showHistory && history.archiveNote && (
+                <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
+                  ⚠ {history.archiveNote}
+                </div>
+              )}
+              {showHistory && history.durable && (
+                <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
+                  Finished migrations are kept for {history.retentionDays} days. The change requests in ServiceNow
+                  remain the durable record beyond that, with the migration document attached to each.
+                </div>
+              )}
               {showHistory && history.plans.map((h) => (
                 <div key={h.planName} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
                   fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
