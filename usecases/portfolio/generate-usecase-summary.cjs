@@ -130,7 +130,7 @@ function drawWorkflow(s, bands) {
   }
 }
 
-function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }) {
+function useCaseSlide({ id, name, tagline, scope, description, bands, note, noteColor }) {
   const s = pptx.addSlide();
 
   // Header: the product name always leads, then the use case name.
@@ -145,7 +145,16 @@ function useCaseSlide({ id, name, tagline, description, bands, note, noteColor }
   // Description — labelled, so it reads as the use case definition
   s.addText("USE CASE DESCRIPTION", { x: LEFT, y: 1.3, w: 4, h: 0.2, fontSize: 8.5,
     bold: true, color: C.slate, charSpacing: 1.4, fontFace: F });
-  s.addText(description, { x: LEFT, y: 1.52, w: FULL, h: 1.0, fontSize: 12, color: C.navy,
+  // Where two agents share a noun — VM Lifecycle and VM Migration both do —
+  // the names alone cannot separate them, so the boundary is stated rather
+  // than left for a reader to infer from the workflow underneath.
+  if (scope) {
+    s.addShape(pptx.ShapeType.roundRect, { x: LEFT, y: 1.16, w: FULL, h: 0.3,
+      fill: { color: "EEF2FF" }, line: { color: "C7D2FE", width: 0.75 }, rectRadius: 0.04 });
+    s.addText(scope, { x: LEFT + 0.12, y: 1.16, w: FULL - 0.24, h: 0.3, fontSize: 9.5,
+      color: "3730A3", bold: true, valign: "middle", fontFace: F });
+  }
+  s.addText(description, { x: LEFT, y: scope ? 1.56 : 1.52, w: FULL, h: 1.0, fontSize: 12, color: C.navy,
     fontFace: F, valign: "top", lineSpacingMultiple: 1.2 });
 
   s.addText("END-TO-END WORKFLOW", { x: LEFT, y: 2.38, w: 4, h: 0.22, fontSize: 8.5,
@@ -330,6 +339,7 @@ useCaseSlide({
 useCaseSlide({
   id: "UC-06", name: "VM Lifecycle Agent",
   tagline: "Governed VM provisioning & lifecycle — one sentence in, a governed, owned, accountable machine out",
+  scope: "SCOPE  ·  VMs that are BORN on OpenShift Virtualization — requested, provisioned, right-sized, reclaimed.   For machines arriving FROM VMware, see UC-10.",
   description:
     "A VM request stated in plain language, reconciled against the golden templates this cluster actually offers and checked against live quota — before anyone is asked to approve it. On approval the VM is provisioned with full provenance written onto the object, and weeks later the agent reads that provenance back to right-size or reclaim it.",
   bands: [
@@ -414,6 +424,7 @@ useCaseSlide({
   id: "UC-10", name: "VM Migration Agent",
   title: "VM Migration Assurance — VMware to OpenShift Virtualization",
   tagline: "Assess against the target, govern the change, prove the result — migration is one of nine stages",
+  scope: "SCOPE  ·  VMs that ALREADY EXIST on VMware and are moving to OpenShift Virtualization.   Once landed, they are governed by UC-06.",
   description:
     "Every assessment tool on the market reads the source. This agent runs inside the destination, so it can answer what none of them can: will this VM actually RUN when it lands? A KubeVirt VM is a pod — it must fit on ONE node — and a 64 GiB guest on 32 GiB workers copies perfectly, then sits Pending after the outage is spent. Migration is one of nine stages; the rest are assessment, governance, verification and retiring the source.",
   bands: [
