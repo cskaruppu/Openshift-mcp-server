@@ -5,6 +5,10 @@
  * Run: node usecases/uc-10-vm-migration/generate-excel.cjs
  */
 const ExcelJS = require("exceljs");
+// The workflow is defined once, in workflow.cjs, and read by both this
+// workbook and the deck. They each used to carry their own copy, which is how
+// they drifted four stages behind the product.
+const WF = require("./workflow.cjs");
 const path = require("path");
 const fs = require("fs");
 
@@ -101,6 +105,8 @@ function note(ws, rowIdx, span, text, bg, fg) {
 const AI = { t: "🤖 AI", b: true, c: "5B21B6", bg: C.lightPurple };
 const AU = { t: "⚙️ AUTOMATIC", b: true, c: "1E40AF", bg: C.lightBlue };
 const MA = { t: "👤 MANUAL", b: true, c: C.darkAmber, bg: C.lightAmber };
+const EX = { t: "🔗 EXTERNAL", b: true, c: "0E7490", bg: "CFFAFE" };
+const ACTOR = { [WF.AU]: AU, [WF.AI]: AI, [WF.MA]: MA, [WF.EX]: EX };
 const OK = { t: "✅ VERIFIED", b: true, c: C.darkGreen, bg: C.lightGreen };
 const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
 
@@ -144,46 +150,42 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
 // ═══ 3. WORKFLOW BY ACTOR ═══════════════════════════════════════════════════
 {
   const ws = wb.addWorksheet("3. Workflow by Actor", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
-  ws.columns = [{ width: 7 }, { width: 32 }, { width: 17 }, { width: 66 }, { width: 26 }];
-  let r = banner(ws, "Every step, and who performs it — 23 deterministic · 8 manual · 2 AI",
-    "If a row says deterministic, no model was involved in producing it. Discovery is read-only; strategy is chosen last; both irreversible acts stay human.", 5);
-  r = headerRow(ws, r, ["#", "Step", "Actor", "What happens", "Where it lives"]);
+  ws.columns = [{ width: 7 }, { width: 20 }, { width: 34 }, { width: 17 }, { width: 74 }, { width: 26 }];
+  let r = banner(ws, `Every step, end to end — ${WF.ratioLine()}`,
+    "Nine stages. If a row says deterministic, no model was involved in producing it. Discovery is read-only, strategy is chosen after the evidence, and every irreversible act is manual.", 6);
+  r = headerRow(ws, r, ["#", "Stage", "Step", "Actor", "What happens", "Where it lives"]);
+  r = dataRows(ws, r, WF.STEPS.map(([id, stage, step, actor, what, where]) => {
+    const st = WF.STAGES.find((x) => x.id === stage);
+    return [id, `${st.id}. ${st.name}${st.route === "warm" ? " (warm)" : ""}`, step, ACTOR[actor], what, where];
+  }), { height: 32 });
+  note(ws, r, 6, "The ratio is the argument, not an apology: a model where judgement is genuinely required, measurement everywhere a fact exists, and a person on both irreversible acts — starting a migration, and deleting the source.", C.lightPurple, "5B21B6");
+}
+
+// ═══ 3a. THE TWO JOURNEYS ═══════════════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("3a. Warm vs Cold", { properties: { tabColor: { argb: "FF" + C.orange } } });
+  ws.columns = [{ width: 6 }, { width: 24 }, { width: 58 }, { width: 58 }];
+  let r = banner(ws, "Warm and cold are different journeys, not one journey with a flag",
+    "A cold migration powers the guest off at the START and the whole transfer is the outage. A warm one keeps it serving users and spends the outage at the very end, at the cutover. Drawn as one pipeline, a cold plan promises a cutover step it will never have.", 4);
+  r = headerRow(ws, r, ["#", "Stage", "COLD — guest is off throughout", "WARM — guest serves users until cutover"]);
   r = dataRows(ws, r, [
-    ["1.1", "Choose the source provider", MA, "The operator picks a registered MTV provider.", "Console"],
-    ["1.2", "Discover VMs", AU, "Read-only inventory call to MTV. Nothing is written to vCenter.", "discoverVMs"],
-    ["1.3", "Normalise each VM", AU, "IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts.", "normaliseInventoryVM"],
-    ["1.4", "Decode the guest id", AU, "windows2019srvNext_64Guest → Windows Server 2022, from a lookup table rather than a regex over the text.", "expandGuestId"],
-    ["1.5", "Detect the VDDK image", AU, "Reads spec.settings.vddkInitImage off the Forklift Provider — free, on a list already being fetched.", "providerVddk"],
-    ["2.1", "Classify the guest OS", AU, "Matched against Red Hat's certified list; three tiers.", "classifyGuestOS"],
-    ["2.2", "Run 15 source checks", AU, "Snapshots, independent disks, RDM, shared disks, FT, vTPM, Secure Boot, devices, NIC coverage, VMware Tools.", "runSourceChecks"],
-    ["2.3", "Read target capacity", AU, "Node allocatable minus pod requests, counting only Ready, uncordoned, virt-schedulable nodes.", "readClusterCapacity"],
-    ["2.4", "Decide each VM's level", AU, "The worse of the guest matrix verdict and MTV's own concerns.", "analyseFleet"],
-    ["2.5", "Resource fidelity", AU, "vCPU assigned vs CPU requested at the cluster's overcommit ratio; reservations lost.", "resourceFidelity"],
-    ["2.6", "Move-together groups", AU, "Inference from subnet, name shape, vCenter folder and datastore, with the evidence kept.", "affinityGroups"],
-    ["2.7", "Drift vs the last run", AU, "Pure diff against the stored baseline for this provider.", "diffAssessments"],
-    ["2.8", "Fleet findings", AU, "Blockers, EOL guests, VirtIO drivers, snapshots, cold-only bulk. Rules — always produced, LLM or not.", "fleetRemediation"],
-    ["2.9", "Warm or cold, per VM", AI, "THE JUDGEMENT CALL. Downtime traded against transfer complexity. See the 'AI Explained' sheet.", "adviseMigration"],
-    ["2.10", "Wave sequencing advice", AI, "At most 3 extra suggestions about ordering and risk, appended to 2.8. Cannot contradict it.", "adviseFleet"],
-    ["2.11", "Clamp the AI's answer", AU, "Physics overrules the model before anyone sees it: invented VMs dropped, impossible warm forced cold.", "clampAdvice, powerPlan"],
-    ["2.12", "Evidence pack", AU, "Report ID, timestamp, source, target cluster, matrix version → printable HTML and CSV register.", "assessment-report.js"],
-    ["2.13", "Validate the report", MA, "The operator reads it and decides whether it is true. Nothing proceeds without this.", "Console"],
-    ["3.1", "Choose the wave", MA, "Tick machines. Eligible ones are pre-ticked as a starting point, not a decision.", "Console"],
-    ["3.2", "Choose warm or cold", MA, "Pre-filled from 2.9; every value editable. Warm is only offered where it can physically work.", "Console"],
-    ["3.3", "Warn on split groups", AU, "Recomputed on every tick from 2.6 — 'db01 would stay on VMware'.", "splitGroups"],
-    ["3.4", "Target namespace and maps", MA, "Chosen from what the cluster actually has.", "Console"],
-    ["4.1", "Measure throughput", AU, "From migrations this cluster has already completed, not from a vendor figure.", "clusterThroughput"],
-    ["4.2", "Estimate the transfer", AU, "Per plan, from that plan's own recorded footprint. Transfer time and downtime stated separately, and the wave costed both WITH and WITHOUT the VDDK image.", "estimatePlan, vddkComparison"],
-    ["4.3", "Group into plans", AU, "The five dimensions MTV forces, plus operating system so Windows and Linux never mix.", "planGroups"],
-    ["4.4", "Create the Plans", AU, "MTV validates them. Nothing moves.", "createPlans"],
-    ["4.5", "Raise the change request", AU, "The platform authors it: implementation, backout, test plan, and the outage being approved.", "raiseMigrationCR"],
-    ["4.6", "Approve", MA, "The CAB decides. This gate is not automatable by design.", "ServiceNow"],
-    ["4.7", "Check approval", AU, "Read from ServiceNow, written back onto the Plan as annotations.", "checkMigrationApproval"],
-    ["4.8", "Migrate", MA, "A human clicks. The server re-reads the gate from the cluster before acting.", "startMigration"],
-    ["4.9", "Transfer with a live ETA", AU, "Measured from bytes actually moving; says 'stalled' rather than growing a number.", "liveEta"],
-    ["4.10", "Verify on the target", AU, "Measured against the live cluster, never inferred.", "verifyMigration"],
-    ["4.11", "Roll back", MA, "Deletes only what the migration created. The source VMs are never deleted.", "rollbackMigration"],
+    ["1", "Plan created", "Validated by MTV. Nothing has moved.", "Validated by MTV. Nothing has moved."],
+    ["2", "Change approved", "Window covers the WHOLE copy — the transfer is the outage.", "Window covers the CUTOVER ONLY — the copy is not an outage."],
+    ["3", "Copy", "Guest powered off first, then every byte copies. Users are down for all of it.", "Disks copy while the guest keeps serving users. MTV re-snapshots hourly to track changes."],
+    ["4", "Cutover", "— no such step —", "THE OUTAGE. Guest shuts down, final changed blocks copy, VM starts on OpenShift."],
+    ["5", "Verified", "Running, disks present, source confirmed off.", "Running, disks present, source confirmed off."],
+    ["6", "Source retired", "Second change request, after the soak.", "Second change request, after the soak."],
+  ], { height: 34 });
+  r += 1;
+  r = headerRow(ws, r, ["", "What differs", "Cold", "Warm"]);
+  r = dataRows(ws, r, [
+    ["", "Service impact", "The entire transfer — hours for a large VM.", "Minutes. Only the cutover."],
+    ["", "Requires", "Nothing beyond a validated plan.", "Changed block tracking (CBT), powered on, and NO pre-existing snapshots."],
+    ["", "Pre-existing snapshot", "Allowed. Copies the chain, so it is slower.", "BLOCKS IT. Forklift will not stack its tracking snapshot on an existing chain."],
+    ["", "Change window proposed", "24h lead — the source has not been touched, so notice is free.", "Same day. Every hour of waiting spends one of the VM's 28 changed-block snapshots and grows the delta."],
+    ["", "The way back", "Power the source VM on again. It was never deleted.", "Before cutover the source is still running. After it, power it on again."],
   ], { height: 32 });
-  note(ws, r, 5, "The ratio is the argument, not an apology: AI where judgement is genuinely required, measurement everywhere a fact exists, and a human on both irreversible acts.", C.lightPurple, "5B21B6");
+  note(ws, r, 4, "The snapshot rule is the one that surprises people: taking a snapshot 'to be safe' before a warm migration is precisely what makes the warm migration impossible.", C.lightAmber, C.darkAmber);
 }
 
 // ═══ 3b. AI EXPLAINED ═══════════════════════════════════════════════════════
@@ -370,6 +372,97 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
     ["Windows and Linux never share a plan", "Different preparation, different verification, usually different teams. A plan mixing them could not be handed to either."],
   ], { height: 40 });
   note(ws, r, 2, "The evidence pack is generated as plain strings — no runtime library dependency — so an export that works in development cannot fail in the container.", C.lightPurple, "5B21B6");
+}
+
+// ═══ 9a. CUTOVER ════════════════════════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("9a. Cutover", { properties: { tabColor: { argb: "FF" + C.orange } } });
+  ws.columns = [{ width: 30 }, { width: 100 }];
+  let r = banner(ws, "The cutover — the outage, scheduled into the window that was approved",
+    "A warm migration stops after the precopy ON PURPOSE. The disks are copied, the guest is still serving users, and nothing more happens until someone says it may go down. Every other tool puts a Cutover button here and lets you press it whenever; that is how a production VM goes down at 3pm on a Tuesday.", 2);
+  r = headerRow(ws, r, ["", "How it works"]);
+  r = dataRows(ws, r, [
+    ["What 'paused' means", "MTV has finished the full copy and is re-snapshotting hourly to keep it current. The plan reads CopyingPaused. This is success, not a stall — a console that calls it 'transfer stalled' sends someone to debug a healthy transfer pod."],
+    ["What the gate is", "The cutover is the outage, so it is gated on the change request rather than on a button being present."],
+    ["Not approved", "Refused, naming the change request and its state."],
+    ["Approved, in window", "'Power off & cut over now' is enabled."],
+    ["Approved, before it", "'Schedule for <window start>' — stamps spec.cutover on the Migration so MTV performs it with nobody present."],
+    ["Approved, a chosen time", "A picker clamped to the approved window. The server re-checks BOTH ends and the clock, whatever the console offered."],
+    ["Window expired", "Refused, pointing at the change board."],
+    ["Window unknown", "Reported as unknown, never as open. A gate that fails open is not a gate."],
+    ["If the board moves it", "The stamped cutover follows. Otherwise it fires at the old time — outside the window they approved, on a decision taken before they changed it."],
+    ["The cost of waiting", "A warm precopy spends ONE changed-block snapshot per hour, and a VM supports 28. Waiting a day spends most of the budget on nothing and grows the delta the cutover has to copy — lengthening the very outage the window was sized for."],
+    ["What happens at cutover", "The guest is shut down on VMware, the final changed blocks are copied, and the VM is started on OpenShift Virtualization."],
+  ], { height: 34 });
+  note(ws, r, 2, "Scheduling is what stops someone having to sit up until midnight. One human decision, then it runs unattended — and the window is still enforced.", C.lightAmber, C.darkAmber);
+}
+
+// ═══ 9b. POST-MIGRATION VERIFICATION ════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("9b. Verification", { properties: { tabColor: { argb: "FF" + C.autoGreen } } });
+  ws.columns = [{ width: 32 }, { width: 62 }, { width: 46 }];
+  let r = banner(ws, "'Succeeded' on a Plan describes the transfer, not the machine",
+    "MTV reports success when it has finished copying and created the target VM. The questions a person actually has afterwards are different ones — and one of them costs real money if the answer is wrong.", 3);
+  r = headerRow(ws, r, ["Check", "What it asks", "If it fails"]);
+  r = dataRows(ws, r, [
+    ["VM is running", "Is it up, and on which node?", "Usually firmware, Secure Boot or a missing driver. Read its events."],
+    ["SOURCE VM IS POWERED OFF", "The one that costs money. Two copies of one identity on one network, each writing to storage the other cannot see.", "Power the source off NOW, before anyone uses the migrated copy. Whichever machine loses is the one somebody was using."],
+    ["Kept its IP address", "Did the address survive, compared with what the Plan recorded?", "DNS, firewall rules, application config and monitoring all need updating."],
+    ["All disks present", "Against the disk count recorded at plan creation.", "The storage map missed a datastore. A missing disk is a missing filesystem inside the guest."],
+    ["CPU and memory match", "Did the shape survive the copy?", "Resize to match, unless the difference was deliberate."],
+  ], { height: 36 });
+  r += 1;
+  r = headerRow(ws, r, ["Rule", "Why", ""]);
+  r = dataRows(ws, r, [
+    ["A check with no data is not a pass", "If the source platform cannot be reached, it says 'not confirmed' and the verdict drops to INCOMPLETE. It never reports 'source is powered off' because it failed to look.", ""],
+    ["Compared against the PLAN", "Not against the source read back later — by then it may be powered off, changed or decommissioned. The promise travels with the plan that made it.", ""],
+    ["Closure is on evidence", "A passing verdict closes the change request with the check results. Failed or incomplete closes nothing — that is the point of having a verdict.", ""],
+  ], { height: 34 });
+  note(ws, r, 3, "Verdicts: passed · passed-with-warnings · incomplete (a check could not run) · failed. Only the first two close a change request or permit decommissioning.", C.lightGreen, "065F46");
+}
+
+// ═══ 9c. CHANGE REQUEST LIFECYCLE ═══════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("9c. Change Lifecycle", { properties: { tabColor: { argb: "FF" + C.aiPurple } } });
+  ws.columns = [{ width: 26 }, { width: 104 }];
+  let r = banner(ws, "Raised, sized, evidenced, and closed — the agent finishes what it starts",
+    "A change request nobody closes is a change process nobody trusts. The agent raises it, waits on it and acts inside its window, so finishing it is the agent's job.", 2);
+  r = headerRow(ws, r, ["Stage", "What the platform does"]);
+  r = dataRows(ws, r, [
+    ["Sizes the window", "IMPLEMENTATION window, not the outage — they are two different fields and two different promises. Pre-checks + the work + verification + BACKOUT + contingency, floored at a 4h standard maintenance slot and scaling beyond it for a large wave."],
+    ["States both numbers", "'Implementation window: 4h. Expected service impact: 7 min.' A board authorises hours in which the service is down for minutes, and saying both is what makes it an honest request rather than an alarming one."],
+    ["Lets you choose", "Left blank the proposal is used. A freeze period, a month-end or an already-agreed slot is the operator's to enter — this tool knows none of them."],
+    ["Authors the content", "Implementation plan, backout plan, test plan, the machines, the estimate and its basis, and what a model contributed."],
+    ["Attaches the record", "An HTML document built from the PLAN — so a request raised days later from a fresh session carries the same document. A description field is a poor place for a table of machines."],
+    ["Follows the window", "If the board reschedules, the stamped cutover follows it, with a work note saying so."],
+    ["Warns before it opens", "If the measured rate means the work no longer fits the approved window, the board is told once, before the window opens, while it can still be changed."],
+    ["Closes on success", "Verification passing closes it with the check results and the reminder that the source VMs are intact and this is still reversible."],
+    ["Cancels on rollback", "With what was removed, what could not be, and the manual step remaining. A rollback is not a failed change to file away — it is a change carried out and reversed, and the next person needs the state it was left in."],
+  ], { height: 38 });
+  note(ws, r, 2, "The cancel happens BEFORE the Plan is deleted: the Plan is where the change request's sys_id lives, so retiring it first would strand the record open with nothing left to close it.", C.lightPurple, "5B21B6");
+}
+
+// ═══ 9d. DECOMMISSION & HISTORY ═════════════════════════════════════════════
+{
+  const ws = wb.addWorksheet("9d. Retire & History", { properties: { tabColor: { argb: "FF" + C.secRed } } });
+  ws.columns = [{ width: 30 }, { width: 100 }];
+  let r = banner(ws, "The last step is the only irreversible one — and the record outlives it",
+    "Until the source VMs are deleted a migration is reversible: MTV powers them off and never removes them, so the way back is to power them on again.", 2);
+  r = headerRow(ws, r, ["", "Detail"]);
+  r = dataRows(ws, r, [
+    ["What it does NOT do", "It deletes nothing. This agent has read-only access to the source platform — it can see a VM's power state, it cannot remove it. It raises a request and tracks it; the VMware team carries it out, which is also where the audit trail for an irreversible act belongs."],
+    ["A SECOND change request", "Not an amendment to the first: the migration was reversible and this is not, they are approved by different people at different times, and a rejected decommission must not reopen a migration that succeeded."],
+    ["Soak period", "MIGRATION_SOAK_DAYS, default 7. Counted out in days remaining rather than refused, and waivable — with the waiver named on the change record."],
+    ["Blocked outright by", "Not migrated · not verified · verification FAILED · split brain (running on both platforms)."],
+    ["Blocked by INCOMPLETE too", "The check that usually could not run is 'is the source powered off'. Deleting on the strength of that is how the wrong machine gets deleted."],
+    ["", ""],
+    ["History — the problem", "The Plan used to BE the record, and a migration's history is most at risk exactly when it ends: a rollback deletes the Plan, decommission workflows delete Plans, clusters get rebuilt."],
+    ["History — where it lives", "Postgres, mirroring the change ledger's shape, with an in-memory fallback that says so rather than looking durable. MIGRATION_HISTORY_RETENTION_DAYS, default 365."],
+    ["History — what it keeps", "The stage timeline, the change request, the estimate against the measured actual, the verification verdict, and what the model cost that run."],
+    ["History — the rules", "Written ONCE at the terminal event, append-only, one row per run keyed by a generated id. A machine rolled back and migrated again shows both attempts."],
+    ["Not a second system of record", "ServiceNow holds the compliance record — approval trail, attached document, close notes — under the organisation's own retention. This is the operational record, and it points at the change request for the rest."],
+  ], { height: 36 });
+  note(ws, r, 2, "The migration only stops being reversible when the source VMs are gone — which is why that is a separate change request, raised after a soak, and carried out by someone else.", C.lightRed, "991B1B");
 }
 
 // ═══ 10. BUSINESS VALUE ═════════════════════════════════════════════════════

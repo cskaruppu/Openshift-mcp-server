@@ -33,95 +33,212 @@ touches the source.
 | 🟡 Amber | Human | Reviews, decides, approves |
 | 🟢 Green | Verified outcome | Measured against the live cluster, not assumed |
 
-## 3. Master workflow — colour-coded by actor
+## 3. Master workflow — the nine stages, and who performs each step
+
+<!-- BEGIN GENERATED WORKFLOW -->
+
+### The nine stages
+
+Warm and cold are genuinely different journeys, not one journey with a flag. A
+**cold** migration powers the guest off at the *start* and the whole transfer is
+the outage; a **warm** one keeps it serving users and spends the outage at the
+very end, at the cutover. Drawn as one pipeline, a cold plan promises a cutover
+step it will never have.
+
+| Stage | Steps | Actors | What it is for |
+|---|---|---|---|
+| **1. Discover** | 6 | 🔵5 🟡1 | Read-only. Nothing is written to the source platform. |
+| **2. Analyse support** | 15 | 🔵12 🟡1 🟣2 | Every VM assessed. The report is the decision record. |
+| **3. Select & strategy** | 4 | 🔵1 🟡3 | The wave is chosen after the evidence, never before it. |
+| **4. Plan & change** | 11 | 🔵9 🟡2 | Plans validate; the change request carries the document. |
+| **5. Transfer** | 4 | 🔵3 🟡1 | Measured live, judged against what was approved. |
+| **6. Cutover** *(warm only)* | 5 | 🔵3 🟡1 🔗1 | WARM ONLY. The outage. Scheduled inside the approved window. |
+| **7. Verify** | 7 | 🔵7 | Migrated is not working. Five checks decide which. |
+| **8. Retire the source** | 3 | 🔵1 🟡1 🔗1 | The only irreversible step, behind a soak and a second change. |
+| **9. Roll back** | 3 | 🔵2 🟡1 | Available at every stage until the source is deleted. |
 
 ```mermaid
-flowchart TD
-    A[/"🖥️ vCenter provider<br>registered in MTV"/]:::manual
-    A --> B["Discover VMs<br>read-only inventory<br>guestId decoded to a real OS"]:::auto
-    B --> C["Assess EVERY discovered VM"]:::auto
+flowchart LR
+    subgraph BOTH[" "]
+      direction LR
+      S1["1 · DISCOVER<br>read-only inventory"]:::auto
+      S2["2 · ANALYSE<br>matrix · checks · capacity"]:::auto
+      S3["3 · SELECT<br>wave + warm or cold"]:::manual
+      S4["4 · PLAN & CHANGE<br>estimate · window · CAB"]:::auto
+      S1 --> S2 --> S3 --> S4
+    end
+    S4 --> COLD["5 · POWER OFF & COPY<br><b>the copy IS the outage</b>"]:::manual
+    S4 --> WARM["5 · DISKS COPY<br>guest keeps serving users"]:::auto
+    WARM --> CUT["6 · CUTOVER<br><b>the only downtime</b>"]:::manual
+    COLD --> V["VERIFY<br>5 checks, incl. source is OFF"]:::auto
+    CUT --> V
+    V --> RET["RETIRE THE SOURCE<br>2nd change request, after a soak"]:::crit
+    V -- "any check fails" --> RB["ROLL BACK<br>source VMs never deleted"]:::manual
 
-    C --> D1["Guest OS vs Red Hat's<br>certified list — 3 tiers"]:::auto
-    C --> D2["15 source-side checks<br>snapshots · RDM · vTPM · devices"]:::auto
-    C --> D3["Target capacity<br>will each VM SCHEDULE?"]:::auto
-    C --> D4["Resource fidelity<br>reservations → Burstable"]:::auto
-    C --> D5["Drift since the<br>last assessment"]:::auto
-
-    D1 --> E["📋 Pre-migration report<br>+ evidence pack (HTML / CSV)"]:::auto
-    D2 --> E
-    D3 --> E
-    D4 --> E
-    D5 --> E
-    E --> F["🤖 AI: method per VM<br>warm or cold, and why"]:::ai
-    E --> F2["🤖 AI: wave sequencing<br>≤3 suggestions, cannot<br>contradict the findings"]:::ai
-    F --> CL["⚙ Clamp: physics overrules<br>the model before it is shown"]:::auto
-    F2 --> CL
-    CL --> G{"Human validates<br>the report"}:::manual
-    G --> H["Choose the wave<br>+ warm/cold per VM"]:::manual
-    H --> I["⚠ Move-together groups<br>'db01 would stay behind'"]:::auto
-    I --> J["Group into the plans<br>MTV will accept<br>+ split Windows / Linux"]:::auto
-    J --> K["Measured transfer estimate<br>from THIS cluster's history"]:::auto
-    K --> L["Create Plan(s)<br>MTV validates — nothing moves"]:::auto
-    L --> M["Raise ServiceNow change<br>recorded ON the Plan"]:::auto
-    M --> N{"CAB approves?"}:::manual
-    N -- no --> Z(["Nothing moved.<br>Source untouched."]):::done
-    N -- yes --> O["👤 Migrate — a human clicks<br>gate re-read server-side"]:::manual
-    O --> P["Live ETA from bytes<br>actually moving"]:::auto
-    P --> Q["Verify on the target"]:::auto
-    Q -- green --> R(["🟢 VMs running on<br>OpenShift Virtualization"]):::done
-    Q -- red --> S["Roll back<br>source VMs never deleted"]:::manual
-
-    classDef ai fill:#ede9fe,stroke:#7c3aed,stroke-width:2.5px,color:#5b21b6
     classDef auto fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e40af
     classDef manual fill:#fef3c7,stroke:#d97706,stroke-width:2.5px,color:#92400e
-    classDef done fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
+    classDef crit fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
 ```
 
-## 4. Workflow by actor — every step, and who performs it
+### Every step, and who performs it
 
-Every step, and who performs it. Three actors only: a **human** decides, a
-**deterministic** routine computes, and the **AI** reasons. Nothing is left
-ambiguous — if a row says deterministic, no model was involved in producing it.
+**58 steps — 43 deterministic · 11 manual · 2 AI-assisted · 2 external.** That ratio is the argument, not an apology: a model where
+judgement is genuinely required, measurement everywhere a fact exists, and a
+person on both irreversible acts — starting a migration, and deleting the source.
 
-| # | Step | Actor | What happens | Where it lives |
-|---|---|---|---|---|
-| 1.1 | Choose the source provider | 🟡 Manual | The operator picks a registered MTV provider | Console |
-| 1.2 | Discover VMs | 🔵 Automatic | Read-only inventory call to MTV. Nothing is written to vCenter | `discoverVMs` |
-| 1.3 | Normalise each VM | 🔵 Automatic | IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts | `normaliseInventoryVM` |
-| 1.4 | Decode the guest id | 🔵 Automatic | `windows2019srvNext_64Guest` → Windows Server 2022, from a lookup table | `expandGuestId` |
-| 1.5 | Detect the VDDK image | 🔵 Automatic | Reads `spec.settings.vddkInitImage` off the Forklift Provider — free, on a list we already fetch | `providerVddk` |
-| 2.1 | Classify the guest OS | 🔵 Automatic | Matched against Red Hat's certified list; three tiers | `classifyGuestOS` |
-| 2.2 | Run 15 source checks | 🔵 Automatic | Snapshots, RDM, shared disks, vTPM, devices, NIC coverage… | `runSourceChecks` |
-| 2.3 | Read target capacity | 🔵 Automatic | Node allocatable minus pod requests, virt-schedulable nodes only | `readClusterCapacity` |
-| 2.4 | Decide each VM's level | 🔵 Automatic | The worse of the guest matrix and MTV's own verdict | `analyseFleet` |
-| 2.5 | Resource fidelity | 🔵 Automatic | vCPU → CPU request at the cluster's overcommit ratio | `resourceFidelity` |
-| 2.6 | Move-together groups | 🔵 Automatic | Inference from subnet, name shape, folder, datastore | `affinityGroups` |
-| 2.7 | Drift vs the last run | 🔵 Automatic | Pure diff against the stored baseline | `diffAssessments` |
-| 2.8 | Fleet findings | 🔵 Automatic | Blockers, EOL guests, VirtIO, cold-only bulk — rules, always produced | `fleetRemediation` |
-| **2.9** | **Warm or cold, per VM** | 🟣 **AI** | **The judgement call. See §5** | `adviseMigration` |
-| **2.10** | **Wave sequencing advice** | 🟣 **AI** | **At most 3 extra suggestions, on top of 2.8** | `adviseFleet` |
-| 2.11 | Clamp the AI's answer | 🔵 Automatic | Physics overrules the model before anyone sees it | `clampAdvice`, `powerPlan` |
-| 2.12 | Evidence pack | 🔵 Automatic | Report ID, timestamp, matrix version → HTML / CSV | `assessment-report.js` |
-| 2.13 | Validate the report | 🟡 Manual | The operator reads it and decides whether it is true | Console |
-| 3.1 | Choose the wave | 🟡 Manual | Tick machines. Eligible ones are pre-ticked as a starting point | Console |
-| 3.2 | Choose warm or cold | 🟡 Manual | Pre-filled from 2.9; the operator may change any of it | Console |
-| 3.3 | Warn on split groups | 🔵 Automatic | Recomputed on every tick, from 2.6 | `splitGroups` |
-| 3.4 | Target namespace + maps | 🟡 Manual | Chosen from what the cluster actually has | Console |
-| 4.1 | Measure throughput | 🔵 Automatic | From migrations this cluster has already completed | `clusterThroughput` |
-| 4.2 | Estimate the transfer | 🔵 Automatic | Per plan, from its own recorded footprint — costed **with and without VDDK** | `estimatePlan`, `vddkComparison` |
-| 4.3 | Group into plans | 🔵 Automatic | The 5 dimensions MTV forces, plus operating system | `planGroups` |
-| 4.4 | Create the Plans | 🔵 Automatic | MTV validates. Nothing moves | `createPlans` |
-| 4.5 | Raise the change request | 🔵 Automatic | Platform authors it — implementation, backout, test plan, outage | `raiseMigrationCR` |
-| 4.6 | Approve | 🟡 **Manual** | The CAB decides. This gate is not automatable by design | ServiceNow |
-| 4.7 | Check approval | 🔵 Automatic | Read from ServiceNow, written back onto the Plan | `checkMigrationApproval` |
-| 4.8 | **Migrate** | 🟡 **Manual** | A human clicks. The server re-reads the gate before acting | `startMigration` |
-| 4.9 | Transfer + live ETA | 🔵 Automatic | Measured from bytes actually moving | `liveEta` |
-| 4.10 | Verify on the target | 🔵 Automatic | Against the live cluster, never inferred | `verifyMigration` |
-| 4.11 | Roll back | 🟡 Manual | Deletes only what the migration created. Source never deleted | `rollbackMigration` |
+| # | Stage | Step | Actor | What happens | Where it lives |
+|---|---|---|---|---|---|
+| 1.1 | Discover | **Choose the source provider** | 🟡 **Manual** | The operator picks a registered MTV provider. | Console |
+| 1.2 | Discover | Discover VMs | 🔵 Deterministic | Read-only inventory call to MTV. Nothing is written to vCenter. | `discoverVMs` |
+| 1.3 | Discover | Normalise each VM | 🔵 Deterministic | IPs filtered of loopback/link-local, per-disk detail, MAC, firmware, reservation facts. | `normaliseInventoryVM` |
+| 1.4 | Discover | Decode the guest id | 🔵 Deterministic | windows2019srvNext_64Guest becomes Windows Server 2022, from a lookup table rather than a regex over the text. | `expandGuestId` |
+| 1.5 | Discover | Detect the VDDK image | 🔵 Deterministic | Reads spec.settings.vddkInitImage off the Forklift Provider — free, on a list already being fetched. | `providerVddk` |
+| 1.6 | Discover | Read snapshot detail | 🔵 Deterministic | What exists on the source, and what the inventory does NOT report — the creation date lives in vCenter, and saying so beats guessing it. | `snapshotDetail` |
+| 2.1 | Analyse support | Classify the guest OS | 🔵 Deterministic | Matched against Red Hat's certified guest list. Three tiers: certified, vendor supported, known to run. | `classifyGuestOS` |
+| 2.2 | Analyse support | Run 15 source checks | 🔵 Deterministic | Snapshots, independent disks, RDM, shared disks, FT, vTPM, Secure Boot, devices, NIC coverage, VMware Tools. | `runSourceChecks` |
+| 2.3 | Analyse support | Read target capacity | 🔵 Deterministic | Node allocatable minus pod requests, counting only Ready, uncordoned, virt-schedulable nodes. | `readClusterCapacity` |
+| 2.4 | Analyse support | Decide each VM's level | 🔵 Deterministic | The worse of the guest matrix verdict and MTV's own concerns. | `analyseFleet` |
+| 2.5 | Analyse support | Resource fidelity | 🔵 Deterministic | vCPU assigned vs CPU requested at the cluster's overcommit ratio; reservations lost on migration. | `resourceFidelity` |
+| 2.6 | Analyse support | Move-together groups | 🔵 Deterministic | Inferred from subnet, name shape, vCenter folder and datastore, with the evidence kept beside the inference. | `affinityGroups` |
+| 2.7 | Analyse support | Drift vs the last run | 🔵 Deterministic | Pure diff against the stored baseline for this provider. | `diffAssessments` |
+| 2.8 | Analyse support | Fleet findings | 🔵 Deterministic | Blockers, EOL guests, VirtIO drivers, snapshots, cold-only bulk. Rules — always produced, model or not. | `fleetRemediation` |
+| 2.9 | Analyse support | **Warm or cold, per VM** | 🟣 **AI** | THE JUDGEMENT CALL. Downtime traded against transfer complexity. One call for the whole fleet. | `adviseMigration` |
+| 2.10 | Analyse support | **Wave sequencing advice** | 🟣 **AI** | At most 3 extra suggestions about ordering and risk. Cannot contradict the rules-based findings. | `adviseFleet` |
+| 2.11 | Analyse support | Clamp the model's answer | 🔵 Deterministic | Physics overrules the model before anyone sees it: invented VMs dropped, impossible warm forced cold. | `clampAdvice, powerPlan` |
+| 2.12 | Analyse support | Snapshot policy per VM | 🔵 Deterministic | Whether one exists, and whether to take one. Almost always no — and for warm it is fatal, not a trade-off. | `snapshotPolicy` |
+| 2.13 | Analyse support | Account for model usage | 🔵 Deterministic | Calls, tokens and cost, priced per model, with the arithmetic and the list-price caveat attached. | `aiProvenance, estimateCost` |
+| 2.14 | Analyse support | Evidence pack | 🔵 Deterministic | Report ID, timestamp, source, target cluster, matrix version, to printable HTML and a CSV register. | `assessment-report.js` |
+| 2.15 | Analyse support | **Validate the report** | 🟡 **Manual** | The operator reads it and decides whether it is true. Nothing proceeds without this. | Console |
+| 3.1 | Select & strategy | **Choose the wave** | 🟡 **Manual** | Tick machines. Eligible ones are pre-ticked as a starting point, not a decision. | Console |
+| 3.2 | Select & strategy | **Choose warm or cold** | 🟡 **Manual** | Pre-filled from 2.9; every value editable. Warm is only offered where it can physically work. | Console |
+| 3.3 | Select & strategy | Warn on split groups | 🔵 Deterministic | Recomputed on every tick from 2.6 — 'db01 would stay on VMware'. | `splitGroups` |
+| 3.4 | Select & strategy | **Target namespace and maps** | 🟡 **Manual** | Chosen from what the cluster actually has. | Console |
+| 4.1 | Plan & change | Measure throughput | 🔵 Deterministic | From migrations this cluster has already completed, not from a vendor figure. | `clusterThroughput` |
+| 4.2 | Plan & change | Estimate transfer and downtime | 🔵 Deterministic | Per plan, from that plan's own footprint. Stated separately, and costed both WITH and WITHOUT the VDDK image. | `estimatePlan, vddkComparison` |
+| 4.3 | Plan & change | Group into plans | 🔵 Deterministic | The five dimensions MTV forces, plus operating system so Windows and Linux never mix. | `planGroups` |
+| 4.4 | Plan & change | Create the Plans | 🔵 Deterministic | MTV validates them. Nothing moves. | `createPlans` |
+| 4.5 | Plan & change | Size the change window | 🔵 Deterministic | Pre-checks + work + verification + BACKOUT + contingency. Cold covers the whole copy; warm covers the cutover only. | `proposeWindow` |
+| 4.6 | Plan & change | **Choose the window** | 🟡 **Manual** | Optional. Left blank the proposal is used; a freeze period or an agreed slot is the operator's to enter. | `validateWindow` |
+| 4.7 | Plan & change | Raise the change request | 🔵 Deterministic | The platform authors it: implementation, backout, test plan, and the outage being approved. | `raiseMigrationCR` |
+| 4.8 | Plan & change | Attach the migration record | 🔵 Deterministic | An HTML document built from the Plan — every VM, how it moves, the impact, how to back out, what the model contributed. | `planReportHtml` |
+| 4.9 | Plan & change | **Approve** | 🟡 **Manual** | The CAB decides. This gate is not automatable by design. | ServiceNow |
+| 4.10 | Plan & change | Check approval | 🔵 Deterministic | Read from ServiceNow, written back onto the Plan as annotations. | `checkMigrationApproval` |
+| 4.11 | Plan & change | Follow the window if it moves | 🔵 Deterministic | If the board reschedules, the stamped cutover follows it — otherwise it fires outside the window they approved. | `reconcileCutoverWindow` |
+| 5.1 | Transfer | **Start the migration** | 🟡 **Manual** | A human clicks. The server re-reads the gate from the cluster before acting. | `startMigration` |
+| 5.2 | Transfer | Transfer with a live rate | 🔵 Deterministic | Megabytes moved of total, MiB/s and percent — the same figures MTV shows, in the same units. | `progressSnapshot, liveEta` |
+| 5.3 | Transfer | Judge estimate vs measured | 🔵 Deterministic | The forecast against what is actually happening, while someone can still act on the difference. | `estimateVsActual` |
+| 5.4 | Transfer | Warn if the window no longer fits | 🔵 Deterministic | Re-costed at the measured rate. The board is told BEFORE the window opens, once, as a work note. | `windowFit, measuredOutage` |
+| 6.1 | Cutover *(warm)* | Detect precopy complete | 🔵 Deterministic | CopyingPaused is success, not a stall — the copy is done and MTV is waiting for a person. | `cutoverState` |
+| 6.2 | Cutover *(warm)* | Read the approved window | 🔵 Deterministic | From the change record. An absent or unreadable window is reported as unknown, never as open. | `cutoverWindow` |
+| 6.3 | Cutover *(warm)* | Price the wait | 🔵 Deterministic | A warm precopy spends one changed-block snapshot per hour and a VM holds 28. Waiting is not free. | `cbtSnapshotBudget` |
+| 6.4 | Cutover *(warm)* | **Choose the cutover moment** | 🟡 **Manual** | Now, at the window opening, or a time picked inside the window. The server re-checks both ends. | Console |
+| 6.5 | Cutover *(warm)* | Execute the cutover | 🔗 External | MTV shuts the guest down, copies the final changed blocks, and starts the VM on OpenShift. | `scheduleCutover` |
+| 7.1 | Verify | VM is running | 🔵 Deterministic | And on which node. 'Succeeded' on a Plan describes the transfer, not the machine. | `verifyVM` |
+| 7.2 | Verify | Source VM is powered off | 🔵 Deterministic | THE ONE THAT COSTS MONEY. Two copies of one identity on one network is the failure nobody plans for. | `sourcePowerStates` |
+| 7.3 | Verify | Kept its IP address | 🔵 Deterministic | Or it did not, and DNS, firewall rules, monitoring and app config need updating. | `verifyVM` |
+| 7.4 | Verify | All disks present | 🔵 Deterministic | Against the count recorded on the Plan. A missing disk is a missing filesystem inside the guest. | `verifyVM` |
+| 7.5 | Verify | CPU and memory match | 🔵 Deterministic | Whether the shape survived the copy, compared with what the Plan promised. | `verifyVM` |
+| 7.6 | Verify | Close the change request | 🔵 Deterministic | On evidence. A verdict of failed or incomplete closes nothing — that is the point of having a verdict. | `closeMigrationCR` |
+| 7.7 | Verify | Record the migration | 🔵 Deterministic | One immutable row: the stage timeline, the change request, estimate against actual, and what the model cost. | `archiveMigration` |
+| 8.1 | Retire the source | Soak period | 🔵 Deterministic | The migrated machines must run for a configured period first. Counted out in days, waivable, never skipped silently. | `decommissionReadiness` |
+| 8.2 | Retire the source | **Raise the decommission request** | 🟡 **Manual** | A SECOND change request. The migration was reversible; this is not, and different people approve it. | `raiseDecommissionCR` |
+| 8.3 | Retire the source | Delete the source VMs | 🔗 External | The VMware team carries it out. This agent has read-only access to the source and deletes nothing. | ServiceNow / vCenter |
+| 9.1 | Roll back | **Roll back** | 🟡 **Manual** | Deletes only what the migration created. The source VMs are never touched. | `rollbackMigration` |
+| 9.2 | Roll back | Cancel the change request | 🔵 Deterministic | With what was removed, what could not be, and the manual step remaining — before the Plan is deleted. | `cancelMigrationCR` |
+| 9.3 | Roll back | Record the rollback | 🔵 Deterministic | A rolled-back run stays in the history beside the retry, because that is the story someone needs a year later. | `archiveMigration` |
 
-**The count: 2 AI steps, 8 manual, 23 deterministic — 33 in all.** That ratio is the
-argument, not an apology — the AI is used where judgement is genuinely
-required, and nowhere that a fact can be measured instead.
+> **2 AI steps out of 58.** Both are advisory, both are clamped by
+> rules before anyone sees the answer, and neither can start, stop or alter a
+> migration. The supportability verdict, all 15 readiness checks, the capacity
+> check, the transfer estimate and every verification check are computed.
+
+<!-- END GENERATED WORKFLOW -->
+
+## 4. The stages that decide whether it worked
+
+The four steps this document used to describe ended at "migrate or roll back".
+Everything below happens *after* the bytes have moved, and it is where a
+migration is actually won or lost.
+
+### 4.1 The cutover — warm only
+
+A warm migration stops after the precopy **on purpose**. The disks are copied,
+the guest is still serving users, and nothing more happens until someone says it
+may go down. In the plan's own words the VM sits in `CopyingPaused` — which is
+success, not a stall.
+
+MTV keeps taking a changed-block snapshot roughly every hour to keep the copy
+current, and **a VM supports at most 28 of them**. That single fact drives the
+design:
+
+| Change request | What the agent offers |
+|---|---|
+| Not approved | Refused, naming the CR and its state — the cutover *is* the outage being approved |
+| Approved, inside the window | **⏻ Power off & cut over now** |
+| Approved, window opens later | **◷ Schedule for the window opening** — MTV performs it unattended |
+| Approved, a chosen moment | A picker clamped to the window; the server re-checks *both* ends |
+| Window expired | Refused, pointing at the change board |
+| Window unknown or unreadable | Reported as **unknown, never as open** — a gate that fails open is not a gate |
+| The board moves the window | The scheduled cutover **follows it**, with a work note |
+
+Waiting is not free, and the cost is invisible until it bites: a day of waiting
+spends most of the snapshot budget on nothing and grows the delta the cutover
+must copy, lengthening the very outage the window was sized for. So a **warm
+cutover is proposed for the same day**, and the change request says why.
+
+### 4.2 Post-migration verification
+
+"Succeeded" on a Plan describes the transfer, not the machine.
+
+| Check | If it fails |
+|---|---|
+| VM is running | Usually firmware, Secure Boot or a missing driver |
+| **Source VM is powered off** | **Power it off now.** Two copies of one identity on one network, each writing to storage the other cannot see — whichever loses is the one somebody was using |
+| Kept its IP address | DNS, firewall rules, application config and monitoring all need updating |
+| All disks present | The storage map missed a datastore — a missing disk is a missing filesystem |
+| CPU and memory match | Resize, unless the difference was deliberate |
+
+Two rules make the verdict worth believing. **A check with no data is not a
+pass** — an unreachable source platform reports *not confirmed* and drops the
+verdict to `incomplete`; it never says "powered off" because it failed to look.
+And every comparison is against **what the Plan recorded at creation**, not
+against a source read back later, which by then may be off, changed or gone.
+
+### 4.3 The change request's whole life
+
+The agent raises it, waits on it and acts inside its window — so finishing it is
+the agent's job.
+
+- **Sized as an implementation window, not an outage.** `start_date`/`end_date`
+  is the period the work is *authorised* to happen in: pre-checks + the work +
+  verification + **backout** + contingency, floored at a 4h maintenance slot and
+  scaling beyond it for a large wave. A window with no room to put the migration
+  back is unapproved work in the middle of an incident.
+- **Both numbers are stated.** *"Implementation window: 4h. Expected service
+  impact: 7 min."* A board authorises hours in which the service is down for
+  minutes; saying both is what makes it honest rather than alarming.
+- **The record is attached, not pasted.** An HTML document built from the Plan —
+  every VM, how it moves, the impact, how to back out, what the model
+  contributed — so a request raised days later carries the same document.
+- **It closes on evidence.** A passing verification closes it with the results;
+  `failed` or `incomplete` closes nothing. A rollback **cancels** it instead,
+  with what was removed and the manual step remaining.
+
+### 4.4 Retiring the source, and the history that outlives it
+
+Until the source VMs are deleted a migration is reversible — MTV powers them off
+and never removes them. So deletion is a **second change request**, behind a
+soak period (`MIGRATION_SOAK_DAYS`, default 7), blocked outright by a failed
+*or incomplete* verification, and carried out by the VMware team. **This agent
+has read-only access to the source and deletes nothing.**
+
+History is kept separately, because a migration's record is most at risk exactly
+when it ends: a rollback deletes the Plan. One immutable row per run — the stage
+timeline, the change request, the estimate against the measured actual, the
+verification verdict, and what the model cost — in Postgres alongside the change
+ledger, `MIGRATION_HISTORY_RETENTION_DAYS`, default 365. It is deliberately *not*
+a second system of record: ServiceNow holds the compliance trail under the
+organisation's own retention, and this points at it.
 
 ## 5. How the AI works — the two places, in detail
 
@@ -413,12 +530,23 @@ flowchart LR
 
 ## Regenerating this pack
 
+**The workflow is defined once, in `workflow.cjs`.** The deck, the workbook and
+sections 3 of this document all read it, so they cannot drift apart again — which
+is exactly how they ended up four stages behind the product. Change the workflow
+there, then regenerate:
+
 ```bash
-node usecases/uc-10-vm-migration/generate-ppt.cjs     # deck
-node usecases/uc-10-vm-migration/generate-excel.cjs   # workbook
-node usecases/uc-10-vm-migration/generate-docx.cjs    # this document as .docx
-node usecases/portfolio/generate-usecase-summary.cjs  # the one-slide-each portfolio
+cd usecases/uc-10-vm-migration
+node generate-workflow-md.cjs   # rewrites §3 of use-case.md from workflow.cjs
+node generate-docx.cjs          # this document as .docx  (run AFTER the line above)
+node generate-ppt.cjs           # deck
+node generate-excel.cjs         # workbook
+node ../portfolio/generate-usecase-summary.cjs   # the one-slide-each portfolio
 ```
+
+The step counts on the deck and in the workbook are **counted from
+`workflow.cjs`, never typed** — the ratio of deterministic to AI steps is the
+argument those slides make, so it has to be true rather than remembered.
 
 `generate-ppt` and `generate-excel` need `pptxgenjs` and `exceljs`, which are
 devDependencies — they are authoring tools, deliberately absent from the

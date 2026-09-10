@@ -11,6 +11,7 @@ const fs = require("fs");
 const OUT = path.join(__dirname, "TCS-Agentic-AI-UC10-VM-Migration.pptx");
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 
+const WF = require("./workflow.cjs");
 const pptx = new PptxGenJS();
 pptx.author = "TCS Agentic AI Platform";
 pptx.title = "TCS Agentic AI — VMware to OpenShift Virtualization Migration · UC-10";
@@ -113,36 +114,106 @@ function footNote(s, text, color) {
 // ── 3. MASTER WORKFLOW ──────────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
-  head(s, "MASTER WORKFLOW", "Four steps, because they are four decisions",
-    "Discovery is read-only. Strategy is chosen last — picking warm or cold before you know a VM is supported is a decision made in the dark.");
-  const steps = [
-    { n: "1", t: "DISCOVER", d: "Read-only inventory\nOS · IPs · vCPU · RAM · disks", c: C.tcsBlue, bg: C.lBlue },
-    { n: "2", t: "ANALYSE", d: "Every VM assessed\nmatrix · checks · capacity · drift", c: C.aiPurple, bg: C.lPurple },
-    { n: "3", t: "SELECT", d: "Choose the wave\n+ warm or cold per machine", c: C.userAmber, bg: C.lAmber },
-    { n: "4", t: "MIGRATE", d: "Estimate · plan · approve\ntransfer · verify · roll back", c: C.autoGreen, bg: C.lGreen },
-  ];
-  steps.forEach((st, i) => {
-    const x = 0.5 + i * 3.25;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.75, w: 2.9, h: 1.7, fill: { color: st.bg }, line: { color: st.c, width: 2 }, rectRadius: 0.08 });
-    s.addText(st.n, { x: x + 0.12, y: 1.85, w: 0.45, h: 0.35, fontSize: 15, bold: true, color: C.white, align: "center", fontFace: F, fill: { color: st.c }, rectRadius: 0.5 });
-    s.addText(st.t, { x, y: 2.28, w: 2.9, h: 0.35, fontSize: 15, bold: true, color: st.c, align: "center", fontFace: F });
-    s.addText(st.d, { x: x + 0.15, y: 2.62, w: 2.6, h: 0.72, fontSize: 10, color: C.navy, align: "center", fontFace: F });
-    if (i < 3) arrow(s, x + 2.95, 2.45);
-  });
+  head(s, "MASTER WORKFLOW", "Six stages — and warm and cold are different routes",
+    "Discovery is read-only. Strategy is chosen last. A cold migration is down for the whole copy; a warm one only for the cutover — so they are drawn as what they are.");
 
-  const gates = [
-    ["🔵 Read-only", "Nothing is written to vCenter. Ever."],
-    ["🔵 Assess ALL", "Not the ones you already picked — that is the decision the report is for."],
-    ["🟣 AI advises", "Warm or cold per VM, with a reason. clampAdvice() overrules physics violations."],
-    ["🟡 CAB approves", "The gate lives on the Plan. startMigration re-reads it: an enabled button is not authorisation."],
-  ];
-  gates.forEach((g, i) => {
-    const x = 0.5 + i * 3.25;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 3.75, w: 2.9, h: 1.5, fill: { color: C.pBlue }, line: { color: "CBD5E1", width: 1 }, rectRadius: 0.06 });
-    s.addText(g[0], { x: x + 0.12, y: 3.85, w: 2.66, h: 0.3, fontSize: 11, bold: true, color: C.navy, fontFace: F });
-    s.addText(g[1], { x: x + 0.12, y: 4.15, w: 2.66, h: 1.0, fontSize: 9.5, color: C.textMed, fontFace: F, valign: "top" });
+  const lane = (y, label, colour, cells) => {
+    s.addText(label, { x: 0.45, y: y + 0.22, w: 1.15, h: 0.4, fontSize: 11, bold: true, color: colour, align: "right", fontFace: F });
+    cells.forEach((c, i) => {
+      const x = 1.75 + i * 1.87;
+      const dim = c.t === "—";
+      s.addShape(pptx.ShapeType.roundRect, { x, y, w: 1.72, h: 0.85,
+        fill: { color: dim ? "F1F5F9" : c.bg }, line: { color: dim ? "CBD5E1" : c.c, width: dim ? 1 : 1.75 }, rectRadius: 0.07 });
+      s.addText(c.t, { x, y: y + 0.06, w: 1.72, h: 0.34, fontSize: 10.5, bold: true, color: dim ? C.slate : c.c, align: "center", fontFace: F });
+      s.addText(c.d, { x: x + 0.06, y: y + 0.38, w: 1.6, h: 0.42, fontSize: 7.6, color: dim ? C.slate : C.navy, align: "center", fontFace: F });
+      if (i < cells.length - 1) arrow(s, x + 1.75, y + 0.28, 0.14);
+    });
+  };
+
+  const B = { c: C.tcsBlue, bg: C.lBlue }, P = { c: C.aiPurple, bg: C.lPurple };
+  const A = { c: C.userAmber, bg: C.lAmber }, G = { c: C.autoGreen, bg: C.lGreen }, R = { c: C.secRed, bg: C.lRed };
+
+  lane(1.6, "BOTH", C.slate, [
+    { ...B, t: "1 DISCOVER", d: "read-only inventory" },
+    { ...P, t: "2 ANALYSE", d: "matrix · checks · capacity" },
+    { ...A, t: "3 SELECT", d: "wave + warm or cold" },
+    { ...G, t: "4 PLAN & CHANGE", d: "estimate · window · CAB" },
+  ]);
+  lane(2.85, "COLD", C.tcsBlue, [
+    { ...A, t: "5 POWER OFF", d: "the copy IS the outage" },
+    { ...G, t: "6 VERIFY", d: "5 checks" },
+    { ...R, t: "7 RETIRE", d: "2nd change · after soak" },
+    { t: "—", d: "no cutover step" },
+  ]);
+  lane(4.1, "WARM", C.orange, [
+    { ...B, t: "5 DISKS COPY", d: "guest keeps serving" },
+    { ...A, t: "6 CUTOVER", d: "the only downtime" },
+    { ...G, t: "7 VERIFY", d: "5 checks" },
+    { ...R, t: "8 RETIRE", d: "2nd change · after soak" },
+  ]);
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.4, w: 12.4, h: 0.82, fill: { color: C.pBlue }, line: { color: "CBD5E1", width: 1 }, rectRadius: 0.06 });
+  [["🔵 Read-only", "Nothing is written to vCenter."],
+   ["🟣 AI advises", "Warm or cold, clamped by rules."],
+   ["🟡 CAB approves", "Re-read from the cluster, not the browser."],
+   ["🔴 Reversible", "Until the source VMs are deleted."],
+  ].forEach((g, i) => {
+    const x = 0.62 + i * 3.08;
+    s.addText(g[0], { x, y: 5.48, w: 2.9, h: 0.28, fontSize: 10, bold: true, color: C.navy, fontFace: F });
+    s.addText(g[1], { x, y: 5.74, w: 2.9, h: 0.42, fontSize: 8.5, color: C.textMed, fontFace: F, valign: "top" });
   });
-  footNote(s, "Nothing moves until a Plan is created, validated, and a change request is approved — and the source VM is never deleted.");
+  footNote(s, "Nothing moves until a Plan is created, validated and a change request approved — and the source VM is never deleted by this platform.");
+}
+
+// ── 3b. THE CUTOVER ─────────────────────────────────────────────────────────
+{
+  const s = pptx.addSlide();
+  head(s, "THE CUTOVER", "The outage, scheduled into the window that was approved",
+    "A warm migration stops after the precopy on purpose. Every other tool puts a button here and lets you press it whenever — that is how a production VM goes down at 3pm on a Tuesday.");
+  table(s, [
+    hdr(["State of the change request", "What the agent offers", "Why"]),
+    ["Not approved", "Refused — names the CR and its state", "The cutover IS the outage the CAB is asked to approve."],
+    ["Approved, inside the window", "⏻ Power off & cut over now", "Guest shuts down, final blocks copy, VM starts on OpenShift."],
+    ["Approved, window opens later", "◷ Schedule for the window opening", "MTV performs it unattended. Nobody sits up until midnight."],
+    ["Approved, a chosen moment", "Picker clamped to the window", "Server re-checks BOTH ends — a UI state is not authorisation."],
+    ["Window expired", "Refused — points at the change board", "Extend it, or raise a new change request."],
+    ["Window unknown / unreadable", "Reported as unknown, never as open", "A gate that fails open is not a gate."],
+    ["The board moves the window", "The scheduled cutover follows it", "Otherwise it fires outside the window they approved."],
+  ], { y: 1.5, colW: [3.5, 4.0, 4.9], fontSize: 10 });
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.45, y: 5.1, w: 12.4, h: 1.1, fill: { color: C.lAmber }, line: { color: C.userAmber, width: 1.5 }, rectRadius: 0.07 });
+  s.addText("Waiting is not free — and this is invisible until it bites", { x: 0.65, y: 5.2, w: 12, h: 0.3, fontSize: 12, bold: true, color: C.darkAmber, fontFace: F });
+  s.addText("A warm precopy spends ONE changed-block snapshot every hour while it waits, and a VM supports 28. A day of waiting spends most of that budget on nothing and grows the delta the cutover must copy — lengthening the very outage the window was sized for. So a warm cutover is proposed for the SAME DAY, and the change request says why.",
+    { x: 0.65, y: 5.5, w: 12, h: 0.62, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
+}
+
+// ── 3c. VERIFY & RETIRE ─────────────────────────────────────────────────────
+{
+  const s = pptx.addSlide();
+  head(s, "VERIFY & RETIRE", "'Succeeded' on a Plan describes the transfer, not the machine",
+    "MTV reports success when it has finished copying. The questions a person actually has afterwards are different ones — and one of them costs real money if the answer is wrong.");
+  table(s, [
+    hdr(["Check", "What it asks", "If it fails"]),
+    ["VM is running", "Is it up, and on which node?", "Usually firmware, Secure Boot or a missing driver."],
+    [{ text: "SOURCE VM IS POWERED OFF", options: { bold: true, color: "991B1B" } },
+     { text: "Two copies of one identity on one network, each writing to storage the other cannot see.", options: { bold: true } },
+     { text: "Power the source off NOW. Whichever machine loses is the one somebody was using.", options: { bold: true, color: "991B1B" } }],
+    ["Kept its IP address", "Did the address survive?", "DNS, firewall rules, app config and monitoring need updating."],
+    ["All disks present", "Against the count recorded on the Plan.", "The storage map missed a datastore — a missing filesystem."],
+    ["CPU and memory match", "Did the shape survive the copy?", "Resize, unless the difference was deliberate."],
+  ], { y: 1.5, colW: [3.1, 4.9, 4.4], fontSize: 10 });
+
+  const cards = [
+    ["A check with no data is not a pass", "An unreachable source reports 'not confirmed' and the verdict drops to INCOMPLETE. It never says 'powered off' because it failed to look.", C.lBlue, C.tcsBlue],
+    ["Closure is on evidence", "A passing verdict closes the change request with the results. Failed or incomplete closes nothing — that is the point of a verdict.", C.lGreen, C.autoGreen],
+    ["Retiring is a SECOND change", "The migration was reversible; deleting the source is not. Behind a soak period, and blocked outright by an incomplete verification.", C.lRed, C.secRed],
+  ];
+  cards.forEach((c, i) => {
+    const x = 0.45 + i * 4.17;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 4.55, w: 3.95, h: 1.55, fill: { color: c[2] }, line: { color: c[3], width: 1.5 }, rectRadius: 0.07 });
+    s.addText(c[0], { x: x + 0.15, y: 4.65, w: 3.65, h: 0.42, fontSize: 11, bold: true, color: c[3], fontFace: F });
+    s.addText(c[1], { x: x + 0.15, y: 5.05, w: 3.65, h: 1.0, fontSize: 9, color: C.navy, fontFace: F, valign: "top" });
+  });
+  footNote(s, "The platform deletes nothing on the source platform. It raises the request; the VMware team carries it out.", C.secRed);
 }
 
 // ── 4. THE CHECK NOBODY ELSE MAKES ──────────────────────────────────────────
@@ -211,36 +282,36 @@ function footNote(s, text, color) {
 // ── 6b. WORKFLOW BY ACTOR ───────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
-  head(s, "WORKFLOW BY ACTOR", "32 steps. Two of them use a model.",
+  head(s, "WORKFLOW BY ACTOR", WF.ratioLine() + ".",
     "If a step is marked deterministic, no model was involved in producing it. Nothing is left ambiguous.");
 
+  // Counted from workflow.cjs, never typed — the ratio is the argument on this
+  // slide, so it has to be true rather than remembered.
+  const N = WF.counts();
   const counts = [
-    { n: "22", l: "DETERMINISTIC", d: "Facts about the estate\nand the cluster", c: C.tcsBlue, bg: C.lBlue },
-    { n: "8", l: "MANUAL", d: "Decisions a person owns,\nincluding both irreversible ones", c: C.userAmber, bg: C.lAmber },
-    { n: "2", l: "AGENTIC AI", d: "Judgement calls with\nno correct rule", c: C.aiPurple, bg: C.lPurple },
+    { n: String(N[WF.AU]), l: "DETERMINISTIC", d: "Facts about the estate\nand the cluster", c: C.tcsBlue, bg: C.lBlue },
+    { n: String(N[WF.MA]), l: "MANUAL", d: "Decisions a person owns,\nincluding both irreversible ones", c: C.userAmber, bg: C.lAmber },
+    { n: String(N[WF.AI]), l: "AGENTIC AI", d: "Judgement calls with\nno correct rule", c: C.aiPurple, bg: C.lPurple },
+    { n: String(N[WF.EX]), l: "EXTERNAL", d: "MTV, ServiceNow, or the\nVMware team acting on request", c: "0E7490", bg: "CFFAFE" },
   ];
   counts.forEach((k, i) => {
-    const x = 0.45 + i * 4.18;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.55, w: 3.95, h: 1.5, fill: { color: k.bg }, line: { color: k.c, width: 2 }, rectRadius: 0.08 });
-    s.addText(k.n, { x: x + 0.2, y: 1.65, w: 1.1, h: 0.7, fontSize: 34, bold: true, color: k.c, fontFace: F });
-    s.addText(k.l, { x: x + 1.3, y: 1.72, w: 2.5, h: 0.32, fontSize: 13, bold: true, color: k.c, fontFace: F });
-    s.addText(k.d, { x: x + 1.3, y: 2.04, w: 2.5, h: 0.8, fontSize: 10, color: C.navy, fontFace: F, valign: "top" });
+    const x = 0.45 + i * 3.13;
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 1.55, w: 2.95, h: 1.5, fill: { color: k.bg }, line: { color: k.c, width: 2 }, rectRadius: 0.08 });
+    s.addText(k.n, { x: x + 0.16, y: 1.68, w: 0.95, h: 0.66, fontSize: 30, bold: true, color: k.c, fontFace: F });
+    s.addText(k.l, { x: x + 1.12, y: 1.74, w: 1.75, h: 0.3, fontSize: 11, bold: true, color: k.c, fontFace: F });
+    s.addText(k.d, { x: x + 1.12, y: 2.04, w: 1.75, h: 0.85, fontSize: 8.5, color: C.navy, fontFace: F, valign: "top" });
   });
 
-  table(s, [
-    hdr(["Step", "Actor", "What happens"]),
-    ["1  Discover", "🔵 Deterministic", "Read-only inventory. Guest ids decoded — windows2019srvNext_64Guest is Server 2022."],
-    ["2  Assess", "🔵 Deterministic", "Certified guest list · 15 source checks · target capacity · resource fidelity · drift · fleet findings."],
-    ["2.9  Method per VM", "🟣 AGENTIC AI", "Warm or cold, with a reason. The judgement call."],
-    ["2.10  Wave sequencing", "🟣 AGENTIC AI", "At most 3 suggestions on top of the deterministic findings. Cannot contradict them."],
-    ["2.11  Clamp", "🔵 Deterministic", "Physics overrules the model before anyone sees its answer."],
-    ["2.13  Validate the report", "🟡 Manual", "The operator reads it and decides whether it is true."],
-    ["3  Choose the wave + method", "🟡 Manual", "Pre-filled from the AI; every value editable."],
-    ["4.1–4.5  Estimate, plan, raise CR", "🔵 Deterministic", "Measured from this cluster. MTV validates. Nothing moves."],
-    ["4.6  Approve", "🟡 Manual", "The CAB decides. Not automatable by design."],
-    ["4.8  Migrate", "🟡 Manual", "A human clicks. The server re-reads the gate before acting."],
-    ["4.9–4.11  Transfer, verify, roll back", "🔵 Deterministic", "Live ETA from bytes moving. Source VMs never deleted."],
-  ], { y: 3.25, colW: [3.4, 2.5, 6.5], fontSize: 9.5 });
+  const byStage = WF.STAGES.map((st) => {
+    const steps = WF.STEPS.filter((x) => x[1] === st.id);
+    const tally = {};
+    for (const x of steps) tally[x[3]] = (tally[x[3]] || 0) + 1;
+    const mix = [[WF.AU, "🔵"], [WF.MA, "🟡"], [WF.AI, "🟣"], [WF.EX, "🔗"]]
+      .filter(([k]) => tally[k]).map(([k, icon]) => `${icon} ${tally[k]}`).join("   ");
+    return [`${st.id}  ${st.name}${st.route === "warm" ? "  (warm only)" : ""}`, `${steps.length}`, mix, st.blurb];
+  });
+  table(s, [hdr(["Stage", "Steps", "Actors", "What it is for"]), ...byStage],
+    { y: 3.25, colW: [3.0, 0.8, 1.9, 6.7], fontSize: 9 });
   footNote(s, "The ratio is the argument: AI where judgement is required, measurement everywhere a fact exists.", C.aiPurple);
 }
 
