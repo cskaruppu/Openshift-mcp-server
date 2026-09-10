@@ -81,6 +81,9 @@ export function AuditView() {
 
   const { data: agentAnalytics } =
     useClusterQuery("/api/traces/analytics?days=30", { refetchInterval: 120_000 });
+  // Attribution rather than aggregation: which conversation spent which tokens.
+  const { data: convUsage } =
+    useClusterQuery("/api/telemetry/conversations?days=30&limit=50", { refetchInterval: 120_000 });
 
   const [activeTab, setActiveTab] = useState("compliance");
   const [scanning, setScanning] = useState(false);
@@ -986,6 +989,90 @@ export function AuditView() {
               );
             })}
           </div>
+
+          {/* ── AI usage by conversation ───────────────────────────────────
+              The table below this one totals tokens per AGENT, which answers
+              "what does the platform cost". It cannot answer the question an
+              auditor actually asks — what did THIS request, on THIS date, cost?
+              That needs attribution, which is why every chat call is tagged
+              with its conversation id. */}
+          {convUsage && (
+            <>
+              <h4 className="aud-sub-title" style={{ marginTop: 18 }}>AI Usage by Conversation (30 days)</h4>
+              {!convUsage.available ? (
+                <p style={{ fontSize: 12, color: "#94a3b8", margin: "6px 0 0" }}>
+                  {convUsage.note || convUsage.error || "Per-conversation AI usage is not available."}
+                </p>
+              ) : convUsage.conversations.length === 0 ? (
+                <p style={{ fontSize: 12, color: "#94a3b8", margin: "6px 0 0" }}>
+                  No AI conversations recorded in the last 30 days.
+                </p>
+              ) : (
+                <>
+                  <div className="aud-analytics-grid" style={{ marginBottom: 10 }}>
+                    <div className="aud-analytics-card" style={{ "--ac-c": "#8b5cf6" }}>
+                      <div className="aud-ac-val">{convUsage.totals.conversations}</div>
+                      <div className="aud-ac-lbl">Conversations</div>
+                    </div>
+                    <div className="aud-analytics-card" style={{ "--ac-c": "#06b6d4" }}>
+                      <div className="aud-ac-val">{convUsage.totals.calls}</div>
+                      <div className="aud-ac-lbl">LLM Calls</div>
+                    </div>
+                    <div className="aud-analytics-card" style={{ "--ac-c": "#22c55e" }}>
+                      <div className="aud-ac-val">
+                        {convUsage.totals.partial ? "≥" : ""}{(convUsage.totals.totalTokens || 0).toLocaleString()}
+                      </div>
+                      <div className="aud-ac-lbl">Total Tokens</div>
+                    </div>
+                    <div className="aud-analytics-card" style={{ "--ac-c": "#f59e0b" }}>
+                      <div className="aud-ac-val">
+                        {convUsage.totals.costUsd != null
+                          ? `$${convUsage.totals.costUsd < 0.01 ? convUsage.totals.costUsd.toFixed(4) : convUsage.totals.costUsd.toFixed(2)}`
+                          : "—"}
+                      </div>
+                      <div className="aud-ac-lbl">
+                        Est. cost{convUsage.totals.unpriced ? ` · ${convUsage.totals.unpriced} unpriced` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="aud-table-wrap">
+                    <table className="aud-table">
+                      <thead>
+                        <tr><th>Conversation</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Total tokens</th><th>Est. cost</th><th>Model</th><th>Last used</th></tr>
+                      </thead>
+                      <tbody>
+                        {convUsage.conversations.map((c) => (
+                          <tr key={c.conversationId}>
+                            <td><code style={{ fontSize: 10 }}>{String(c.conversationId).slice(0, 18)}</code></td>
+                            <td style={{ textAlign: "center" }}>{c.calls}{c.failed ? <span style={{ color: "#ef4444" }}> · {c.failed} failed</span> : null}</td>
+                            <td style={{ textAlign: "center" }}>{c.promptTokens.toLocaleString()}</td>
+                            <td style={{ textAlign: "center" }}>{c.completionTokens.toLocaleString()}</td>
+                            {/* "≥" where some calls reported usage and others
+                                did not: the sum is a floor, and a cost figure
+                                that rounds up partial data is not quotable. */}
+                            <td style={{ textAlign: "center", color: "#06b6d4", fontWeight: 600 }}
+                              title={c.partial ? `${c.unreported} of ${c.calls} calls did not report usage — this is a floor` : ""}>
+                              {c.partial ? "≥" : ""}{c.totalTokens.toLocaleString()}
+                            </td>
+                            <td style={{ textAlign: "center" }} title={c.costBasis ? `${c.costBasis.basis}\n\n${c.costBasis.caveat}` : "This model is not in the rate card, so no cost is claimed."}>
+                              {c.costUsd != null ? `$${c.costUsd < 0.01 ? c.costUsd.toFixed(4) : c.costUsd.toFixed(2)}` : "—"}
+                            </td>
+                            <td style={{ fontSize: 11 }}>{c.model || "—"}</td>
+                            <td><TimeCell ts={c.lastAt} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#94a3b8", margin: "6px 0 0" }}>
+                    Cost is an estimate at {convUsage.conversations[0]?.costBasis?.source === "configured" ? "your configured rates" : "published list price"}
+                    {convUsage.conversations[0]?.costBasis?.asOf ? ` as of ${convUsage.conversations[0].costBasis.asOf}` : ""}.
+                    Hover a figure for the arithmetic. A model absent from the rate card contributes tokens but no cost, rather than a confident zero.
+                  </p>
+                </>
+              )}
+            </>
+          )}
 
           {/* Per-agent token & usage table */}
           {agentRows.length > 0 && (

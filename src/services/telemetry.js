@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
 );
 CREATE INDEX IF NOT EXISTS idx_telemetry_created ON telemetry_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_telemetry_type_created ON telemetry_events(event_type, created_at DESC);
+-- Attribution by conversation: "which question spent those tokens" is the
+-- audit question, and without this index it is a sequential scan.
+CREATE INDEX IF NOT EXISTS idx_telemetry_conversation ON telemetry_events(conversation_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS action_outcomes (
   id BIGSERIAL PRIMARY KEY,
@@ -453,5 +456,88 @@ export async function getRecentEvents(limit = 20) {
     return res?.rows || [];
   } catch (err) {
     return [];
+  }
+}
+
+
+/**
+ * AI usage grouped by conversation — which question spent which tokens.
+ *
+ * The audit trail already totalled tokens per agent. What it could not answer
+ * is the one an auditor actually asks: *this* request, on *this* date, cost
+ * what? That needs attribution rather than aggregation, which is why every
+ * chat call is now tagged with its conversation id.
+ *
+ * Cost is priced with the same table the migration agent uses, and carries the
+ * same caveat — list price unless MODEL_PRICING is set to the organisation's
+ * own rate card. An unpriced model contributes tokens but no money, rather
+ * than a confident zero.
+ */
+export async function getConversationUsage({ days = 30, limit = 100 } = {}) {
+  if (!(await isEnabled())) {
+    return { available: false, conversations: [], note: "No database is configured, so per-conversation AI usage is not retained. The live counters in AI Intelligence still work." };
+  }
+  await ensureTelemetrySchema();
+  try {
+    const r = await query(
+      `SELECT conversation_id,
+              COUNT(*)::int                                   AS calls,
+              COALESCE(SUM(prompt_tokens), 0)::bigint         AS prompt_tokens,
+              COALESCE(SUM(completion_tokens), 0)::bigint     AS completion_tokens,
+              COALESCE(SUM(total_tokens), 0)::bigint          AS total_tokens,
+              COUNT(*) FILTER (WHERE total_tokens IS NULL)::int AS unreported,
+              COUNT(*) FILTER (WHERE success IS FALSE)::int   AS failed,
+              ROUND(AVG(duration_ms))::int                    AS avg_duration_ms,
+              MAX(model)                                      AS model,
+              MAX(provider)                                   AS provider,
+              MIN(created_at)                                 AS first_at,
+              MAX(created_at)                                 AS last_at
+         FROM telemetry_events
+        WHERE event_type = 'llm_call'
+          AND created_at > NOW() - ($1 || ' days')::interval
+          AND conversation_id IS NOT NULL
+     GROUP BY conversation_id
+     ORDER BY MAX(created_at) DESC
+        LIMIT $2`,
+      [String(days), Math.min(500, Math.max(1, limit))],
+    );
+
+    const { estimateCost } = await import("./llm.js");
+    const conversations = (r.rows || []).map((c) => {
+      const cost = estimateCost(c.model, Number(c.prompt_tokens), Number(c.completion_tokens));
+      return {
+        conversationId: c.conversation_id,
+        calls: c.calls,
+        promptTokens: Number(c.prompt_tokens),
+        completionTokens: Number(c.completion_tokens),
+        totalTokens: Number(c.total_tokens),
+        // Some calls reporting and others not makes the sum a FLOOR, exactly as
+        // it does on the migration report. Said, not smoothed over.
+        unreported: c.unreported,
+        partial: c.unreported > 0 && c.unreported < c.calls,
+        failed: c.failed,
+        avgDurationMs: c.avg_duration_ms,
+        model: c.model, provider: c.provider,
+        firstAt: c.first_at, lastAt: c.last_at,
+        costUsd: cost ? cost.usd : null,
+        costBasis: cost ? { basis: cost.basis, caveat: cost.caveat, source: cost.source, asOf: cost.asOf } : null,
+      };
+    });
+
+    const sum = (k) => conversations.reduce((n, c) => n + (c[k] || 0), 0);
+    const priced = conversations.filter((c) => c.costUsd != null);
+    return {
+      available: true, days, conversations,
+      totals: {
+        conversations: conversations.length,
+        calls: sum("calls"),
+        totalTokens: sum("totalTokens"),
+        costUsd: priced.length ? Math.round(sum("costUsd") * 1e6) / 1e6 : null,
+        unpriced: conversations.length - priced.length,
+        partial: conversations.some((c) => c.partial),
+      },
+    };
+  } catch (e) {
+    return { available: false, conversations: [], error: e.message };
   }
 }

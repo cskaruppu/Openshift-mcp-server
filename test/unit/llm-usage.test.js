@@ -156,3 +156,52 @@ test("the fleet roll-up carries the working, and flags an unpriced call", async 
   assert.equal(none.costUsd, null);
   assert.equal(none.costBasis, null);
 });
+
+test("usage survives the whole path from provider to audit trail", async () => {
+  const { normaliseUsage } = await import("../../src/services/llm.js");
+  const { readFileSync } = await import("node:fs");
+
+  // Three separate breaks on this path, all the same root cause — usage read
+  // from the wrong place or under the wrong key — and each on its own was
+  // enough to leave the audit trail's token column reading "—":
+  //
+  //   1. chat-api read r.usage. callLLM returns {text, toolCalls, raw}, so it
+  //      was always undefined; and it assumed Anthropic's input_tokens naming,
+  //      so an OpenAI deployment would have recorded nothing anyway.
+  //   2. _recordTelemetry passed normaliseUsage's camelCase straight into
+  //      recordLLMCall, which documents and reads snake_case.
+  //   3. chat never passed conversationId, so every call was attributed to
+  //      conversation_id NULL and could be totalled but never traced.
+  //
+  // Asserted against the source, because the failure is a shape mismatch
+  // between modules that no single module's tests can see.
+  // Comments are stripped first: this file's own explanation of the bug quotes
+  // `r.usage`, and a check that trips on the comment describing the fix would
+  // be a check nobody could satisfy.
+  const code = (p) => readFileSync(new URL(p, import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const chat = code("../../src/services/chat-api.js");
+  const llm = code("../../src/services/llm.js");
+
+  assert.ok(!/\br\.usage\b|\biterResult\.usage\b/.test(chat),
+    "chat must not read .usage off the call result — it lives inside .raw");
+  assert.ok(/normaliseUsage\(r\.raw\)/.test(chat), "chat reads usage through normaliseUsage");
+  assert.ok(/conversationId: opts\.conversationId/.test(chat),
+    "chat tags its LLM calls with the conversation, or tokens cannot be attributed");
+  assert.ok(/prompt_tokens: params\.usage\.promptTokens/.test(llm),
+    "the telemetry boundary maps camelCase to the snake_case contract recordLLMCall reads");
+
+  // And the mapping itself produces what the telemetry table's columns expect.
+  const u = normaliseUsage({ usage: { prompt_tokens: 700, completion_tokens: 120, total_tokens: 820 } });
+  const forTelemetry = {
+    prompt_tokens: u.promptTokens ?? null,
+    completion_tokens: u.completionTokens ?? null,
+    total_tokens: u.totalTokens ?? null,
+  };
+  assert.deepEqual(forTelemetry, { prompt_tokens: 700, completion_tokens: 120, total_tokens: 820 });
+
+  // A provider that reports nothing still yields nulls, never zeros — a row of
+  // zeros in an audit trail reads as "this call was free".
+  const none = normaliseUsage({});
+  assert.equal(none.totalTokens ?? null, null);
+});

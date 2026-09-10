@@ -462,7 +462,16 @@ async function _recordTelemetry(params) {
       conversationId: params.conversationId,
       durationMs: params.durationMs,
       success: params.success,
-      usage: params.usage,
+      // recordLLMCall's documented contract is snake_case; normaliseUsage
+      // speaks camelCase because that is what the AI-provenance metadata uses.
+      // Mapped here, at the one boundary between them — passing the camelCase
+      // object straight through recorded null tokens on every call, which is
+      // why the audit trail's token column has always read "—".
+      usage: params.usage ? {
+        prompt_tokens: params.usage.promptTokens ?? null,
+        completion_tokens: params.usage.completionTokens ?? null,
+        total_tokens: params.usage.totalTokens ?? null,
+      } : null,
       errorClass: params.errorClass,
       metadata: params.errMsg ? { error: String(params.errMsg).slice(0, 200), streaming: params.streaming || false } : (params.streaming ? { streaming: true } : null),
     }).catch(() => {});

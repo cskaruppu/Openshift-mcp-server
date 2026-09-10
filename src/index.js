@@ -8508,6 +8508,20 @@ spec:
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
+    // Which conversation spent which tokens — attribution, not aggregation.
+    // The audit trail could already total tokens per agent; it could not say
+    // that THIS question, on THIS date, cost this much.
+    if (req.method === "GET" && url.pathname === "/api/telemetry/conversations") {
+      try {
+        const { getConversationUsage } = await import("./services/telemetry.js");
+        sendJson(res, 200, await getConversationUsage({
+          days: parseInt(url.searchParams.get("days") || "30", 10),
+          limit: parseInt(url.searchParams.get("limit") || "100", 10),
+        }));
+      } catch (err) { sendJson(res, 500, { available: false, conversations: [], error: err.message }); }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/traces/analytics") {
       try {
         const days = parseInt(url.searchParams.get("days") || "30", 10);

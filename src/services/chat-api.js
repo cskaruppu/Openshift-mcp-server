@@ -66,7 +66,7 @@ import {
 } from "./action-workflow.js";
 import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
-import { callLLM, callLLMStream, classifyJSON, llmEnabled } from "./llm.js";
+import { callLLM, callLLMStream, classifyJSON, llmEnabled, normaliseUsage } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
 import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";
@@ -10824,6 +10824,10 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
       azureDeployment: opts.azureDeployment,
       azureApiVersion: opts.azureApiVersion,
       tools: INVESTIGATION_TOOLS,
+      // Without this every chat call is recorded against conversation_id null,
+      // so the audit trail can total the tokens but never say which question
+      // spent them.
+      conversationId: opts.conversationId || null,
     };
 
     // Agentic loop: let the LLM call investigation tools up to MAX_TOOL_ITERATIONS times
@@ -10833,9 +10837,18 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
 
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
       const r = await callLLM({ messages: loopMessages, ...llmCallOpts });
-      if (r.usage) {
-        if (!totalUsage) totalUsage = { ...r.usage };
-        else { totalUsage.input_tokens = (totalUsage.input_tokens || 0) + (r.usage.input_tokens || 0); totalUsage.output_tokens = (totalUsage.output_tokens || 0) + (r.usage.output_tokens || 0); }
+      // normaliseUsage reads it from where the provider actually puts it —
+      // inside `raw` — and speaks one shape for OpenAI, Azure and Anthropic,
+      // which disagree on the field names. The guard is on the RESULT of that
+      // read: `if (r.usage)` is always falsy, so it gated the whole block out.
+      const u = normaliseUsage(r.raw);
+      if (u.totalTokens != null || u.promptTokens != null) {
+        if (!totalUsage) totalUsage = { ...u };
+        else {
+          totalUsage.promptTokens = (totalUsage.promptTokens || 0) + (u.promptTokens || 0);
+          totalUsage.completionTokens = (totalUsage.completionTokens || 0) + (u.completionTokens || 0);
+          totalUsage.totalTokens = (totalUsage.totalTokens || 0) + (u.totalTokens || 0);
+        }
       }
       if (!r.toolCalls || r.toolCalls.length === 0) {
         let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
@@ -17461,8 +17474,13 @@ export async function handleChatAPI(req, res) {
               onToolCall: (tc) => { iterToolCalls.push(tc); },
             });
             if (iterResult?.usage) {
-              if (!totalUsage) totalUsage = { ...iterResult.usage };
-              else { totalUsage.input_tokens = (totalUsage.input_tokens || 0) + (iterResult.usage.input_tokens || 0); totalUsage.output_tokens = (totalUsage.output_tokens || 0) + (iterResult.usage.output_tokens || 0); }
+              const u2 = normaliseUsage(iterResult.raw);
+              if (!totalUsage) totalUsage = { ...u2 };
+              else {
+                totalUsage.promptTokens = (totalUsage.promptTokens || 0) + (u2.promptTokens || 0);
+                totalUsage.completionTokens = (totalUsage.completionTokens || 0) + (u2.completionTokens || 0);
+                totalUsage.totalTokens = (totalUsage.totalTokens || 0) + (u2.totalTokens || 0);
+              }
             }
             // Check for tool calls from the response
             const allToolCalls = iterToolCalls.length > 0 ? iterToolCalls : (iterResult?.toolCalls || []);
