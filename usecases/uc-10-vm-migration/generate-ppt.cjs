@@ -70,15 +70,16 @@ function footNote(s, text, color) {
   s.background = { color: C.darkNavy };
   s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.32, w: 13.33, h: 0.045, fill: { color: C.tcsBlue } });
   s.addText("TCS AGENTIC AI   ·   USE CASE 10", { x: 0.8, y: 1.62, w: 8, h: 0.3, fontSize: 13, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
-  s.addText("VMware → OpenShift Virtualization", { x: 0.8, y: 1.98, w: 11.9, h: 0.85, fontSize: 37, color: C.white, bold: true, fontFace: F });
-  s.addText("VM Migration Agent  ·  assess against the target, govern the change, measure the move",
+  s.addText("VM Migration Assurance", { x: 0.8, y: 1.92, w: 11.9, h: 0.72, fontSize: 37, color: C.white, bold: true, fontFace: F });
+  s.addText("VMware  →  OpenShift Virtualization", { x: 0.8, y: 2.62, w: 11.9, h: 0.5, fontSize: 21, color: C.valCyan, fontFace: F });
+  s.addText("VM Migration Agent  ·  assess against the target, govern the change, prove the result",
     { x: 0.8, y: 3.5, w: 11.6, h: 0.4, fontSize: 15.5, color: "94A3B8", fontFace: F });
   s.addText("“Every other tool reads the source. This one runs inside the destination.”",
     { x: 0.8, y: 4.05, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
   const stats = [
-    { v: "4", l: "Steps, four decisions" }, { v: "15", l: "Source-side checks" },
-    { v: "3", l: "Red Hat support tiers" }, { v: "0", l: "Source VMs deleted" }, { v: "230", l: "Unit tests pinning it" },
+    { v: String(WF.STAGES.length), l: "Stages, end to end" }, { v: "15", l: "Source-side checks" },
+    { v: "5", l: "Post-migration checks" }, { v: "0", l: "Source VMs deleted" }, { v: String(WF.counts()[WF.AI]), l: "AI steps of " + WF.counts().total },
   ];
   stats.forEach((st, i) => {
     const x = 0.8 + i * 2.42;

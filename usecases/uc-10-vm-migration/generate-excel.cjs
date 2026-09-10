@@ -114,7 +114,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
 {
   const ws = wb.addWorksheet("1. Overview", { properties: { tabColor: { argb: "FF" + C.tcsBlue } } });
   ws.columns = [{ width: 30 }, { width: 95 }];
-  let r = banner(ws, "TCS Agentic AI — VMware → OpenShift Virtualization Migration  ·  UC-10",
+  let r = banner(ws, "VM Migration Assurance — VMware to OpenShift Virtualization",
     "Every other assessment tool reads the source. This agent runs inside the destination — so it can answer whether a VM will actually run when it lands.", 2);
   r = headerRow(ws, r, ["Attribute", "Detail"]);
   r = dataRows(ws, r, [

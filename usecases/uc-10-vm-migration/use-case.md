@@ -1,23 +1,47 @@
-# UC-10 — VMware to OpenShift Virtualization Migration (VM Migration Agent)
+# UC-10 — VM Migration Assurance
+## VMware to OpenShift Virtualization
 
 **TCS Agentic AI for Hybrid Infrastructure · Virtualization Operations**
+**Agent:** VM Migration Agent
 
-> *Assess before you move. The agent runs inside the destination, so it can
-> answer the one question no external assessment tool can: will this VM
-> actually run when it lands?*
+> *Every assessment tool on the market reads the source. This one runs inside
+> the destination — so it can answer the question none of them can: will this
+> machine actually **run** when it lands, not merely copy without error?*
 
-A vCenter estate is discovered, assessed against Red Hat's certified guest list
-**and the target cluster's real capacity**, grouped into waves, governed through
-a ServiceNow change record, and migrated with the Migration Toolkit for
-Virtualization — with a measured ETA while bytes move and a rollback that never
-touches the source.
+### What it is
+
+A VMware estate is discovered through the Migration Toolkit for Virtualization
+and assessed against two things at once: Red Hat's certified guest list, and the
+**target cluster's real capacity**. The result is an evidence pack a change
+board can act on.
+
+From there the wave is grouped into the plans MTV accepts, sized into a change
+window that includes time to back out, and executed against an approved
+ServiceNow record — warm or cold per machine, with the cutover scheduled inside
+the window the board authorised. Every migration is then verified on the target,
+the change request is closed on that evidence, and the run is kept in a durable
+history. **The source VM is never deleted by this platform.**
+
+The name is deliberate. *Migration* is one of nine stages; the other eight are
+assessment, governance, verification and retirement — which is what "assurance"
+means here, and what separates this from a transfer engine.
+
+### What it is not
+
+| | |
+|---|---|
+| **Not a replacement for MTV** | MTV is the transfer engine and does the copying. This is everything around it — the assessment before, the governance during, the proof after. |
+| **Not an unattended migration robot** | Two acts stay human by design: starting a migration, and deleting a source VM. Neither is automatable here, and that is the point. |
+| **Not a discovery or dependency-mapping product** | Move-together groups are *inferred* from subnet, naming, folder and datastore, with the evidence shown beside the inference. Observed network flow is not read. |
+| **Not an AI that decides** | The model advises on migration method and wave sequencing. Every verdict, check, capacity answer and estimate is computed, and policy overrules the model before anyone sees its answer. |
 
 ## 1. Demo description (short)
 
 | Field | Value |
 |---|---|
 | Use case ID | UC-10 |
-| Name | VMware → OpenShift Virtualization migration |
+| Name | VM Migration Assurance — VMware to OpenShift Virtualization |
+| Agent | VM Migration Agent (Automation Hub) |
 | Trigger | Human-initiated: choose a source provider, discover |
 | Input | A vCenter (or oVirt/OpenStack/OVA) provider registered in MTV |
 | Output | Assessed estate, evidence pack, approved change record, migrated and verified VMs |

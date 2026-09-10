@@ -412,9 +412,10 @@ useCaseSlide({
 // ── UC-10 — from the UC-10 deck's Master Workflow slide ─────────────────────
 useCaseSlide({
   id: "UC-10", name: "VM Migration Agent",
-  tagline: "VMware → OpenShift Virtualization — assess against the target, govern the change, measure the move",
+  title: "VM Migration Assurance — VMware to OpenShift Virtualization",
+  tagline: "Assess against the target, govern the change, prove the result — migration is one of nine stages",
   description:
-    "Every assessment tool on the market reads the source. This agent runs inside the destination, so it can answer what none of them can: will this VM actually run when it lands? A KubeVirt VM is a pod — it must fit on ONE node — and a 64 GiB guest on 32 GiB workers copies perfectly, then sits Pending after the outage is spent.",
+    "Every assessment tool on the market reads the source. This agent runs inside the destination, so it can answer what none of them can: will this VM actually RUN when it lands? A KubeVirt VM is a pod — it must fit on ONE node — and a 64 GiB guest on 32 GiB workers copies perfectly, then sits Pending after the outage is spent. Migration is one of nine stages; the rest are assessment, governance, verification and retiring the source.",
   bands: [
     { label: "DISCOVER  →  ASSESS", steps: [
       { t: "👤 Choose the source", s: "vCenter via MTV", a: "human" },
