@@ -3100,9 +3100,27 @@ async function startSSE() {
             limit: Number(url.searchParams.get("limit")) || 50,
             cluster: url.searchParams.get("cluster") || cluster || null,
             planName: url.searchParams.get("plan") || null,
+            includeDismissed: url.searchParams.get("dismissed") === "true",
           });
           return sendJson(res, 200, out);
         } catch (err) { return sendJson(res, 400, { migrations: [], error: err.message }); }
+      }
+
+      // Hide a finished migration from the default list, or put it back. Never
+      // deletes — see dismissMigration.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/history\/([\w.-]+)\/dismiss$/);
+        if (m && req.method === "POST") {
+          try {
+            const body = await readJsonBody(req).catch(() => ({}));
+            const { dismissMigration } = await import("./services/migration-history.js");
+            const out = await dismissMigration(m[1], {
+              dismissed: body?.dismissed !== false,
+              actor: body?.actor || "operator",
+            });
+            return sendJson(res, out.ok ? 200 : 404, out);
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
       }
 
       // Every plan on the cluster, running or finished. The console rebuilds
@@ -3208,6 +3226,19 @@ async function startSSE() {
         if (m && req.method === "GET") {
           try {
             const out = await withClusterContext(url, async () => mig.verifyMigration(m[1]));
+            return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
+          } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
+        }
+      }
+
+      // Start migrated VMs that landed powered off. Refuses while the source is
+      // still on, or unreadable — see powerOnMigrated.
+      {
+        const m = url.pathname.match(/^\/api\/migration\/plans\/([\w.-]+)\/power-on$/);
+        if (m && req.method === "POST") {
+          try {
+            const body = await readJsonBody(req).catch(() => ({}));
+            const out = await withClusterContext(url, async () => mig.powerOnMigrated(m[1], { names: body?.names || null }));
             return sendJson(res, 200, out ?? { ok: false, error: "Selected cluster is not reachable." });
           } catch (err) { return sendJson(res, 400, { ok: false, error: err.message }); }
         }

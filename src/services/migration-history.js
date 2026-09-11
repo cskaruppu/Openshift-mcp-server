@@ -65,9 +65,14 @@ async function initTable() {
         vm_count INTEGER,
         total_gib NUMERIC,
         change_request TEXT,
+        dismissed_at TIMESTAMPTZ,
+        dismissed_by TEXT,
         data JSONB
       )
     `);
+    // Added after the table shipped, so existing installs get them too.
+    await query(`ALTER TABLE migration_history ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ`).catch(() => {});
+    await query(`ALTER TABLE migration_history ADD COLUMN IF NOT EXISTS dismissed_by TEXT`).catch(() => {});
     await query(`CREATE INDEX IF NOT EXISTS migration_history_finished_idx ON migration_history (finished_at DESC)`).catch(() => {});
     await query(`CREATE INDEX IF NOT EXISTS migration_history_plan_idx ON migration_history (plan_name)`).catch(() => {});
     _tableReady = true;
@@ -171,23 +176,27 @@ export async function recordMigration(entry = {}) {
 }
 
 /** Past migrations, newest first. Reads the database when there is one. */
-export async function listMigrations({ limit = 50, cluster = null, planName = null } = {}) {
+export async function listMigrations({ limit = 50, cluster = null, planName = null, includeDismissed = false } = {}) {
   const lim = Math.min(500, Math.max(1, limit));
   try {
     if (await initTable()) {
       const where = [], params = [];
       if (cluster) { params.push(cluster); where.push(`cluster = $${params.length}`); }
       if (planName) { params.push(planName); where.push(`plan_name = $${params.length}`); }
+      if (!includeDismissed) where.push(`dismissed_at IS NULL`);
       params.push(lim);
       const r = await query(
-        `SELECT data FROM migration_history
+        `SELECT data, dismissed_at, dismissed_by FROM migration_history
           ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
           ORDER BY finished_at DESC LIMIT $${params.length}`,
         params,
       );
       return {
         durable: true, retentionDays: RETENTION_DAYS,
-        migrations: (r.rows || []).map((row) => (typeof row.data === "string" ? JSON.parse(row.data) : row.data)),
+        migrations: (r.rows || []).map((row) => ({
+          ...(typeof row.data === "string" ? JSON.parse(row.data) : row.data),
+          dismissedAt: row.dismissed_at || null, dismissedBy: row.dismissed_by || null,
+        })),
       };
     }
   } catch { /* fall through to memory */ }
@@ -198,7 +207,8 @@ export async function listMigrations({ limit = 50, cluster = null, planName = nu
   // happened here" in different orders is a bug waiting for the day they
   // disagree in front of someone.
   const rows = _mem
-    .filter((m) => (!cluster || m.cluster === cluster) && (!planName || m.planName === planName))
+    .filter((m) => (!cluster || m.cluster === cluster) && (!planName || m.planName === planName)
+      && (includeDismissed || !m.dismissedAt))
     .slice()
     .sort((a, b) => String(b.finishedAt || "").localeCompare(String(a.finishedAt || "")))
     .slice(0, lim);
@@ -207,6 +217,39 @@ export async function listMigrations({ limit = 50, cluster = null, planName = nu
     // Said plainly rather than left for someone to discover after a restart.
     note: "No database is configured, so this history is held in memory and is lost when the pod restarts. The change requests in ServiceNow remain the durable record.",
   };
+}
+
+/**
+ * Hide a finished migration from the default list, or put it back.
+ *
+ * Deliberately not a delete. This is the record of an irreversible act on
+ * someone's production estate, it is what the audit trail and the next
+ * estimate are built from, and "clear this row" is a tidying impulse, not a
+ * decision to destroy evidence. So dismissing sets a flag and names who set it;
+ * the row still answers "what did we migrate in September?" and comes back with
+ * one toggle. The only DELETE in this module remains retention.
+ */
+export async function dismissMigration(id, { dismissed = true, actor = "operator" } = {}) {
+  if (!id) return { ok: false, error: "No migration id given." };
+  const at = dismissed ? new Date().toISOString() : null;
+
+  const row = _mem.find((m) => m.id === id);
+  if (row) { row.dismissedAt = at; row.dismissedBy = dismissed ? actor : null; }
+
+  try {
+    if (await initTable()) {
+      const r = await query(
+        `UPDATE migration_history SET dismissed_at = $2, dismissed_by = $3 WHERE id = $1`,
+        [id, at, dismissed ? actor : null],
+      );
+      if (!r.rowCount && !row) return { ok: false, error: `No migration "${id}" in the history store.` };
+      return { ok: true, id, dismissed, durable: true };
+    }
+  } catch (e) {
+    if (!row) return { ok: false, error: e.message };
+  }
+  if (!row) return { ok: false, error: `No migration "${id}" in the history store.` };
+  return { ok: true, id, dismissed, durable: false };
 }
 
 /** Housekeeping — drop entries past the retention window. The only DELETE. */

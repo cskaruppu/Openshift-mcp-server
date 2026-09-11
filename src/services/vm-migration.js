@@ -3287,6 +3287,76 @@ export async function verifyMigration(planName) {
   };
 }
 
+/**
+ * Start migrated VMs that landed powered off, then verify them.
+ *
+ * MTV leaves a migrated VM in whatever power state the source was in, which is
+ * correct — it is not MTV's business to boot a machine nobody asked to boot.
+ * But it produces a verification that fails for a reason that is not a fault:
+ * "VM is running ✖" on a machine that was only ever stopped. The check cannot
+ * pass it — a stopped VM genuinely has not been proven to work — and the way
+ * out was to leave the console, find the VM in the OpenShift console, start it,
+ * come back and re-check.
+ *
+ * So the action lives next to the check that asked for it. It is deliberately
+ * narrow: it starts VMs THIS PLAN migrated, into the namespace THIS PLAN
+ * targeted, and it will not touch a machine whose source is still powered on —
+ * booting the copy while the original serves users is the split brain the
+ * verification exists to catch, and an action that creates it while clearing a
+ * warning would be the worst possible trade.
+ */
+export async function powerOnMigrated(planName, { names = null } = {}) {
+  const status = await planStatus(planName);
+  if (!status.found) return { ok: false, error: `Plan "${planName}" not found.` };
+  if (!status.succeeded) return { ok: false, error: "This plan has not completed, so there is nothing migrated to start." };
+  if (!status.targetNamespace) return { ok: false, error: "The plan has no target namespace recorded." };
+
+  const migrated = (status.vms || []).map((v) => v.name).filter(Boolean);
+  const wanted = names?.length ? migrated.filter((n) => names.includes(n)) : migrated;
+  if (!wanted.length) return { ok: false, error: "No migrated VMs to start." };
+
+  // Read the source once, for all of them. A source that cannot be read leaves
+  // the entry absent, which is NOT permission to boot the copy.
+  const sourceOff = await sourcePowerStates(status, wanted);
+
+  const started = [], skipped = [];
+  for (const n of wanted) {
+    const off = Object.prototype.hasOwnProperty.call(sourceOff, n) ? sourceOff[n] : null;
+    if (off === false) {
+      skipped.push({ name: n, why: "The source VM is still powered ON. Power it off first — two copies of one machine on the same network is the outcome this check exists to prevent." });
+      continue;
+    }
+    if (off === null) {
+      skipped.push({ name: n, why: "The source platform could not be read, so it is not known whether the original is still running. Confirm the source is off by hand before starting this copy." });
+      continue;
+    }
+    const vm = await ocpGet(`/${KUBEVIRT}/namespaces/${status.targetNamespace}/virtualmachines/${n}`).catch(() => null);
+    if (!vm) { skipped.push({ name: n, why: `No VirtualMachine "${n}" in ${status.targetNamespace}.` }); continue; }
+    if (vm.spec?.runStrategy === "Always" || vm.spec?.running === true) {
+      skipped.push({ name: n, why: "Already set to run — it is starting, or already up." });
+      continue;
+    }
+    // runStrategy and running are mutually exclusive on a KubeVirt VM; patch
+    // whichever one this object already uses, or the API rejects it.
+    const patch = vm.spec?.runStrategy != null ? { spec: { runStrategy: "Always" } } : { spec: { running: true } };
+    try {
+      await ocpPatch(`/${KUBEVIRT}/namespaces/${status.targetNamespace}/virtualmachines/${n}`, patch, "application/merge-patch+json");
+      started.push(n);
+    } catch (e) {
+      skipped.push({ name: n, why: e.message });
+    }
+  }
+
+  return {
+    ok: started.length > 0, planName, namespace: status.targetNamespace, started, skipped,
+    // A VM does not boot the instant the patch returns, and saying it did would
+    // make the verification that follows look broken.
+    note: started.length
+      ? `${started.length} machine(s) told to start. A guest takes a minute or two to boot — re-check verification once it has.`
+      : "Nothing was started.",
+  };
+}
+
 /** GiB from a Kubernetes quantity, for the one comparison that needs it. */
 function parseMemGiB(v) {
   const m = String(v).match(/^(\d+(?:\.\d+)?)\s*([KMGTP]i?)?$/);
@@ -3580,6 +3650,64 @@ export async function checkDecommissionApproval(planName) {
  * from it, so what is on screen after a refresh is what is true on the cluster,
  * not what happened to be in a variable.
  */
+/**
+ * Where a plan has got to, and whose move it is. Pure.
+ *
+ * A migration spends most of its life waiting for a person: a change board that
+ * meets on Tuesdays, an operator who has to pick a cutover time, a VMware team
+ * who own the deletion. So "what is this plan doing?" is nearly always answered
+ * by naming who we are waiting for, not by naming a phase — and `phase` alone
+ * cannot say it. A plan sitting at `ready` for three days because CHG0030042 is
+ * unapproved and one that is about to start are the same phase.
+ *
+ * `owner` is deliberately coarse — you, them, or nobody — because the only
+ * question worth answering on a list is "is this mine to move?".
+ */
+export function pendingAction({ phase, gate, decommission, warm } = {}) {
+  const A = (owner, action, waitingOn = null) => ({ owner, action, waitingOn, done: false });
+
+  if (phase === "failed") {
+    return { owner: "you", action: "Failed or rolled back. Nothing is pending — review before re-planning.", waitingOn: null, done: true };
+  }
+
+  // Approval comes before everything, including transfer: a plan cannot start
+  // without it, so an unapproved plan is waiting on the board no matter what
+  // else its conditions say.
+  if (gate?.required && !gate.approved && phase !== "migrated" && phase !== "transferring" && phase !== "awaiting-cutover") {
+    if (gate.state === "rejected" || gate.state === "cancelled") {
+      return A("you", `${gate.number} was ${gate.state}. Raise a new change request to proceed.`);
+    }
+    if (gate.number) return A("change board", `${gate.number} is awaiting approval. Nothing starts until it is approved.`, gate.number);
+    return A("you", "Raise a change request. The migration cannot start without one.");
+  }
+
+  if (phase === "ready") return A("you", "Approved and validated — start the migration.");
+  if (phase === "validating") return A("nobody", "MTV is validating the plan.");
+  if (phase === "transferring") {
+    return A("nobody", warm ? "Copying while the guests stay up. The cutover comes after." : "Copying. The guests are down for the transfer.");
+  }
+  if (phase === "awaiting-cutover") {
+    return A("you", "The copy is done and the guests are still up. Cut over inside the approved window.");
+  }
+
+  if (phase === "migrated") {
+    if (decommission?.state === "rejected") {
+      return { owner: "nobody", action: `${decommission.number} was rejected — the source VMs stay where they are. Nothing further is pending.`, waitingOn: null, done: true };
+    }
+    if (decommission?.approved) {
+      return A("VMware team", `${decommission.number} is approved — the VMware team deletes the source VMs.`, decommission.number);
+    }
+    if (decommission?.raised) {
+      return A("change board", `${decommission.number} is awaiting approval to delete the source VMs.`, decommission.number);
+    }
+    // The sources are off and intact. That is a safe place to stop, so this is
+    // an invitation rather than a chase.
+    return A("you", "Migrated. Verify it, then retire the source VMs when you are ready.");
+  }
+
+  return A("nobody", "No action is pending.");
+}
+
 export async function listPlans({ includeFinished = true, limit = 60 } = {}) {
   const list = await ocpGet(
     `/${FORKLIFT}/namespaces/${MTV_NS}/plans?labelSelector=${encodeURIComponent("app.kubernetes.io/managed-by=tcs-agentic-ai")}`,
@@ -3614,6 +3742,9 @@ export async function listPlans({ includeFinished = true, limit = 60 } = {}) {
       phase, active: !st.succeeded && !st.failed && !st.canceled,
       gate: approvalGate(p),
       decommission: decommissionGate(p),
+      // Whose move it is. Computed here rather than in the console so the list,
+      // the detail panel and anything else asking agree on one answer.
+      pending: pendingAction({ phase, gate: approvalGate(p), decommission: decommissionGate(p), warm }),
       // When it finished, so history sorts by something meaningful.
       finishedAt: vms.map((v) => v.completed).filter(Boolean).sort().at(-1) || null,
     };

@@ -1198,7 +1198,7 @@ function Journey({ j }) {
    An unrun check is shown as unrun. A verification that could not reach the
    source platform reports "not confirmed", never "powered off": the whole value
    of this panel is that it can be believed. */
-function VerifyPanel({ planName, result, busy, onRun }) {
+function VerifyPanel({ planName, result, busy, onRun, onPowerOn }) {
   const loadedFor = useRef(null);
   useEffect(() => {
     if (loadedFor.current !== planName) { loadedFor.current = planName; onRun(); }
@@ -1237,6 +1237,30 @@ function VerifyPanel({ planName, result, busy, onRun }) {
       </div>
       {result?.headline && <div style={{ fontSize: "0.78rem", marginTop: 3, fontWeight: 600 }}>{result.headline}</div>}
       {result?.error && <div style={{ fontSize: "0.77rem", marginTop: 3, color: "#dc2626" }}>{result.error}</div>}
+
+      {/* MTV leaves a migrated VM in the power state its source was in, so a
+          machine that was off on VMware is off here — and "VM is running ✖" is
+          then a true check reporting a non-fault. It cannot be softened into a
+          pass: a stopped VM has not been shown to work. What it needs is the
+          action, next to the check that asked for it, instead of a trip to the
+          OpenShift console and back.
+
+          Offered only when that check actually failed. The server refuses if
+          the source is still on or unreadable, which is the whole reason this
+          is a request rather than a patch issued from here. */}
+      {(result?.vmChecks || []).some((vm) => (vm.checks || []).some((c) => c.id === "running" && c.state === "fail")) && (
+        <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button onClick={onPowerOn} disabled={busy}
+            style={{ padding: "4px 12px", borderRadius: 7, border: "none", fontWeight: 700, fontSize: "0.77rem",
+              fontFamily: "inherit", background: "#3d5afe", color: "#fff", cursor: busy ? "wait" : "pointer" }}>
+            ⏻ Power on and verify
+          </button>
+          <span data-prose style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
+            Starts the migrated machines that are not running, then re-checks. Refused while the source VM is still
+            powered on — that would put two copies of one machine on the network at once.
+          </span>
+        </div>
+      )}
 
       {(result?.vmChecks || []).map((vm) => (
         <div key={vm.name} style={{ marginTop: 7, paddingTop: 6, borderTop: "1px solid var(--border,#e4e8f1)" }}>
@@ -1576,6 +1600,16 @@ const PHASE = {
   failed:             { label: "failed",     bg: "rgba(220,38,38,.12)",   fg: "#dc2626" },
 };
 
+/* Whose move it is, from pendingAction() on the server. Only "you" is coloured
+   to pull the eye — a list where every row is highlighted highlights nothing,
+   and the whole point is to find the rows that are yours. */
+const OWNER = {
+  you:            { label: "your move",   bg: "rgba(61,90,254,.14)",   fg: "#3d5afe" },
+  "change board": { label: "with change", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
+  "VMware team":  { label: "with VMware", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
+  nobody:         { label: "in progress", bg: "rgba(100,116,139,.10)", fg: "#64748b" },
+};
+
 /* Mirrors cbtSnapshotBudget on the server so the warning tracks the picker as
    it is edited. The server's answer is the one that counts; this only decides
    whether to show a caution before anyone commits to a time. */
@@ -1672,6 +1706,7 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [crWindow, setCrWindow] = useState({});        // planName -> { start, end } chosen by the operator
   const [advice, setAdvice] = useState(null);          // { source, advice[] }
   const [history, setHistory] = useState(null);        // every plan on the cluster
+  const [showDismissed, setShowDismissed] = useState(false);
   const [phase, setPhase] = useState(0);               // which analysis step is showing
   const [slowAnalysis, setSlowAnalysis] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -1857,8 +1892,10 @@ function MigrationAgent({ clusters, activeCluster }) {
       const [d, past] = await Promise.all([
         get("/api/migration/plans"),
         // Finished migrations outlive the Plans that ran them, so they come
-        // from the durable store rather than from the cluster.
-        get("/api/migration/history?limit=25").catch(() => ({ migrations: [] })),
+        // from the durable store rather than from the cluster. Dismissed rows
+        // are fetched too — hiding them is a view, not a deletion, so the
+        // toggle must not need another round trip to change its mind.
+        get("/api/migration/history?limit=25&dismissed=true").catch(() => ({ migrations: [] })),
       ]);
       setHistory({ ...d, archived: past.migrations || [], durable: past.durable, retentionDays: past.retentionDays, archiveNote: past.note });
       const live = (d.plans || []).filter((p) => p.active);
@@ -1961,6 +1998,36 @@ function MigrationAgent({ clusters, activeCluster }) {
       await loadDecom(planName);
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
+  };
+
+  // Start, wait, re-verify. The wait is real: a guest takes a minute or two to
+  // boot, and re-checking the instant the patch returns would report the VM as
+  // still not running and look like the action failed.
+  const powerOnAndVerify = async (planName) => {
+    setBusy(planName);
+    try {
+      const d = await post(`/api/migration/plans/${encodeURIComponent(planName)}/power-on`, {});
+      // A refusal is the more important half of this answer — "the source is
+      // still powered on" is the reason someone most needs to read — so it is
+      // said whether or not the rest of the batch started.
+      const refused = (d.skipped || []).map((s) => `${s.name}: ${s.why}`).join("  ");
+      if (!d.ok) { showToast(d.error || refused || "Nothing was started", "err"); return; }
+      showToast(refused ? `${d.note}  ${refused}` : d.note, refused ? "err" : "ok");
+      await new Promise((r) => setTimeout(r, 12000));
+    } catch (e) { showToast(e.message, "err"); return; }
+    finally { setBusy(null); }
+    await runVerify(planName);
+  };
+
+  // Hiding, not deleting. The server keeps the row; this only stops it filling
+  // the panel once the wave is long finished and nobody is asking about it.
+  const dismissRun = async (id, dismissed) => {
+    try {
+      const d = await post(`/api/migration/history/${encodeURIComponent(id)}/dismiss`, { dismissed });
+      if (!d.ok) { showToast(d.error || "Could not update it", "err"); return; }
+      setHistory((h) => (h ? { ...h, archived: (h.archived || []).map((a) =>
+        a.id === id ? { ...a, dismissedAt: dismissed ? new Date().toISOString() : null } : a) } : h));
+    } catch (e) { showToast(e.message, "err"); }
   };
 
   const loadDecom = async (planName) => {
@@ -2128,15 +2195,24 @@ function MigrationAgent({ clusters, activeCluster }) {
               {history.note}
               {history.archived?.length ? ` ${history.archived.length} kept in the history store.` : ""}
             </span>
-            <button onClick={() => setShowHistory((v) => !v)} style={{ ...S, marginLeft: "auto",
+            {/* Offered only once something is actually hidden. A toggle for an
+                empty set is a question nobody asked. */}
+            {showHistory && (history.archived || []).some((a) => a.dismissedAt) && (
+              <button onClick={() => setShowDismissed((v) => !v)} style={{ ...S, marginLeft: "auto",
+                padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
+                {showDismissed ? "Hide dismissed" : `Show ${(history.archived || []).filter((a) => a.dismissedAt).length} dismissed`}
+              </button>
+            )}
+            <button onClick={() => setShowHistory((v) => !v)} style={{ ...S,
+              marginLeft: showHistory && (history.archived || []).some((a) => a.dismissedAt) ? 0 : "auto",
               padding: "3px 10px", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer" }}>
-              {showHistory ? "Hide" : `Show all ${history.plans.length + (history.archived?.length || 0)}`}
+              {showHistory ? "Hide" : `Show all ${history.plans.length + (history.archived || []).filter((a) => !a.dismissedAt).length}`}
             </button>
           </div>
           {/* Finished migrations, from the durable store. These survive the
               Plan being deleted — which a rollback does — so this is the
               only place a rolled-back migration can still be seen. */}
-          {showHistory && (history.archived || []).map((a) => (
+          {showHistory && (history.archived || []).filter((a) => showDismissed || !a.dismissedAt).map((a) => (
             <div key={a.id} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
               fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
               <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
@@ -2173,6 +2249,17 @@ function MigrationAgent({ clusters, activeCluster }) {
               <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
                 {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
               </span>
+              {/* Dismissing hides the row; it does not delete it. The wording
+                  says so, because "Dismiss" next to a migration record is
+                  exactly where someone assumes the opposite — and this is the
+                  evidence behind an irreversible act on their estate. */}
+              <button onClick={() => dismissRun(a.id, !a.dismissedAt)}
+                title={a.dismissedAt
+                  ? `Dismissed ${new Date(a.dismissedAt).toLocaleString()}. Put it back in the list.`
+                  : "Hide this from the list. It stays in the history store and in ServiceNow — nothing is deleted."}
+                style={{ ...S, padding: "1px 8px", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer" }}>
+                {a.dismissedAt ? "Restore" : "Dismiss"}
+              </button>
               {a.note && <div style={{ width: "100%", color: "var(--text2)", fontSize: "0.75rem" }}>{a.note}</div>}
             </div>
           ))}
@@ -2204,13 +2291,34 @@ function MigrationAgent({ clusters, activeCluster }) {
                 {h.finishedAt ? `finished ${new Date(h.finishedAt).toLocaleString()}`
                   : h.createdAt ? `started ${new Date(h.createdAt).toLocaleString()}` : ""}
               </span>
-              {/* Anything still moving can be opened again from here —
-                  that is the whole point of the panel. */}
-              {h.active && !plans.some((p) => p.planName === h.planName) && (
+              {/* Reopening is offered for anything with work left, which is NOT
+                  the same as "still moving". A migrated plan waiting on a
+                  decommission approval is finished by MTV's reckoning and
+                  unfinished by ours — and it was the one case you could not get
+                  back to, because `active` goes false the moment the transfer
+                  succeeds. That is precisely the plan someone closes the window
+                  on: approval takes days. */}
+              {!h.pending?.done && !plans.some((p) => p.planName === h.planName) && (
                 <button onClick={() => { setPlans((ps) => [...ps, { planName: h.planName, strategy: h.strategy, vms: h.vms }]); refreshStatus([h.planName]); }}
                   style={{ ...S, padding: "2px 9px", fontSize: "0.73rem", fontWeight: 700, cursor: "pointer" }}>
                   Reopen
                 </button>
+              )}
+              {/* The line that answers "where did we leave this?". A migration
+                  spends most of its life waiting for a person, so the useful
+                  sentence names who we are waiting for — not the phase, which
+                  reads the same for a plan about to start and one that has sat
+                  unapproved since Friday. */}
+              {h.pending?.action && (
+                <div style={{ width: "100%", marginTop: 3, display: "flex", gap: 7, alignItems: "baseline", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "1px 7px", borderRadius: 999,
+                    textTransform: "uppercase", letterSpacing: ".03em",
+                    background: OWNER[h.pending.owner]?.bg || "rgba(100,116,139,.12)",
+                    color: OWNER[h.pending.owner]?.fg || "var(--text2)" }}>
+                    {OWNER[h.pending.owner]?.label || h.pending.owner}
+                  </span>
+                  <span style={{ fontSize: "0.76rem", color: "var(--text2)" }}>{h.pending.action}</span>
+                </div>
               )}
             </div>
           ))}
@@ -2649,6 +2757,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                     result={verifs[p.planName]}
                     busy={busy === p.planName}
                     onRun={() => runVerify(p.planName)}
+                    onPowerOn={() => powerOnAndVerify(p.planName)}
                   />
                 )}
 
