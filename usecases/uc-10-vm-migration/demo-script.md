@@ -8,13 +8,13 @@
 
 | # | Record this | What is on screen | Length |
 |---|---|---|---|
-| **PART 1** | Opening | **Slide 1** — the title slide | 1m 15s |
-| **PART 2** | The workflow | **Slide 2** — "Seven stages for cold, eight for warm" | 2m 15s |
-| **PART 3** | The live demo | **The product** — VM Migration Agent in the browser | 6m 30s |
-| **PART 4** | Closing | **Slide 3** — the Thank you slide | 40s |
+| **PART 1** | Opening | **Slide 1** — the title slide | 30s |
+| **PART 2** | The workflow | **Slide 2** — "Seven stages for cold, eight for warm" | 59s |
+| **PART 3** | The live demo | **The product** — VM Migration Agent in the browser | 6m 40s |
+| **PART 4** | Closing | **Slide 3** — the Thank you slide | 41s |
 
-**Total spoken: ≈ 10m 40s. Finished video: 12–13 minutes** once pauses and
-transitions are added.
+**Slides 1 + 2 together: 89 seconds.** Total spoken ≈ **8m 50s**; finished
+video 10–11 minutes once pauses and transitions are added.
 
 **Record each part as a separate clip.** Clipchamp joins them cleanly, and a
 fumbled line then costs you one take instead of the whole video. Part 3 is
@@ -48,121 +48,98 @@ itself six clips — see its own running order below.
 ---
 ---
 
-# PART 1 — Opening  ·  Slide 1  ·  1m 15s
+# PART 1 — Opening  ·  Slide 1  ·  30s
 
 **ON SCREEN:** The title slide, full screen.
-**DO:** Hold two seconds of silence before your first word — it gives you a
-clean edit point in Clipchamp.
+**DO:** Two seconds of silence before your first word — it gives you a clean
+edit point in Clipchamp.
 
 > **SAY:**
 >
-> Every organisation moving off VMware right now is asking the same question,
-> and it is not *"can we copy the disks?"* **[beat]** The tooling to copy disks
-> already exists, and it works. Red Hat ships it — the Migration Toolkit for
-> Virtualization.
+> Welcome. **[beat]** This is the **TCS Agentic AI-led VMware to OpenShift
+> Migration Factory**.
 >
-> The question they are actually asking is harder. *Which* machines can move.
-> *When.* What breaks if they do. Who signed off. And — three weeks later, when
-> somebody asks — what actually happened.
+> Copying disks is the easy part — Red Hat's Migration Toolkit does that. The
+> hard part is knowing which can move, proving they landed, and who approved
+> it.
 >
-> **[beat]**
->
-> That is what this is. Not another transfer engine. An **assurance layer**
-> around the one Red Hat already gives you.
-
-**DO:** Point the cursor at the quote on the lower half of the slide.
-
-> **SAY:**
->
-> And the line at the bottom is the whole design in one sentence. Every
-> assessment tool on the market reads the **source** — it inspects vCenter and
-> tells you about your VMware estate. This one runs **inside the destination**,
-> on the OpenShift cluster the machines are moving to.
->
-> Which means it can answer a question none of them can. Not *"will this copy
-> cleanly?"* — but **"will this machine actually run when it lands?"**
->
-> **[beat]** Those are very different questions, and only one of them matters
-> at two in the morning.
+> **[beat]** Every other tool reads your **source**. This one runs inside the
+> **destination** — so it answers what none of them can: **will it run when it
+> lands?**
 
 **→ Stop recording. That is Part 1.**
 
+*Four sentences, and every one earns its place: who this is, what is already
+solved, what is not, and the single line that separates this from every other
+assessment tool. Say the product name out loud — a viewer should never have to
+read it off the slide themselves.*
+
+*If this clip is intercut into a session where someone has already welcomed the
+room, drop the "Welcome" and open on the product name.*
+
 ---
 ---
 
-# PART 2 — The workflow  ·  Slide 2  ·  2m 15s
+# PART 2 — The workflow  ·  Slide 2  ·  59s
 
 **ON SCREEN:** The slide headed *"Seven stages for cold, eight for warm — they
 are different routes"*.
 
-> **SAY:**
->
-> Here is the whole thing end to end. Three lanes — and the reason there are
-> three is the single most important idea in this design.
+**Pace this one.** It is the densest slide in the deck and the temptation is to
+explain everything on it. Do not — the workbook does that. Land the four moves
+below and move on.
 
-**DO:** Run the cursor along the top **BOTH** row, left to right, in time with
-the words.
+**DO:** Cursor rests on the slide title.
 
 > **SAY:**
 >
-> The top row is shared. **Discover** is read-only — nothing is ever written to
-> vCenter. **Analyse** assesses every machine you discovered, not the ones you
-> already picked — and I will come back to why that ordering matters.
-> **Select** is where you choose the wave. And **Plan and change** is where the
-> estimate, the change window and the CAB approval live.
->
-> **[beat]** Now look at what happens next.
+> An assurance layer around that transfer engine. Three lanes — and why there
+> are three is the point.
 
-**DO:** Cursor on the **COLD** row.
+**DO:** Run the cursor along the top **BOTH** row, left to right.
 
 > **SAY:**
 >
-> A **cold** migration powers the guest off first, and then copies. Which means
-> the outage is the *entire transfer*. For a large VM, that is hours.
+> The top row is shared: discover, assess every machine, choose the wave, plan
+> and approve.
 
-**DO:** Cursor on the **WARM** row.
-
-> **SAY:**
->
-> A **warm** migration copies the disks while the guest carries on serving
-> users, and the only downtime is the cutover at the very end. Minutes, not
-> hours.
-
-**DO:** Cursor on the greyed-out **"no cutover step"** box in the cold row.
+**DO:** Cursor on the **COLD** row, then the **WARM** row as you say each.
 
 > **SAY:**
 >
-> And notice this. Cold has **no cutover step at all**. That is why these are
-> drawn as two different routes rather than one pipeline with a checkbox —
-> because drawn as one pipeline, a cold migration promises you a cutover stage
-> it is never going to have. Small thing. It is exactly the sort of small thing
-> that loses people's trust in a tool.
+> A **cold** migration powers the guest off first — the outage is the entire
+> copy. Hours, for a large VM. **[beat]** A **warm** one copies while the guest
+> keeps serving users, and the only downtime is the cutover at the end.
+> Minutes.
 
-**DO:** Cursor along the four coloured chips at the bottom.
-
-> **SAY:**
->
-> Four guarantees underneath, and they hold at every stage. Discovery writes
-> **nothing** to vCenter. The **AI advises** — warm or cold, with a reason —
-> and rules overrule it before you ever see the answer. The **CAB approves**,
-> and that gate is re-read from the cluster at the moment you press migrate,
-> not trusted from the browser. And the whole thing stays **reversible** until
-> the source VMs are deleted — which is a separate change request, days later,
-> that a human raises.
->
-> **[beat]**
-
-**DO:** Cursor on the green line at the very bottom.
+**DO:** Cursor on the greyed-out **"no cutover step"** box.
 
 > **SAY:**
 >
-> Which brings us to the sentence at the bottom. Nothing moves until a plan is
-> created, validated, and a change request approved — **and this platform never
-> deletes your source VM.** Not at any stage. Not on rollback. Not on success.
+> And cold has **no cutover step at all** — which is why these are two routes,
+> not one pipeline with a checkbox.
+
+**DO:** Sweep the cursor across the four coloured chips.
+
+> **SAY:**
 >
-> Let me show you it running.
+> Four guarantees throughout: nothing is written to vCenter, rules overrule the
+> AI, the change board approves, and it stays reversible until the source VMs
+> are deleted.
+
+**DO:** Cursor on the green line at the bottom.
+
+> **SAY:**
+>
+> Nothing moves until a plan is validated and a change approved — **and this
+> platform never deletes your source VM.** Let me show you.
 
 **→ Stop recording. That is Part 2.**
+
+*Slides 1 and 2 together: **89 seconds**. Everything cut from this part —
+the three Red Hat support tiers, how the gate is re-read from the cluster, why
+assessment comes before selection — is said properly in Part 3, over the live
+product, where it is a demonstration rather than a claim.*
 
 ---
 ---
