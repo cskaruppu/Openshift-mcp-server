@@ -65,39 +65,44 @@ function footNote(s, text, color) {
 }
 
 // ── 1. TITLE ────────────────────────────────────────────────────────────────
+// Held on screen for six seconds, so it carries the NAME and nothing else.
+// Six seconds is about fifteen words of reading; a title card that has to be
+// read quickly must be short, not small. The positioning, the proof and the
+// claim all moved into the narration and the slides that follow, where there
+// is time for them.
 {
   const s = pptx.addSlide();
   s.background = { color: C.darkNavy };
-  s.addShape(pptx.ShapeType.rect, { x: 0, y: 3.32, w: 13.33, h: 0.045, fill: { color: C.tcsBlue } });
-  s.addText("TCS AGENTIC AI   ·   USE CASE 10", { x: 0.8, y: 1.62, w: 8, h: 0.3, fontSize: 13, color: C.valCyan, bold: true, charSpacing: 3, fontFace: F });
-  s.addText("VM Migration Assurance", { x: 0.8, y: 1.92, w: 11.9, h: 0.72, fontSize: 37, color: C.white, bold: true, fontFace: F });
-  s.addText("VMware  →  OpenShift Virtualization", { x: 0.8, y: 2.62, w: 11.9, h: 0.5, fontSize: 21, color: C.valCyan, fontFace: F });
-  s.addText("VM Migration Agent  ·  assess against the target, govern the change, prove the result",
-    { x: 0.8, y: 3.5, w: 11.6, h: 0.4, fontSize: 15.5, color: "94A3B8", fontFace: F });
-  s.addText("“Every other tool reads the source. This one runs inside the destination.”",
-    { x: 0.8, y: 4.05, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
-  // Delivered as a pair, these two are read together — and "VM Lifecycle" and
-  // "VM Migration" cannot be told apart from their names alone. The boundary
-  // is stated on each, pointing at the other.
-  s.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 4.55, w: 11.6, h: 0.42,
-    fill: { color: "1E293B" }, line: { color: "334155", width: 1 }, rectRadius: 0.05 });
-  s.addText("SCOPE   ·   VMs that ALREADY EXIST on VMware and are moving to OpenShift Virtualization.      Once landed, they are governed by UC-06, VM Lifecycle.",
-    { x: 0.95, y: 4.55, w: 11.3, h: 0.42, fontSize: 10.5, color: "CBD5E1", valign: "middle", fontFace: F });
+  // One restrained accent: a hairline down the left edge, brand red into blue
+  // into cyan, rather than a decorative wash competing with the words.
+  [["E04040", 0], ["2563EB", 2.5], ["0891B2", 5.0]].forEach(([col, y]) =>
+    s.addShape(pptx.ShapeType.rect, { x: 0, y, w: 0.07, h: 2.5, fill: { color: col }, line: { color: col } }));
 
+  s.addText("USE CASE 10        |        VIRTUALIZATION OPERATIONS",
+    { x: 0.95, y: 2.62, w: 11, h: 0.3, fontSize: 11.5, color: "38BDF8", bold: true, charSpacing: 3, fontFace: F });
 
-  const stats = [
-    { v: String(WF.STAGES.length), l: "Stages, end to end" }, { v: "15", l: "Source-side checks" },
-    { v: "5", l: "Post-migration checks" }, { v: "0", l: "Source VMs deleted" }, { v: String(WF.counts()[WF.AI]), l: "AI steps of " + WF.counts().total },
-  ];
-  stats.forEach((st, i) => {
-    const x = 0.8 + i * 2.42;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 5.12, w: 2.2, h: 1.05, fill: { color: C.navy }, line: { color: "334155", width: 1 }, rectRadius: 0.06 });
-    s.addText(st.v, { x, y: 5.2, w: 2.2, h: 0.46, fontSize: 24, bold: true, color: C.valCyan, align: "center", fontFace: F });
-    s.addText(st.l, { x, y: 5.66, w: 2.2, h: 0.3, fontSize: 8.5, color: "94A3B8", align: "center", fontFace: F });
-  });
-  s.addText("TCS Agentic AI for Hybrid Infrastructure  ·  Virtualization Operations  ·  Tata Consultancy Services",
-    { x: 0.8, y: 6.45, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
+  s.addText([
+    { text: "TCS", options: { color: "E04040", bold: true, charSpacing: 1.6 } },
+    { text: "   Agentic AI for Hybrid Infrastructure", options: { color: "CBD5E1", bold: true } },
+  ], { x: 0.95, y: 3.02, w: 11, h: 0.36, fontSize: 17, fontFace: F });
+
+  s.addText("AI-led Migration Factory",
+    { x: 0.92, y: 3.42, w: 12, h: 0.95, fontSize: 47, color: C.white, bold: true, charSpacing: -1.2, fontFace: F });
+
+  s.addText("VMware to OpenShift Virtualization",
+    { x: 0.95, y: 4.42, w: 12, h: 0.55, fontSize: 24, color: "93C5FD", fontFace: F });
+
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.95, y: 5.22, w: 1, h: 0.045,
+    fill: { color: C.tcsBlue }, line: { color: C.tcsBlue }, rectRadius: 0.02 });
+
+  s.addShape(pptx.ShapeType.rect, { x: 0.95, y: 6.62, w: 11.43, h: 0.012, fill: { color: "1E293B" }, line: { color: "1E293B" } });
+  s.addText([
+    { text: "Tata Consultancy Services", options: { color: "94A3B8", bold: true } },
+    { text: "   ·   Agentic AI-Led Automation Hub", options: { color: "64748B" } },
+  ], { x: 0.95, y: 6.76, w: 8, h: 0.28, fontSize: 10.5, fontFace: F });
+  s.addText("UC-10", { x: 10.4, y: 6.76, w: 1.98, h: 0.28, fontSize: 10.5, color: "64748B",
+    bold: true, charSpacing: 2.2, align: "right", fontFace: F });
 }
 
 // ── 2. THE PROBLEM ──────────────────────────────────────────────────────────

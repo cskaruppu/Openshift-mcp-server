@@ -8,12 +8,12 @@
 
 | # | Record this | What is on screen | Length |
 |---|---|---|---|
-| **PART 1** | Opening | **Slide 1** — the title slide | 30s |
-| **PART 2** | The workflow | **Slide 2** — "Seven stages for cold, eight for warm" | 59s |
+| **PART 1** | Opening | **Slide 1** — the title slide | 6s |
+| **PART 2** | The workflow | **Slide 2** — "Seven stages for cold, eight for warm" | 83s |
 | **PART 3** | The live demo | **The product** — VM Migration Agent in the browser | 6m 40s |
 | **PART 4** | Closing | **Slide 3** — the Thank you slide | 41s |
 
-**Slides 1 + 2 together: 89 seconds.** Total spoken ≈ **8m 50s**; finished
+**Slides 1 + 2 together: 90 seconds.** Total spoken ≈ **8m 50s**; finished
 video 10–11 minutes once pauses and transitions are added.
 
 **Record each part as a separate clip.** Clipchamp joins them cleanly, and a
@@ -48,39 +48,29 @@ itself six clips — see its own running order below.
 ---
 ---
 
-# PART 1 — Opening  ·  Slide 1  ·  30s
+# PART 1 — Opening  ·  Slide 1  ·  6s
 
 **ON SCREEN:** The title slide, full screen.
-**DO:** Two seconds of silence before your first word — it gives you a clean
-edit point in Clipchamp.
+**DO:** Two seconds of silence before the first word, two after the last. That
+gives Clipchamp clean handles at both ends of a very short clip.
 
 > **SAY:**
 >
-> Welcome. **[beat]** This is the **TCS Agentic AI-led VMware to OpenShift
-> Migration Factory**.
->
-> Copying disks is the easy part — Red Hat's Migration Toolkit does that. The
-> hard part is knowing which can move, proving they landed, and who approved
-> it.
->
-> **[beat]** Every other tool reads your **source**. This one runs inside the
-> **destination** — so it answers what none of them can: **will it run when it
-> lands?**
+> Welcome. **[beat]** Use Case 10 — **TCS AI-led Migration Factory**: VMware to
+> OpenShift Virtualization.
 
 **→ Stop recording. That is Part 1.**
 
-*Four sentences, and every one earns its place: who this is, what is already
-solved, what is not, and the single line that separates this from every other
-assessment tool. Say the product name out loud — a viewer should never have to
-read it off the slide themselves.*
-
-*If this clip is intercut into a session where someone has already welcomed the
-room, drop the "Welcome" and open on the product name.*
+*Thirteen words. Six seconds is roughly what a viewer can read off a title
+card, so the slide carries the name and nothing else, and the narration does
+not compete with it. Everything that used to be here — what is already solved,
+what is not, and the line about running inside the destination — now opens
+Part 2, where the slide behind it can support the point.*
 
 ---
 ---
 
-# PART 2 — The workflow  ·  Slide 2  ·  59s
+# PART 2 — The workflow  ·  Slide 2  ·  83s
 
 **ON SCREEN:** The slide headed *"Seven stages for cold, eight for warm — they
 are different routes"*.
@@ -93,8 +83,15 @@ below and move on.
 
 > **SAY:**
 >
-> An assurance layer around that transfer engine. Three lanes — and why there
-> are three is the point.
+> Copying disks is the easy part — Red Hat's Migration Toolkit does that. The
+> hard part is knowing which can move, proving they landed, and who approved
+> it. **[beat]** This is the assurance layer around it.
+>
+> Every other tool reads your **source**. This one runs inside the
+> **destination** — so it answers what none can: **will it run when it lands?**
+>
+> **[beat]** Here it is, end to end. Three lanes — and why there are three is
+> the point.
 
 **DO:** Run the cursor along the top **BOTH** row, left to right.
 
@@ -117,15 +114,15 @@ below and move on.
 > **SAY:**
 >
 > And cold has **no cutover step at all** — which is why these are two routes,
-> not one pipeline with a checkbox.
+> not one pipeline.
 
 **DO:** Sweep the cursor across the four coloured chips.
 
 > **SAY:**
 >
-> Four guarantees throughout: nothing is written to vCenter, rules overrule the
-> AI, the change board approves, and it stays reversible until the source VMs
-> are deleted.
+> Four guarantees: nothing is written to vCenter, rules overrule the AI, the
+> change board approves, and it stays reversible until the source VMs are
+> deleted.
 
 **DO:** Cursor on the green line at the bottom.
 
