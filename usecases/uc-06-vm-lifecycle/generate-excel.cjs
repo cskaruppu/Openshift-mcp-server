@@ -108,6 +108,7 @@ const MA = { t: "👤 MANUAL", b: true, c: C.darkAmber, bg: C.lightAmber };
   ws.columns = [{ width: 30 }, { width: 95 }];
   let r = banner(ws, "TCS Agentic AI — Governed VM Provisioning & Lifecycle  ·  UC-06",
     "One sentence in. A governed, owned, accountable virtual machine out — and an agent that remembers why it built it.", 2);
+  r = dataRows(ws, r, [["SCOPE  ·  VMs BORN on OpenShift Virtualization — requested, provisioned, right-sized, reclaimed.   Machines arriving FROM VMware are UC-10, VM Migration Assurance."]], { height: 26 });
   r = headerRow(ws, r, ["Attribute", "Detail"]);
   r = dataRows(ws, r, [
     ["Use case ID", "UC-06"],

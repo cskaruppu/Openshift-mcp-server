@@ -116,6 +116,7 @@ const RM = { t: "🔶 ROADMAP", b: true, c: C.darkAmber, bg: C.lightAmber };
   ws.columns = [{ width: 30 }, { width: 95 }];
   let r = banner(ws, "VM Migration Assurance — VMware to OpenShift Virtualization",
     "Every other assessment tool reads the source. This agent runs inside the destination — so it can answer whether a VM will actually run when it lands.", 2);
+  r = dataRows(ws, r, [["SCOPE  ·  VMs that ALREADY EXIST on VMware and are moving to OpenShift Virtualization.   Once landed, they are governed by UC-06, VM Lifecycle."]], { height: 26 });
   r = headerRow(ws, r, ["Attribute", "Detail"]);
   r = dataRows(ws, r, [
     ["Use case ID", "UC-10"],

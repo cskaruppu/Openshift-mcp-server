@@ -76,6 +76,15 @@ function footNote(s, text, color) {
   s.addText("“The console creates a VM. It does not remember why.”",
     { x: 0.8, y: 4.05, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
+  // Delivered as a pair, these two are read together — and "VM Lifecycle" and
+  // "VM Migration" cannot be told apart from their names alone. The boundary
+  // is stated on each, pointing at the other.
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 4.55, w: 11.6, h: 0.42,
+    fill: { color: "1E293B" }, line: { color: "334155", width: 1 }, rectRadius: 0.05 });
+  s.addText("SCOPE   ·   VMs BORN on OpenShift Virtualization — requested, provisioned, right-sized, reclaimed.      Machines arriving FROM VMware are UC-10, VM Migration Assurance.",
+    { x: 0.95, y: 4.55, w: 11.3, h: 0.42, fontSize: 10.5, color: "CBD5E1", valign: "middle", fontFace: F });
+
+
   const stats = [
     { v: "1", l: "Human decision" }, { v: "22", l: "Automatic steps" },
     { v: "1", l: "AI step — intent only" }, { v: "6", l: "Provenance fields" }, { v: "0", l: "Autonomous paths" },

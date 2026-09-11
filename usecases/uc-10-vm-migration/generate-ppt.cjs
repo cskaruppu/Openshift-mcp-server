@@ -77,15 +77,24 @@ function footNote(s, text, color) {
   s.addText("“Every other tool reads the source. This one runs inside the destination.”",
     { x: 0.8, y: 4.05, w: 11.6, h: 0.4, fontSize: 15, color: C.lAmber, italic: true, fontFace: F });
 
+  // Delivered as a pair, these two are read together — and "VM Lifecycle" and
+  // "VM Migration" cannot be told apart from their names alone. The boundary
+  // is stated on each, pointing at the other.
+  s.addShape(pptx.ShapeType.roundRect, { x: 0.8, y: 4.55, w: 11.6, h: 0.42,
+    fill: { color: "1E293B" }, line: { color: "334155", width: 1 }, rectRadius: 0.05 });
+  s.addText("SCOPE   ·   VMs that ALREADY EXIST on VMware and are moving to OpenShift Virtualization.      Once landed, they are governed by UC-06, VM Lifecycle.",
+    { x: 0.95, y: 4.55, w: 11.3, h: 0.42, fontSize: 10.5, color: "CBD5E1", valign: "middle", fontFace: F });
+
+
   const stats = [
     { v: String(WF.STAGES.length), l: "Stages, end to end" }, { v: "15", l: "Source-side checks" },
     { v: "5", l: "Post-migration checks" }, { v: "0", l: "Source VMs deleted" }, { v: String(WF.counts()[WF.AI]), l: "AI steps of " + WF.counts().total },
   ];
   stats.forEach((st, i) => {
     const x = 0.8 + i * 2.42;
-    s.addShape(pptx.ShapeType.roundRect, { x, y: 4.85, w: 2.2, h: 1.15, fill: { color: C.navy }, line: { color: "334155", width: 1 }, rectRadius: 0.06 });
-    s.addText(st.v, { x, y: 4.97, w: 2.2, h: 0.5, fontSize: 26, bold: true, color: C.valCyan, align: "center", fontFace: F });
-    s.addText(st.l, { x, y: 5.47, w: 2.2, h: 0.3, fontSize: 9, color: "94A3B8", align: "center", fontFace: F });
+    s.addShape(pptx.ShapeType.roundRect, { x, y: 5.12, w: 2.2, h: 1.05, fill: { color: C.navy }, line: { color: "334155", width: 1 }, rectRadius: 0.06 });
+    s.addText(st.v, { x, y: 5.2, w: 2.2, h: 0.46, fontSize: 24, bold: true, color: C.valCyan, align: "center", fontFace: F });
+    s.addText(st.l, { x, y: 5.66, w: 2.2, h: 0.3, fontSize: 8.5, color: "94A3B8", align: "center", fontFace: F });
   });
   s.addText("TCS Agentic AI for Hybrid Infrastructure  ·  Virtualization Operations  ·  Tata Consultancy Services",
     { x: 0.8, y: 6.45, w: 11.6, h: 0.3, fontSize: 11, color: "64748B", fontFace: F });
