@@ -124,7 +124,7 @@ function footNote(s, text, color) {
 // ── 3. MASTER WORKFLOW ──────────────────────────────────────────────────────
 {
   const s = pptx.addSlide();
-  head(s, "MASTER WORKFLOW", "Six stages — and warm and cold are different routes",
+  head(s, "MASTER WORKFLOW", "Seven stages for cold, eight for warm — they are different routes",
     "Discovery is read-only. Strategy is chosen last. A cold migration is down for the whole copy; a warm one only for the cutover — so they are drawn as what they are.");
 
   const lane = (y, label, colour, cells) => {
