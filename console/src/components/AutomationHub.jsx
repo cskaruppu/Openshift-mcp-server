@@ -1299,7 +1299,19 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
         <span style={{ fontSize: "0.76rem", color: "var(--text2)" }}>{posture.next}</span>
       </div>
       {blockers.map((b) => (
-        <div key={b.code} style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 3 }}>⚠ {b.message}</div>
+        <div key={b.code} style={{ fontSize: "0.76rem", color: "#b45309", marginTop: 3 }}>
+          ⚠ {b.message}
+          {/* A verdict is a reading taken at a moment, and the moment this one
+              is first taken is the instant the Plan succeeds — before the guest
+              has finished booting and before the source platform reports it
+              off. So a verification blocker is the one kind that routinely
+              stops being true on its own, and the panel has to say where it
+              comes from. Without this, a green verification directly above an
+              amber "verification failed" reads as a broken product. */}
+          {b.code.startsWith("verification") && (
+            <span style={{ color: "var(--text2)" }}> Taken when the plan finished — press <b>↻ Re-check</b> above to take it again.</span>
+          )}
+        </div>
       ))}
       {!blockers.length && soak && (
         <div style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>{soak.note}</div>
@@ -1929,11 +1941,24 @@ function MigrationAgent({ clusters, activeCluster }) {
     finally { setBusy(null); }
   };
 
+  // Both panels mount the moment the Plan flips to Succeeded — which is the
+  // worst moment to judge a migration: the guest may still be booting and the
+  // source inventory may not yet report it powered off. Verification recovers
+  // from that on its next run; the decommission gate did not, because it loaded
+  // once per plan and never again. That left a stale "verification failed"
+  // blocker sitting under a panel showing five green ticks, with the button
+  // greyed out on the strength of a verdict that was no longer true.
+  //
+  // The gate is DERIVED from verification, so it is re-read whenever
+  // verification is re-read. Fetched after, not alongside: decommissionPosture()
+  // recomputes verification server-side, so it must see the same world this run
+  // just saw, not the one before it.
   const runVerify = async (planName) => {
     setBusy(planName);
     try {
       const d = await get(`/api/migration/plans/${encodeURIComponent(planName)}/verify`);
       setVerifs((v) => ({ ...v, [planName]: d }));
+      await loadDecom(planName);
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
