@@ -54,7 +54,7 @@ import { registerProvisioningTools } from "../tools/provisioning.js";
 import { registerPreflightTools } from "../tools/upgrade-preflight.js";
 import { registerMultiClusterTools } from "../services/multi-cluster.js";
 
-import { getAgentById } from "./registry.js";
+import { getAgentById, getAgentProfile } from "./registry.js";
 
 const REGISTRARS = [
   registerClusterTools, registerNodeTools, registerPodTools, registerNamespaceTools,
@@ -76,8 +76,10 @@ const REGISTRARS = [
  * server.tool() and server.registerTool() so calls for tools outside the
  * manifest are dropped silently.
  */
-export async function createAgentMcpServer(agentId) {
-  const agent = await getAgentById(agentId);
+export async function createAgentMcpServer(agentId, profileName = null) {
+  // A profile narrows the same allow-list, so the whole mechanism below works
+  // unchanged — it just receives a shorter list of permitted tools.
+  const agent = profileName ? await getAgentProfile(agentId, profileName) : await getAgentById(agentId);
   if (!agent) return null;
 
   const allowed = new Set(agent.tools || []);
@@ -123,23 +125,31 @@ const _agentSessions = new Map();
  * Returns true when handled, false to fall through.
  */
 export async function handleAgentMcpRoutes(req, res, url) {
-  const sseMatch = url.pathname.match(/^\/mcp\/([a-z0-9-]+)\/sse$/);
+  // <agent> or <agent>:<profile> — a profile is addressed as part of the id so
+  // an existing client URL keeps working unchanged and a narrowed one is a
+  // single-character edit away.
+  const sseMatch = url.pathname.match(/^\/mcp\/([a-z0-9-]+)(?::([a-z0-9-]+))?\/sse$/);
   if (sseMatch && req.method === "GET") {
     const agentId = sseMatch[1];
-    const server = await createAgentMcpServer(agentId);
+    const profile = sseMatch[2] || null;
+    const server = await createAgentMcpServer(agentId, profile);
     if (!server) {
       res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Agent not found", id: agentId }));
+      res.end(JSON.stringify({
+        error: profile ? "Agent or profile not found" : "Agent not found",
+        id: agentId, profile,
+      }));
       return true;
     }
-    const transport = new SSEServerTransport(`/mcp/${agentId}/message`, res);
+    const addr = profile ? `${agentId}:${profile}` : agentId;
+    const transport = new SSEServerTransport(`/mcp/${addr}/message`, res);
     _agentSessions.set(transport.sessionId, { server, transport, agentId });
     res.on("close", () => _agentSessions.delete(transport.sessionId));
     await server.connect(transport);
     return true;
   }
 
-  const msgMatch = url.pathname.match(/^\/mcp\/([a-z0-9-]+)\/message$/);
+  const msgMatch = url.pathname.match(/^\/mcp\/([a-z0-9-]+(?::[a-z0-9-]+)?)\/message$/);
   if (msgMatch && req.method === "POST") {
     const sessionId = url.searchParams.get("sessionId");
     const session = _agentSessions.get(sessionId);

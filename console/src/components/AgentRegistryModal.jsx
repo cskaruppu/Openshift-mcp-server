@@ -146,6 +146,134 @@ function OwnerCell({ agent, onClaim, busy }) {
   );
 }
 
+/**
+ * Connect an external MCP server as an agent.
+ *
+ * This existed only as an API. An external agent is the case the whole
+ * governance view was built around — and it could not be created from the
+ * console at all, so in practice nobody made one and nobody governed one.
+ *
+ * The form asks for the trust declaration AT ONBOARDING, because that is the
+ * one moment somebody is actually thinking about this agent. Blast radius is
+ * left blank by default rather than pre-set to read-only: an undeclared agent
+ * must read as undeclared, and a comfortable default is how an agent that can
+ * change the estate ends up looking harmless.
+ */
+function ConnectAgentForm({ onDone }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [f, setF] = useState({
+    name: "", type: "sse", url: "", command: "", args: "",
+    trustTier: "external", blastRadius: "", autonomyLevel: "",
+  });
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+
+  if (!open) {
+    return (
+      <button className="ar-connect-open" onClick={() => setOpen(true)}>
+        + Connect an external agent
+      </button>
+    );
+  }
+
+  const stdio = f.type === "stdio";
+  const canSubmit = f.name.trim() && (stdio ? f.command.trim() : f.url.trim());
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const body = {
+        name: f.name.trim(),
+        type: f.type,
+        ...(stdio
+          ? { command: f.command.trim(), args: f.args.split(/\s+/).filter(Boolean) }
+          : { url: f.url.trim() }),
+        trustTier: f.trustTier,
+        blastRadius: f.blastRadius || null,
+        autonomyLevel: f.autonomyLevel || null,
+      };
+      const r = await fetch("/api/hub/servers", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) { setErr(d.error || `Could not connect (${r.status}).`); return; }
+      setOpen(false);
+      setF({ name: "", type: "sse", url: "", command: "", args: "", trustTier: "external", blastRadius: "", autonomyLevel: "" });
+      onDone?.(d.server);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ar-connect">
+      <div className="ar-connect-title">Connect an external agent</div>
+      <div className="ar-connect-grid">
+        <label htmlFor="ca-name">Name</label>
+        <input id="ca-name" value={f.name} onChange={set("name")} placeholder="Vendor Capacity Advisor" />
+
+        <label htmlFor="ca-type">Transport</label>
+        <select id="ca-type" value={f.type} onChange={set("type")}>
+          <option value="sse">SSE</option>
+          <option value="streamable-http">Streamable HTTP</option>
+          <option value="stdio">stdio (local process)</option>
+        </select>
+
+        {stdio ? (<>
+          <label htmlFor="ca-cmd">Command</label>
+          <input id="ca-cmd" value={f.command} onChange={set("command")} placeholder="/usr/local/bin/vendor-mcp" />
+          <label htmlFor="ca-args">Arguments</label>
+          <input id="ca-args" value={f.args} onChange={set("args")} placeholder="--mode read-only" />
+        </>) : (<>
+          <label htmlFor="ca-url">URL</label>
+          <input id="ca-url" value={f.url} onChange={set("url")} placeholder="https://vendor.example.com/mcp/sse" />
+        </>)}
+
+        <label htmlFor="ca-trust">Trust tier</label>
+        <select id="ca-trust" value={f.trustTier} onChange={set("trustTier")}>
+          <option value="external">External — outside your supply chain</option>
+          <option value="partner">Partner — contracted, reviewed</option>
+        </select>
+
+        <label htmlFor="ca-blast">Blast radius</label>
+        <select id="ca-blast" value={f.blastRadius} onChange={set("blastRadius")}>
+          <option value="">Not declared</option>
+          <option value="read-only">Read-only</option>
+          <option value="mutating">Mutating</option>
+          <option value="irreversible">Irreversible</option>
+        </select>
+
+        <label htmlFor="ca-auto">Autonomy</label>
+        <select id="ca-auto" value={f.autonomyLevel} onChange={set("autonomyLevel")}>
+          <option value="">Not declared</option>
+          <option value="advisory">Advisory — recommends only</option>
+          <option value="propose-and-wait">Propose and wait for approval</option>
+          <option value="act-within-policy">Act within policy</option>
+        </select>
+      </div>
+
+      <p className="ar-connect-note">
+        Connecting reads this server's tool list and adds it to the pool. Its tools cannot shadow a built-in —
+        dispatch resolves built-ins first. Anything you leave as <b>Not declared</b> stays undeclared, and the
+        agent shows as <b>unreviewed</b> until somebody fills it in.
+      </p>
+
+      {err && <div className="ar-connect-err">{err}</div>}
+      <div className="ar-connect-actions">
+        <button className="ar-gov-claim" disabled={!canSubmit || busy} onClick={submit}>
+          {busy ? "Connecting…" : "Connect"}
+        </button>
+        <button className="ar-gov-claim ghost" disabled={busy} onClick={() => { setOpen(false); setErr(null); }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GovernanceLens({ data, onClaim, busyId }) {
   if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
 
@@ -202,6 +330,16 @@ function GovernanceLens({ data, onClaim, busyId }) {
                     <div className="ar-gov-name">{a.name}</div>
                     <div className="ar-gov-id">{a.id} · {a.toolCount} tool{a.toolCount === 1 ? "" : "s"}</div>
                     {a.category && <div className="ar-gov-cat">{a.category}</div>}
+                    {/* An external agent is not a manifest in git — it is a
+                        live connection somebody made. Both facts belong on the
+                        row, because "who brought this in" is the first question
+                        asked about one. */}
+                    {a.external && (
+                      <div className="ar-gov-cat">
+                        connected{a.onboardedBy ? ` by ${a.onboardedBy}` : ""}
+                        {a.connectionStatus && a.connectionStatus !== "connected" ? ` · ${a.connectionStatus}` : ""}
+                      </div>
+                    )}
                   </td>
                   <td><OwnerCell agent={a} onClaim={onClaim} busy={busyId === a.id} /></td>
                   <td>{a.trustTier
@@ -261,7 +399,7 @@ export function AgentRegistryModal({ open, onClose }) {
   const [zoom, setZoom] = useState(1);
   const [claiming, setClaiming] = useState(null);
 
-  const { data: registryData } = useQuery({
+  const { data: registryData, refetch: refetchRegistry } = useQuery({
     queryKey: ["/api/agents"],
     queryFn: ({ signal }) => apiGet("/api/agents", { signal }).catch(() => ({})),
     staleTime: 60_000,
@@ -476,6 +614,11 @@ export function AgentRegistryModal({ open, onClose }) {
           )}
 
           {/* Search + Filter */}
+          {/* The only way to add an external agent. This lived behind the API
+              alone, so in practice nobody created one — and the agent nobody
+              can create is the agent nobody governs. */}
+          <ConnectAgentForm onDone={() => { refetchRegistry(); refetchGov(); }} />
+
           <div className="ar-toolbar">
             <input
               className="ar-search"

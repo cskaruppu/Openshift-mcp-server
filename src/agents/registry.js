@@ -68,6 +68,80 @@ export async function getAgentById(id) {
   return _byId.get(id) || null;
 }
 
+/**
+ * An agent narrowed to one of its declared profiles.
+ *
+ * A profile is a smaller allow-list over the same tools — which is exactly what
+ * an agent already is, so this costs almost nothing. It answers the request
+ * that keeps coming up as "can I have the old version": what people usually
+ * want is not old behaviour, it is LESS surface. A read-only profile of the VM
+ * Migration Agent hands someone discovery, analysis and verification and makes
+ * `migrate` and `decommission` unreachable — the tool is never registered on
+ * their server, so it cannot be called by mistake or on purpose.
+ *
+ * It also fixes something the governance view could not express: blast radius
+ * was per agent, so VM Migration was `irreversible` for everyone including
+ * somebody who only ever reads. A profile carries its own.
+ *
+ * A profile may only ever NARROW. A tool named in a profile but not in the
+ * agent is dropped, so a profile can never become a way to widen an agent's
+ * reach past what its manifest declared and review approved.
+ */
+export async function getAgentProfile(agentId, profileName) {
+  const agent = await getAgentById(agentId);
+  if (!agent) return null;
+  if (!profileName) return agent;
+
+  const p = agent.profiles?.[profileName];
+  if (!p) return null;
+
+  const declared = new Set(agent.tools || []);
+  const tools = (p.tools || []).filter((t) => declared.has(t));
+
+  return {
+    ...agent,
+    id: `${agent.id}:${profileName}`,
+    baseId: agent.id,
+    profile: profileName,
+    name: p.name || `${agent.name} (${profileName})`,
+    description: p.description || agent.description,
+    tools,
+    profiles: undefined,
+    governance: {
+      ...(agent.governance || {}),
+      // The narrower radius wins; a profile cannot claim to be safer than it is
+      // by declaring one its tools do not support, but it can be narrower than
+      // the agent — which is the whole point.
+      ...(p.blastRadius ? { blastRadius: p.blastRadius } : {}),
+      ...(p.autonomyLevel ? { autonomyLevel: p.autonomyLevel } : {}),
+    },
+  };
+}
+
+/** Every profile declared across the fleet, as flat rows. */
+export async function listProfiles() {
+  const agents = await getAgents();
+  const out = [];
+  for (const a of agents) {
+    for (const [name, p] of Object.entries(a.profiles || {})) {
+      const declared = new Set(a.tools || []);
+      const kept = (p.tools || []).filter((t) => declared.has(t));
+      out.push({
+        id: `${a.id}:${name}`, baseId: a.id, profile: name,
+        name: p.name || `${a.name} (${name})`,
+        description: p.description || null,
+        toolCount: kept.length,
+        // A tool listed in a profile that the agent does not have is a manifest
+        // error worth surfacing rather than silently swallowing.
+        unknownTools: (p.tools || []).filter((t) => !declared.has(t)),
+        blastRadius: p.blastRadius || a.governance?.blastRadius || null,
+        autonomyLevel: p.autonomyLevel || a.governance?.autonomyLevel || null,
+      });
+    }
+  }
+  return out;
+}
+
 export async function getAgentsByTool(toolName) {
   await loadAgents();
   return _byTool.get(toolName) || [];
@@ -127,8 +201,35 @@ export async function handleAgentRoutes(req, res, url) {
   // — this one reads telemetry.
   if (url.pathname === "/api/agents/governance") {
     const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
-    const agents = await getAgents();
+    const manifestAgents = await getAgents();
     const { agentPosture, fleetPosture } = await import("./governance.js");
+
+    // External agents connected through the MCP hub are agents too, and they
+    // are the ones this lens exists for. They live in a different place from
+    // the manifests, so without this they would be onboardable and ungovernable
+    // — present in the tool pool, absent from every posture count.
+    let externalAgents = [];
+    try {
+      const { listServers } = await import("../services/mcp-hub.js");
+      externalAgents = (listServers() || [])
+        .filter((srv) => srv.id !== "builtin")
+        .map((srv) => ({
+          id: srv.id,
+          name: srv.name,
+          category: "External",
+          description: `Connected over ${srv.type}${srv.url ? ` from ${srv.url}` : ""}.`,
+          tools: (srv.tools || []).map((t) => t.name),
+          // trustTier defaults to "external" at connect time — that is a fact
+          // about where it came from, not an assumption. Everything else stays
+          // exactly as declared, including undeclared.
+          governance: srv.governance || { trustTier: "external" },
+          _external: true,
+          _onboardedBy: srv.onboardedBy || null,
+          _status: srv.status,
+        }));
+    } catch { /* hub unavailable — manifest agents still answer */ }
+
+    const agents = [...manifestAgents, ...externalAgents];
 
     // What telemetry actually recorded. Absent means absent — never inferred.
     let usage = { available: false, byAgent: new Map(), unattributed: null };
@@ -184,6 +285,9 @@ export async function handleAgentRoutes(req, res, url) {
         // figure this replaced was apportioned by invocation share and bore no
         // relation to what the agent spent.
         usage: u ? { ...u, attributed: true } : { attributed: false },
+        external: !!a._external,
+        onboardedBy: a._onboardedBy || null,
+        connectionStatus: a._status || null,
       };
     });
 

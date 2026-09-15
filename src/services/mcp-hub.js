@@ -37,6 +37,11 @@ export function getBuiltinTools() {
   return builtinToolsAsOpenAI();
 }
 
+/** Host of a URL, for the egress declaration. Never throws on bad input. */
+function safeHost(u) {
+  try { return new URL(u).host; } catch { return null; }
+}
+
 async function createTransport(config) {
   const { type } = config;
   if (type === "sse") {
@@ -106,6 +111,17 @@ export async function connectServer(config) {
     // capture, and deliberately NOT an owner: connecting a server is not
     // accepting accountability for what it does.
     onboardedBy: config.onboardedBy || null,
+    // Declared at onboarding, because this is the one moment somebody is
+    // actually thinking about the agent. An external server whose blast radius
+    // was never declared stays undeclared — it does not default to read-only
+    // just because that would be the comfortable assumption.
+    governance: {
+      trustTier: config.trustTier || "external",
+      blastRadius: config.blastRadius || null,
+      autonomyLevel: config.autonomyLevel || null,
+      owner: config.owner || null,
+      egress: config.egress || (config.url ? [safeHost(config.url)].filter(Boolean) : []),
+    },
   };
 
   connections.set(id, entry);
@@ -128,6 +144,9 @@ export async function disconnectServer(id) {
 export async function reconnectServer(id) {
   const entry = connections.get(id);
   if (!entry) throw new Error(`Server "${id}" not found`);
+  // Carry the declaration across. Rebuilding config from scratch dropped it,
+  // so a reconnect — which someone does precisely when an agent is misbehaving
+  // — quietly reset its trust tier and blast radius to undeclared.
   const config = {
     id: entry.id,
     name: entry.name,
@@ -136,6 +155,12 @@ export async function reconnectServer(id) {
     command: entry.command,
     args: entry.args,
     env: entry.env,
+    onboardedBy: entry.onboardedBy || null,
+    trustTier: entry.governance?.trustTier || null,
+    blastRadius: entry.governance?.blastRadius || null,
+    autonomyLevel: entry.governance?.autonomyLevel || null,
+    owner: entry.governance?.owner || null,
+    egress: entry.governance?.egress || [],
   };
   try { await disconnectServer(id); } catch { /* ignore */ }
   return connectServer(config);
@@ -221,6 +246,7 @@ function serializeEntry(entry) {
     status: entry.status,
     connectedAt: entry.connectedAt,
     onboardedBy: entry.onboardedBy || null,
+    governance: entry.governance || null,
     toolCount: entry.tools.length,
     tools: entry.tools.map((t) => ({ name: t.name, description: t.description })),
   };
@@ -237,6 +263,16 @@ async function saveConfig() {
       command: entry.command,
       args: entry.args,
       env: entry.env,
+      // Persisted with the connection details. Without these, a pod restart
+      // silently reconnects every external agent with its trust declaration
+      // erased and no record of who brought it in — the governance view would
+      // then quietly disagree with what was actually declared at onboarding.
+      onboardedBy: entry.onboardedBy || null,
+      trustTier: entry.governance?.trustTier || null,
+      blastRadius: entry.governance?.blastRadius || null,
+      autonomyLevel: entry.governance?.autonomyLevel || null,
+      owner: entry.governance?.owner || null,
+      egress: entry.governance?.egress || [],
     });
   }
   try {

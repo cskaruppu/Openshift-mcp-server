@@ -7313,3 +7313,49 @@ h3.widget-title {
 .ar-gov-claim.ghost { background: transparent; color: var(--accent2); }
 .ar-gov-claim:disabled { opacity: .45; cursor: wait; }
 .ar-gov-claim:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+
+/* ── Connect an external agent ─────────────────────────────────────────────
+   The form is collapsed by default: adding an agent is a deliberate act, not
+   something to trip over while browsing the catalog. */
+.ar-connect-open {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  padding: 6px 13px; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--accent2);
+  border: 1px dashed var(--accent2); align-self: flex-start; margin-bottom: 14px;
+}
+.ar-connect-open:hover { background: rgba(61,90,254,.08); }
+.ar-connect {
+  border: 1px solid var(--border); border-left: 3px solid var(--accent2);
+  border-radius: 0 10px 10px 0; padding: 13px 15px; margin-bottom: 16px;
+  background: var(--bg);
+}
+.ar-connect-title { font-size: 13px; font-weight: 800; margin-bottom: 11px; }
+.ar-connect-grid {
+  display: grid; grid-template-columns: 132px minmax(0, 1fr);
+  gap: 8px 12px; align-items: center;
+}
+.ar-connect-grid label { font-size: 11.5px; font-weight: 600; color: var(--text2); }
+.ar-connect-grid input,
+.ar-connect-grid select {
+  font-family: inherit; font-size: 12.5px; padding: 5px 9px; width: 100%;
+  border-radius: 7px; border: 1px solid var(--border2);
+  background: var(--bg-alt, var(--card)); color: var(--text);
+}
+.ar-connect-grid input:focus-visible,
+.ar-connect-grid select:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.ar-connect-note {
+  font-size: 11.5px; color: var(--text2); line-height: 1.55;
+  margin: 11px 0 0; max-width: 82ch;
+}
+.ar-connect-err {
+  font-size: 12px; margin-top: 9px; padding: 7px 11px; border-radius: 7px;
+  background: var(--st-crit-bg); color: var(--st-crit-ink);
+  border: 1px solid var(--st-crit);
+}
+.ar-connect-actions { display: flex; gap: 7px; margin-top: 12px; }
+.ar-connect-actions .ar-gov-claim { font-size: 12px; padding: 5px 14px; }
+
+@media (max-width: 560px) {
+  .ar-connect-grid { grid-template-columns: 1fr; gap: 4px; }
+  .ar-connect-grid label { margin-top: 6px; }
+}

@@ -95,6 +95,19 @@ export function hooksAfterReturn(src, afterName) {
     if (c === "\n") { line++; i++; continue; }
     if (two === "//") { const nl = src.indexOf("\n", i); i = nl < 0 ? src.length : nl; continue; }
     if (two === "/*") { const end = src.indexOf("*/", i + 2); i = end < 0 ? src.length : end + 2; continue; }
+    // An apostrophe in JSX TEXT — "this server's tool list" — is not a string
+    // delimiter, but a scanner that treats it as one runs to the next quote
+    // anywhere in the file, swallowing the closing braces in between. Depth
+    // then never returns to zero, one component appears to contain every
+    // component after it, and their hooks are reported as coming after its
+    // early return. That is a false positive with a confusing message, which is
+    // how a check like this gets switched off.
+    //
+    // A quote that OPENS a literal is never preceded by a word character;
+    // an apostrophe inside a word always is.
+    const prev = src[i - 1] || "";
+    if ((c === '"' || c === "'") && /[A-Za-z0-9_]/.test(prev)) { i++; continue; }
+
     if (c === '"' || c === "'" || c === "`") {
       // Skip the literal whole, respecting escapes. Template substitutions can
       // nest, but their braces balance, so depth is unaffected by skipping.
@@ -211,4 +224,41 @@ function Panel({ a }) {
   return <div>{s}{t}{x}</div>;
 }`;
   assert.deepEqual(scan(strings), []);
+});
+
+// The checker's own blind spot, found when a panel added the word "server's"
+// to a paragraph of JSX text: the apostrophe was read as a string delimiter,
+// depth tracking collapsed, and every hook in the NEXT component was reported
+// as coming after this one's early return.
+test("an apostrophe in JSX text is not mistaken for a string", () => {
+  const src = `
+function Little({ open }) {
+  const [a, setA] = useState(0);
+  if (!open) return <button>open</button>;
+  return <p>Connecting reads this server's tool list and adds it.</p>;
+}
+
+function Big({ open }) {
+  const [z, setZ] = useState(1);
+  const q = useQuery({ queryKey: ["x"] });
+  if (!open) return null;
+  return <div>{z}{q}</div>;
+}
+`;
+  assert.deepEqual(scan(src), [],
+    "both components call their hooks before their early return; neither is an offence");
+});
+
+test("the real offence is still caught when text contains an apostrophe", () => {
+  const src = `
+function Panel({ data }) {
+  useEffect(() => {}, []);
+  if (!data) return <p>It's loading.</p>;
+  const [x, setX] = useState(null);
+  return <div>{x}</div>;
+}
+`;
+  const hits = scan(src);
+  assert.equal(hits.length, 1, "the hook after the early return must still be found");
+  assert.equal(hits[0].hook, "useState");
 });
