@@ -35,10 +35,20 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_type_created ON telemetry_events(event_
 -- Attribution by conversation: "which question spent those tokens" is the
 -- audit question, and without this index it is a sequential scan.
 CREATE INDEX IF NOT EXISTS idx_telemetry_conversation ON telemetry_events(conversation_id, created_at DESC);
--- Added after the table shipped, so existing installs gain them too.
+-- Added after the table shipped, so existing installs gain them too. Both are
+-- nullable with no default, which Postgres applies as a catalogue-only change:
+-- no rewrite, lock held for microseconds even on a large live table.
+--
+-- Deliberately NO index on agent_id. The per-agent query filters on
+-- (event_type, created_at) and only then groups by agent_id, so
+-- idx_telemetry_type_created above already does the selective work. A second
+-- index would be paid for on every INSERT — and this table is written on every
+-- model call — to speed up a query that runs when somebody opens a panel.
+-- Worse, adding one here would build it under an ACCESS EXCLUSIVE lock on a
+-- live table, and CONCURRENTLY cannot run in this block because Postgres wraps
+-- a multi-statement query in an implicit transaction.
 ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS agent_id TEXT;
 ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS agent_version TEXT;
-CREATE INDEX IF NOT EXISTS idx_telemetry_agent ON telemetry_events(agent_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS action_outcomes (
   id BIGSERIAL PRIMARY KEY,
@@ -170,6 +180,11 @@ export async function getAgentTokenUsage({ days = 30 } = {}) {
         GROUP BY agent_id`,
       [cutoff],
     );
+    // db.js swallows errors and returns null rather than throwing, so a failed
+    // query arrives here as null, not as an exception. Checked explicitly:
+    // relying on `null.rows` to throw into the catch below happens to work and
+    // is the kind of accident that stops working quietly.
+    if (!r) return { available: false, byAgent, unattributed, days };
     for (const row of r.rows || []) {
       const rec = {
         llmCalls: Number(row.llm_calls || 0),
