@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
   provider TEXT,
   model TEXT,
   conversation_id TEXT,
+  -- Which agent spent this. Nullable on purpose: a call site that has not been
+  -- updated records NULL, and NULL is reported as "not attributed" rather than
+  -- being apportioned across the agents that did report.
+  agent_id TEXT,
+  agent_version TEXT,
   duration_ms INTEGER,
   prompt_tokens INTEGER,
   completion_tokens INTEGER,
@@ -30,6 +35,10 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_type_created ON telemetry_events(event_
 -- Attribution by conversation: "which question spent those tokens" is the
 -- audit question, and without this index it is a sequential scan.
 CREATE INDEX IF NOT EXISTS idx_telemetry_conversation ON telemetry_events(conversation_id, created_at DESC);
+-- Added after the table shipped, so existing installs gain them too.
+ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE telemetry_events ADD COLUMN IF NOT EXISTS agent_version TEXT;
+CREATE INDEX IF NOT EXISTS idx_telemetry_agent ON telemetry_events(agent_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS action_outcomes (
   id BIGSERIAL PRIMARY KEY,
@@ -85,6 +94,10 @@ export async function recordLLMCall({
   provider,
   model,
   conversationId,
+  // Which agent spent these tokens. Without it the only honest per-agent
+  // figure is "not attributed" — see getAgentTokenUsage().
+  agentId,
+  agentVersion,
   durationMs,
   success,
   usage,
@@ -96,6 +109,8 @@ export async function recordLLMCall({
     provider: provider || null,
     model: model || null,
     conversation_id: conversationId || null,
+    agent_id: agentId || null,
+    agent_version: agentVersion || null,
     duration_ms: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
     prompt_tokens: usage?.prompt_tokens ?? null,
     completion_tokens: usage?.completion_tokens ?? null,
@@ -109,11 +124,12 @@ export async function recordLLMCall({
   try {
     await query(
       `INSERT INTO telemetry_events
-       (event_type, provider, model, conversation_id, duration_ms,
+       (event_type, provider, model, conversation_id, agent_id, agent_version, duration_ms,
         prompt_tokens, completion_tokens, total_tokens, success, error_class, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         event.event_type, event.provider, event.model, event.conversation_id,
+        event.agent_id, event.agent_version,
         event.duration_ms, event.prompt_tokens, event.completion_tokens,
         event.total_tokens, event.success, event.error_class,
         event.metadata ? JSON.stringify(event.metadata) : null,
@@ -121,6 +137,54 @@ export async function recordLLMCall({
     );
   } catch (err) {
     // best effort
+  }
+}
+
+/**
+ * Tokens actually spent per agent, over a window.
+ *
+ * Returns only what was measured. An agent whose calls carry no agent_id is
+ * absent from the map rather than given a share of the total — the caller then
+ * reports "not attributed", which is the truth, instead of a number derived
+ * from invocation counts that has no relationship to what was spent.
+ *
+ * `unattributed` is returned alongside so the gap is visible and shrinks as
+ * call sites are updated, rather than being silently spread over the agents
+ * that did report.
+ */
+export async function getAgentTokenUsage({ days = 30 } = {}) {
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  const byAgent = new Map();
+  let unattributed = { calls: 0, totalTokens: 0 };
+
+  try {
+    await ensureTelemetrySchema();
+    const r = await query(
+      `SELECT agent_id,
+              COUNT(*)::int                          AS llm_calls,
+              COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+              COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
+              COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens
+         FROM telemetry_events
+        WHERE event_type = 'llm_call' AND created_at >= $1
+        GROUP BY agent_id`,
+      [cutoff],
+    );
+    for (const row of r.rows || []) {
+      const rec = {
+        llmCalls: Number(row.llm_calls || 0),
+        totalTokens: Number(row.total_tokens || 0),
+        promptTokens: Number(row.prompt_tokens || 0),
+        completionTokens: Number(row.completion_tokens || 0),
+      };
+      if (row.agent_id) byAgent.set(row.agent_id, rec);
+      else unattributed = { calls: rec.llmCalls, totalTokens: rec.totalTokens };
+    }
+    return { available: true, byAgent, unattributed, days };
+  } catch {
+    // No database, or the column has not been added yet. Either way there is
+    // nothing measured, and inventing it is what this function exists to stop.
+    return { available: false, byAgent, unattributed, days };
   }
 }
 

@@ -411,10 +411,10 @@ export async function callLLM({ messages, ...opts }) {
     else if (o.provider === "ollama") result = await callOllama(messages, o, false);
     else result = { text: "", toolCalls: [] };
     // Usage lives inside the provider's raw body, not beside it.
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion });
     return result;
   } catch (err) {
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message });
     throw err;
   }
 }
@@ -442,10 +442,10 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, true, hooks);
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
     else result = { text: "", toolCalls: [] };
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, streaming: true });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, streaming: true });
     return result;
   } catch (err) {
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, errMsg: err?.message, streaming: true });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message, streaming: true });
     throw err;
   }
 }
@@ -460,6 +460,12 @@ async function _recordTelemetry(params) {
       provider: params.provider,
       model: params.model,
       conversationId: params.conversationId,
+      // Carried from the caller so spend lands on the agent that caused it.
+      // Absent means absent — it is recorded as NULL and reported as "not
+      // attributed", never spread across the agents that did identify
+      // themselves. See getAgentTokenUsage().
+      agentId: params.agentId || null,
+      agentVersion: params.agentVersion || null,
       durationMs: params.durationMs,
       success: params.success,
       // recordLLMCall's documented contract is snake_case; normaliseUsage

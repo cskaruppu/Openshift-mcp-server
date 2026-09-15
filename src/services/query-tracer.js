@@ -255,33 +255,41 @@ export async function getAgentAnalytics(opts = {}) {
 
     const agents = Array.from(merged.values());
 
-    // Enrich with token usage from telemetry_events (best-effort)
+    // ── Token usage, measured ────────────────────────────────────────────
+    // This used to apportion the fleet total across agents by their share of
+    // INVOCATIONS: `a.total_tokens = totalTokens * (a.invocation_count / all)`.
+    // That has no relationship to what an agent actually spent. An agent making
+    // a few large fleet-analysis calls and one making many cheap lookups were
+    // credited the same amount per call, so the first was understated several
+    // times over and the second overstated by as much — and the column was
+    // labelled "Tokens" with no caveat, in the panel people use to answer what
+    // an agent costs.
+    //
+    // Now it reports only what telemetry recorded against an agent_id. An agent
+    // with no attributed calls gets null, which the console renders as "not
+    // attributed" — the same rule the migration analysis holds, applied here: a
+    // number with no data behind it is not a measurement.
+    let tokensAttributed = false;
+    let unattributed = null;
     try {
-      const tokenRes = await dbQuery(
-        `SELECT
-           COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
-           COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens,
-           COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens,
-           COUNT(*) AS llm_calls
-         FROM telemetry_events
-         WHERE event_type = 'llm_call' AND created_at >= $1`,
-        [cutoff]
-      );
-      const tok = tokenRes?.rows?.[0];
-      if (tok && agents.length > 0) {
-        const totalTokens = Number(tok.total_tokens || 0);
-        const totalCalls = Number(tok.llm_calls || 0);
-        const totalInvocations = agents.reduce((s, a) => s + a.invocation_count, 0);
-        for (const a of agents) {
-          const share = totalInvocations > 0 ? a.invocation_count / totalInvocations : 0;
-          a.total_tokens = Math.round(totalTokens * share);
-          a.prompt_tokens = Math.round(Number(tok.prompt_tokens || 0) * share);
-          a.completion_tokens = Math.round(Number(tok.completion_tokens || 0) * share);
-        }
+      const { getAgentTokenUsage } = await import("./telemetry.js");
+      const usage = await getAgentTokenUsage({ days });
+      tokensAttributed = usage.available;
+      unattributed = usage.unattributed;
+      for (const a of agents) {
+        const u = usage.byAgent.get(a.agent_id);
+        a.total_tokens = u ? u.totalTokens : null;
+        a.prompt_tokens = u ? u.promptTokens : null;
+        a.completion_tokens = u ? u.completionTokens : null;
+        a.llm_calls = u ? u.llmCalls : null;
       }
-    } catch { /* telemetry table may not exist yet */ }
+    } catch {
+      for (const a of agents) {
+        a.total_tokens = null; a.prompt_tokens = null; a.completion_tokens = null; a.llm_calls = null;
+      }
+    }
 
-    return { agents };
+    return { agents, tokensAttributed, unattributed };
   }
 
   const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -323,9 +331,12 @@ export async function getAgentAnalytics(opts = {}) {
     error_rate: a.invocation_count > 0 ? Math.round((10000 * a.error_count) / a.invocation_count) / 100 : 0,
     most_common_tools: Object.entries(a.tools).sort((x, y) => y[1] - x[1]).map(([t]) => t),
     last_used: a.last_used,
+    // The in-memory ring records spans, not LLM usage. Saying so beats
+    // rendering a zero that reads as "this agent was free".
+    total_tokens: null, prompt_tokens: null, completion_tokens: null, llm_calls: null,
   })).sort((a, b) => b.invocation_count - a.invocation_count);
 
-  return { agents };
+  return { agents, tokensAttributed: false, unattributed: null };
 }
 
 export async function getTraceStats(opts = {}) {

@@ -120,6 +120,72 @@ export async function handleAgentRoutes(req, res, url) {
     catalogDoc: `${base0}/api/docs/download?file=AGENT-CATALOG.md`,
   };
 
+  // ── Governance lens ────────────────────────────────────────────────────
+  // The same agents, asked a different question: what is each permitted to do,
+  // who owns it, what did it actually spend, and is it behaving inside its own
+  // declaration. Served separately from /api/agents so the catalog stays cheap
+  // — this one reads telemetry.
+  if (url.pathname === "/api/agents/governance") {
+    const days = Math.min(365, Math.max(1, Number(url.searchParams.get("days")) || 30));
+    const agents = await getAgents();
+    const { agentPosture, fleetPosture } = await import("./governance.js");
+
+    // What telemetry actually recorded. Absent means absent — never inferred.
+    let usage = { available: false, byAgent: new Map(), unattributed: null };
+    try {
+      const { getAgentTokenUsage } = await import("../services/telemetry.js");
+      usage = await getAgentTokenUsage({ days });
+    } catch { /* no telemetry — every agent reports "not attributed" */ }
+
+    let observedBy = new Map();
+    try {
+      const { getAgentAnalytics } = await import("../services/query-tracer.js");
+      const an = await getAgentAnalytics({ days });
+      observedBy = new Map((an.agents || []).map((a) => [a.agent_id || a.agent_name, a]));
+    } catch { /* no traces — posture still answers the declared half */ }
+
+    const now = Date.now();
+    const postures = agents.map((a) => {
+      const seen = observedBy.get(a.id) || null;
+      const p = agentPosture(a, seen ? {
+        tools: seen.most_common_tools || [],
+        // Egress and caller attribution are not captured yet. An empty array
+        // would read as "nothing observed, all clear"; these stay undefined so
+        // the posture reports them as unobserved rather than clean.
+      } : null, now);
+      const u = usage.byAgent.get(a.id) || null;
+      return {
+        ...p,
+        activity: seen ? {
+          invocations: seen.invocation_count ?? null,
+          avgDurationMs: seen.avg_duration_ms ?? null,
+          errorRate: seen.error_rate ?? null,
+          lastUsed: seen.last_used || null,
+        } : null,
+        // Measured, or null. There is no third option here by design — the
+        // figure this replaced was apportioned by invocation share and bore no
+        // relation to what the agent spent.
+        usage: u ? { ...u, attributed: true } : { attributed: false },
+      };
+    });
+
+    sendJson(res, 200, {
+      days,
+      fleet: fleetPosture(postures),
+      tokensAttributed: usage.available,
+      unattributed: usage.unattributed,
+      // Said once, plainly, so the console does not have to guess why a whole
+      // column is empty.
+      usageNote: usage.available
+        ? (usage.unattributed?.calls
+          ? `${usage.unattributed.calls} model call(s) in this window carry no agent, so their ${usage.unattributed.totalTokens.toLocaleString()} tokens are unattributed rather than shared out.`
+          : null)
+        : "Per-agent token usage is not being recorded yet, so cost per agent is not attributed.",
+      agents: postures,
+    });
+    return true;
+  }
+
   if (url.pathname === "/api/agents") {
     const agents = await getAgents();
     sendJson(res, 200, {

@@ -69,10 +69,146 @@ function formatTokens(n) {
 
 const CATEGORY_ORDER = ["Operations", "Lifecycle", "Platform", "Governance", "Intelligence"];
 
+/* Posture rendering. Four states, and "unreviewed" sits between good and bad
+   rather than being folded into either — it means nobody has looked, which is
+   where every agent starts and is not the same as being fine. */
+const VERDICT = {
+  "action-required": { label: "action required", bg: "var(--st-crit-bg)", fg: "var(--st-crit-ink)", icon: "✖" },
+  attention:         { label: "attention",       bg: "var(--st-warn-bg)", fg: "var(--st-warn-ink)", icon: "⚠" },
+  unreviewed:        { label: "unreviewed",      bg: "var(--st-unknown-bg)", fg: "var(--st-unknown-ink)", icon: "?" },
+  governed:          { label: "governed",        bg: "var(--st-good-bg)", fg: "var(--st-good-ink)", icon: "✓" },
+};
+/* Blast radius is a permanent property of the agent, so it gets a stripe.
+   Pills in this console mean state that changes. */
+const RADIUS_COLOR = { "read-only": "var(--st-unknown)", mutating: "var(--st-warn)", irreversible: "var(--st-crit)" };
+
+/** An undeclared field reads as undeclared, never as blank. */
+function Undeclared({ what = "not declared" }) {
+  return <span style={{ color: "var(--st-unknown-ink)", fontStyle: "italic", fontSize: "0.72rem" }}>{what}</span>;
+}
+
+const nf = new Intl.NumberFormat();
+
+/**
+ * The governance lens — the same agents, asked what they are permitted to do.
+ *
+ * Sorted by posture and not by spend: the first row is the agent behaving
+ * outside its declaration, because a governance panel that leads with cost gets
+ * read by finance and ignored by security.
+ */
+function GovernanceLens({ data }) {
+  if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
+
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  const fleet = data.fleet || {};
+  const ORDER = { "action-required": 0, attention: 1, unreviewed: 2, governed: 3 };
+  const rows = agents.slice().sort((a, b) =>
+    (ORDER[a.verdict] ?? 9) - (ORDER[b.verdict] ?? 9)
+    || (b.usage?.totalTokens || 0) - (a.usage?.totalTokens || 0)
+    || (a.name || "").localeCompare(b.name || ""));
+
+  const stat = (n, label, sub, alert) => (
+    <div className={"ar-stat" + (alert ? " ar-stat-alert" : "")} key={label}>
+      <div className="ar-stat-num">{n}</div>
+      <div className="ar-stat-label">{label}</div>
+      {sub && <div className="ar-gov-substat">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <>
+      <div className="ar-stats-row">
+        {stat(fleet.agents ?? "--", "Agents", fleet.external ? `${fleet.external} external` : "all first-party")}
+        {stat(fleet.certified ?? "--", "Certified", fleet.expiringSoon ? `${fleet.expiringSoon} expiring` : null)}
+        {stat(fleet.irreversible ?? "--", "Irreversible", "require approval")}
+        {stat(fleet.unowned ?? "--", "Unowned", "nobody accountable", (fleet.unowned || 0) > 0)}
+        {stat(fleet.needsAttention ?? "--", "Needs attention", null, (fleet.needsAttention || 0) > 0)}
+      </div>
+
+      {/* The worst true thing, in one sentence, before any table. */}
+      {fleet.headline && (
+        <div className={"ar-gov-headline" + (fleet.byVerdict?.["action-required"] ? " crit" : "")}>
+          {fleet.headline}
+        </div>
+      )}
+
+      {data.usageNote && <div className="ar-gov-note">{data.usageNote}</div>}
+
+      <div className="ar-gov-scroll">
+        <table className="ar-gov-table">
+          <thead>
+            <tr>
+              <th>Agent</th><th>Owner</th><th>Trust</th><th>Blast radius</th><th>Autonomy</th>
+              <th className="ar-num">Tokens 30d</th><th>Certified</th><th>Posture</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((a) => {
+              const v = VERDICT[a.verdict] || VERDICT.unreviewed;
+              const cert = a.certification || {};
+              return (
+                <tr key={a.id} className={a.verdict === "action-required" ? "ar-gov-flag" : a.verdict === "attention" ? "ar-gov-watch" : undefined}>
+                  <td>
+                    <div className="ar-gov-name">{a.name}</div>
+                    <div className="ar-gov-id">{a.id} · {a.toolCount} tool{a.toolCount === 1 ? "" : "s"}</div>
+                    {a.category && <div className="ar-gov-cat">{a.category}</div>}
+                  </td>
+                  <td>{a.owner || <Undeclared what="no owner" />}</td>
+                  <td>{a.trustTier
+                    ? <span className={"ar-gov-pill " + (a.trustTier === "external" ? "crit" : "good")}>{a.trustTier}</span>
+                    : <Undeclared />}</td>
+                  <td>{a.blastRadius
+                    ? <span className="ar-gov-radius"><i style={{ background: RADIUS_COLOR[a.blastRadius] }} />{a.blastRadius}</span>
+                    : <Undeclared />}</td>
+                  <td>{a.autonomy
+                    ? <span className="ar-gov-pill acc">{a.autonomy.replace(/-/g, " ")}</span>
+                    : <Undeclared />}</td>
+                  <td className="ar-num">
+                    {a.usage?.attributed
+                      ? nf.format(a.usage.totalTokens || 0)
+                      : <Undeclared what="not attributed" />}
+                  </td>
+                  <td>{cert.state === "never" ? <Undeclared what="never" />
+                    : cert.state === "expired" ? <span className="ar-gov-pill crit">expired</span>
+                    : cert.state === "expiring" ? <span className="ar-gov-pill warn">{cert.expiresInDays}d left</span>
+                    : cert.state === "no-expiry" ? <span className="ar-gov-pill warn">no expiry</span>
+                    : new Date(cert.certifiedAt).toLocaleDateString()}</td>
+                  <td>
+                    <span className="ar-gov-pill" style={{ background: v.bg, color: v.fg }}>{v.icon} {v.label}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* The first row of every table needs a reason, and for most of these it
+          is the same one: nobody has declared anything yet. Saying what to do
+          about it beats leaving a screen of grey question marks. */}
+      {fleet.byVerdict?.unreviewed > 0 && (
+        <div className="ar-gov-note">
+          An agent is <b>unreviewed</b> until its manifest declares an owner, a trust tier, a blast radius and
+          an autonomy level. Add a <code>governance</code> block to the manifest in
+          <code> src/agents/manifests/</code> to move it out of this state — nothing here infers those
+          answers, because guessing who is accountable for an agent is worse than admitting nobody is.
+        </div>
+      )}
+    </>
+  );
+}
+
 export function AgentRegistryModal({ open, onClose }) {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [detailAgent, setDetailAgent] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [lens, setLens] = useState("catalog");
+  /* Zoom scales the modal body only. Sixteen agents across five categories do
+     not fit a laptop viewport at full size, and the fix people reach for is
+     the browser's own zoom, which shrinks the whole console including the
+     chrome they navigate by. This shrinks the content and leaves the header,
+     the lens and the close button at full size. */
+  const [zoom, setZoom] = useState(1);
 
   const { data: registryData } = useQuery({
     queryKey: ["/api/agents"],
@@ -100,6 +236,15 @@ export function AgentRegistryModal({ open, onClose }) {
     queryFn: ({ signal }) => apiGet("/api/traces/analytics?days=30", { signal }).catch(() => ({})),
     staleTime: 30_000,
     enabled: open,
+  });
+
+  /* Posture reads telemetry, so it is only fetched when the lens asks for it —
+     the catalog stays as cheap as it is today. */
+  const { data: govData } = useQuery({
+    queryKey: ["/api/agents/governance"],
+    queryFn: ({ signal }) => apiGet("/api/agents/governance?days=30", { signal }).catch(() => ({})),
+    staleTime: 60_000,
+    enabled: open && lens === "governance",
   });
 
   if (!open) return null;
@@ -154,11 +299,46 @@ export function AgentRegistryModal({ open, onClose }) {
             <h2>Agent Registry</h2>
             <span className="ar-header-badge">CENTRALIZED · ALL CLUSTERS</span>
           </div>
+
+          {/* One object, two audiences. Integrators want endpoints and tools;
+              owners, security and audit want permission and behaviour. Two
+              separate screens would mean each half goes stale for the people
+              who never open it. */}
+          <div className="ar-lens" role="group" aria-label="Registry view">
+            <button className={"ar-lens-btn" + (lens === "catalog" ? " active" : "")}
+              onClick={() => setLens("catalog")}
+              title="Endpoints, protocols and tool reference — how do I call this agent">Catalog</button>
+            <button className={"ar-lens-btn" + (lens === "governance" ? " active" : "")}
+              onClick={() => setLens("governance")}
+              title="Owner, permission, spend and behaviour — what is it allowed to do">Governance</button>
+          </div>
+
+          {/* Zoom out. Sixteen agents across five categories overflow a laptop
+              viewport, and browser zoom shrinks the console chrome along with
+              the content. This scales the body only. */}
+          <div className="ar-zoom" role="group" aria-label="Zoom">
+            <button className="ar-zoom-btn" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))}
+              disabled={zoom <= 0.6} title="Zoom out — fit more on screen" aria-label="Zoom out">−</button>
+            <button className="ar-zoom-level" onClick={() => setZoom(1)} title="Reset to 100%">{Math.round(zoom * 100)}%</button>
+            <button className="ar-zoom-btn" onClick={() => setZoom((z) => Math.min(1.2, +(z + 0.1).toFixed(2)))}
+              disabled={zoom >= 1.2} title="Zoom in" aria-label="Zoom in">+</button>
+          </div>
+
           <button className="ar-modal-close" onClick={onClose}>&times;</button>
         </div>
 
-        {/* Body */}
-        <div className="ar-modal-body">
+        {/* Body. Zoom scales content and re-widens it by the inverse, so
+            shrinking the type fills the row rather than leaving a gutter. */}
+        <div className="ar-modal-body"
+          style={zoom === 1 ? undefined : {
+            zoom,
+            // `zoom` is the only property that reflows rather than merely
+            // painting smaller — a transform would keep the old layout box and
+            // leave the panel scrolling sideways at 70%.
+          }}>
+          {lens === "governance" ? (
+            <GovernanceLens data={govData} />
+          ) : (<>
           {/* Stats Hero */}
           <div className="ar-stats-row">
             <div className="ar-stat">
@@ -321,15 +501,30 @@ export function AgentRegistryModal({ open, onClose }) {
                   <div className="ar-usage-row" key={a.agent_id || a.agent_name}>
                     <span className="ar-usage-name">{a.agent_name || a.agent_id}</span>
                     <span>{a.invocation_count}</span>
-                    <span>{a.total_tokens != null ? formatTokens(a.total_tokens) : "--"}</span>
+                    {/* Measured, or said to be unmeasured. This used to show a
+                        share of the fleet total apportioned by invocation
+                        count, which bore no relation to what the agent spent —
+                        an agent making a few large analysis calls read low and
+                        one making many cheap lookups read high. */}
+                    <span title={a.total_tokens == null ? "No model calls were recorded against this agent" : undefined}
+                      style={a.total_tokens == null ? { color: "var(--st-unknown-ink)", fontStyle: "italic" } : undefined}>
+                      {a.total_tokens != null ? formatTokens(a.total_tokens) : "not attributed"}
+                    </span>
                     <span>{a.avg_duration_ms != null ? `${a.avg_duration_ms}ms` : "--"}</span>
                     <span style={{ color: a.error_rate > 0 ? "var(--crit)" : "var(--ok)" }}>{a.error_rate ?? 0}%</span>
                     <span className="ar-usage-time">{a.last_used ? timeAgo(a.last_used) : "--"}</span>
                   </div>
                 ))}
               </div>
+              {traceAnalytics?.tokensAttributed === false && (
+                <div style={{ marginTop: 7, fontSize: "0.73rem", color: "var(--st-unknown-ink)" }}>
+                  Per-agent token usage is not being recorded yet. Model calls carry no agent, so spend is
+                  shown as unattributed rather than divided up.
+                </div>
+              )}
             </div>
           )}
+          </>)}
         </div>
 
         {/* Agent Detail Drawer */}

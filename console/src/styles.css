@@ -7152,3 +7152,139 @@ h3.widget-title {
    moments and either hides the divider on a wide screen or leaves it stranded
    on a narrow one. flex-wrap moves the module to its own line when it no
    longer fits, which is the actual condition that matters. */
+
+/* ════════════════════════════════════════════════════════════════════════
+   Agent Registry — governance lens, zoom, and posture table
+
+   The registry answers "how do I call this agent". These answer "what is it
+   allowed to do, and is it behaving". Same modal, same data source, different
+   audience — so they share the header, the stats row and the close button
+   rather than living on a screen of their own that half the users never open.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Lens toggle ──────────────────────────────────────────────────────── */
+.ar-lens {
+  display: inline-flex; gap: 3px; padding: 3px;
+  border-radius: 9px; background: var(--bg2, var(--bg));
+  border: 1px solid var(--border); margin-left: auto;
+}
+.ar-lens-btn {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  padding: 5px 13px; border-radius: 7px; white-space: nowrap;
+  border: none; background: transparent; color: var(--text2); cursor: pointer;
+}
+.ar-lens-btn:hover { color: var(--text); }
+.ar-lens-btn.active { background: var(--card, var(--bg-alt)); color: var(--accent2); }
+.ar-lens-btn:focus-visible,
+.ar-zoom-btn:focus-visible,
+.ar-zoom-level:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+
+/* ── Zoom ─────────────────────────────────────────────────────────────── */
+.ar-zoom {
+  display: inline-flex; align-items: center; gap: 1px; margin-left: 10px;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.ar-zoom-btn {
+  font-family: inherit; font-size: 15px; font-weight: 700; line-height: 1;
+  width: 26px; height: 24px; border: none; cursor: pointer;
+  background: var(--card, var(--bg-alt)); color: var(--text2);
+}
+.ar-zoom-btn:hover:not(:disabled) { color: var(--text); background: var(--hover, var(--bg)); }
+.ar-zoom-btn:disabled { opacity: .35; cursor: default; }
+.ar-zoom-level {
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  min-width: 42px; height: 24px; border: none; cursor: pointer;
+  background: var(--card, var(--bg-alt)); color: var(--text2);
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+}
+.ar-zoom-level:hover { color: var(--text); }
+
+/* ── Governance body ──────────────────────────────────────────────────── */
+.ar-gov-loading { padding: 28px 4px; color: var(--text2); font-size: 13px; }
+
+/* A tile is only coloured when it is a problem. Five accent tiles in a row
+   highlight nothing at all. */
+.ar-stat-alert {
+  border-color: var(--st-crit) !important;
+  background: var(--st-crit-bg) !important;
+}
+.ar-stat-alert .ar-stat-num { color: var(--st-crit-ink); }
+.ar-gov-substat {
+  font-size: 10px; color: var(--text2); margin-top: 2px;
+}
+
+.ar-gov-headline {
+  padding: 9px 13px; border-radius: 9px; margin-bottom: 14px;
+  font-size: 13px; font-weight: 600;
+  background: var(--st-unknown-bg); color: var(--text);
+  border: 1px solid var(--border); border-left: 3px solid var(--st-unknown);
+}
+.ar-gov-headline.crit {
+  background: var(--st-crit-bg); border-left-color: var(--st-crit);
+  color: var(--st-crit-ink); font-weight: 700;
+}
+.ar-gov-note {
+  font-size: 12px; color: var(--text2); line-height: 1.55;
+  margin: 12px 0 0; max-width: 88ch;
+}
+.ar-gov-note code {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 11px; padding: 0 3px; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border);
+}
+
+/* ── Posture table ────────────────────────────────────────────────────── */
+.ar-gov-scroll {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: 10px;
+}
+.ar-gov-table {
+  width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 780px;
+}
+.ar-gov-table thead th {
+  text-align: left; padding: 9px 11px; white-space: nowrap;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text2); background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+}
+.ar-gov-table tbody td {
+  padding: 9px 11px; border-bottom: 1px solid var(--border); vertical-align: top;
+}
+.ar-gov-table tbody tr:last-child td { border-bottom: none; }
+.ar-gov-flag  { background: var(--st-crit-bg); }
+.ar-gov-watch { background: var(--st-warn-bg); }
+.ar-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.ar-gov-name { font-weight: 700; color: var(--text); }
+.ar-gov-id {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 10.5px; color: var(--text2); margin-top: 1px;
+}
+.ar-gov-cat { font-size: 10.5px; color: var(--text2); }
+
+.ar-gov-pill {
+  display: inline-block; font-size: 10.5px; font-weight: 800;
+  padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+  background: var(--st-unknown-bg); color: var(--st-unknown-ink);
+}
+.ar-gov-pill.good { background: var(--st-good-bg); color: var(--st-good-ink); }
+.ar-gov-pill.warn { background: var(--st-warn-bg); color: var(--st-warn-ink); }
+.ar-gov-pill.crit { background: var(--st-crit-bg); color: var(--st-crit-ink); }
+.ar-gov-pill.acc  { background: rgba(61,90,254,.12); color: var(--accent2); }
+
+/* Blast radius is a permanent property of the agent, so it reads as a stripe.
+   Pills in this console mean state that changes. */
+.ar-gov-radius {
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap; font-size: 12px; color: var(--text);
+}
+.ar-gov-radius > i {
+  width: 3px; height: 13px; border-radius: 2px; flex: none; display: block;
+}
+
+@media (max-width: 720px) {
+  .ar-lens { margin-left: 0; }
+  .ar-zoom { margin-left: 0; }
+  .ar-modal-header { flex-wrap: wrap; gap: 8px; }
+}
