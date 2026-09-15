@@ -2407,6 +2407,40 @@ async function startSSE() {
       url.pathname === "/api/agents" ||
       url.pathname.startsWith("/api/agents/")
     ) {
+      // Accepting accountability for an agent. Lives here rather than in the
+      // registry because it needs the request body and, more importantly, the
+      // authenticated user: WHO pressed Claim is the substance of the record,
+      // not a detail of it. A claim attributed to "operator" would be worth
+      // very little at the incident review it exists for.
+      const claimMatch = url.pathname.match(/^\/api\/agents\/([\w.-]+)\/owner$/);
+      if (claimMatch) {
+        const agentId = claimMatch[1];
+        const { claimOwner, releaseOwner } = await import("./services/agent-ownership.js");
+        const actor = req.user?.name || null;
+        if (!actor) return sendJson(res, 401, { ok: false, error: "Sign in before claiming an agent." });
+
+        const { getAgentById } = await import("./agents/registry.js");
+        if (!(await getAgentById(agentId))) {
+          return sendJson(res, 404, { ok: false, error: `No agent "${agentId}" in the registry.` });
+        }
+        if (req.method === "DELETE") {
+          return sendJson(res, 200, await releaseOwner(agentId));
+        }
+        if (req.method === "POST") {
+          const body = await readJsonBody(req).catch(() => ({}));
+          // Default the owner to the person acting. Claiming an agent for
+          // yourself is the common case and should not need a form; naming
+          // somebody else stays possible and is recorded as a separate fact.
+          const out = await claimOwner(agentId, {
+            owner: body?.owner || actor,
+            actor,
+            source: body?.source || (body?.owner && body.owner !== actor ? "assigned" : "self"),
+            note: body?.note || null,
+          });
+          return sendJson(res, out.ok ? 200 : 400, out);
+        }
+      }
+
       const handled = await handleAgentRegistryRoutes(req, res, url);
       if (handled) return;
     }
@@ -2564,7 +2598,11 @@ async function startSSE() {
     if (url.pathname === "/api/hub/servers" && req.method === "POST") {
       try {
         const body = await readJsonBody(req);
-        const result = await hubConnect(body);
+        // Who brought this agent in. A FACT, recorded automatically, and not
+        // the same thing as an owner — nobody has accepted accountability by
+        // connecting a server. Kept because for an external agent it is the
+        // first question anyone asks, and the only moment it is known for free.
+        const result = await hubConnect({ ...body, onboardedBy: req.user?.name || null });
         return sendJson(res, 201, { server: result });
       } catch (err) {
         return sendJson(res, 400, { error: err.message });

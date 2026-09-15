@@ -7288,3 +7288,28 @@ h3.widget-title {
   .ar-zoom { margin-left: 0; }
   .ar-modal-header { flex-wrap: wrap; gap: 8px; }
 }
+
+/* ── Ownership: declared, claimed, or suggested ────────────────────────────
+   Three states kept visually distinct on purpose. A suggestion that looked
+   like an owner would defeat the point of asking anyone to accept one. */
+.ar-gov-claimed {
+  font-size: 10px; color: var(--st-warn-ink); margin-top: 2px; line-height: 1.35;
+}
+.ar-gov-suggest {
+  display: flex; flex-direction: column; margin-top: 3px; line-height: 1.35;
+}
+.ar-gov-suggest-name { font-size: 11.5px; color: var(--text2); font-weight: 600; }
+.ar-gov-suggest-from {
+  font-size: 9.5px; color: var(--text2); opacity: .8;
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.ar-gov-claim-row { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.ar-gov-claim {
+  font-family: inherit; font-size: 10.5px; font-weight: 700;
+  padding: 2px 9px; border-radius: 6px; cursor: pointer;
+  background: var(--accent2); border: 1px solid var(--accent2); color: #fff;
+  white-space: nowrap;
+}
+.ar-gov-claim.ghost { background: transparent; color: var(--accent2); }
+.ar-gov-claim:disabled { opacity: .45; cursor: wait; }
+.ar-gov-claim:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }

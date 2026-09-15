@@ -96,7 +96,57 @@ const nf = new Intl.NumberFormat();
  * outside its declaration, because a governance panel that leads with cost gets
  * read by finance and ignored by security.
  */
-function GovernanceLens({ data }) {
+/**
+ * The owner cell.
+ *
+ * Three states, and they are deliberately not collapsed into one:
+ *   declared  — in the manifest, reviewed and in git. The strongest.
+ *   claimed   — someone pressed this button. Real acceptance, held in a
+ *               database, so it says so and nudges toward the manifest.
+ *   suggested — a candidate and its provenance, with one click to accept. It
+ *               is NEVER shown as the owner, because the suggested person has
+ *               not agreed to anything yet.
+ */
+function OwnerCell({ agent, onClaim, busy }) {
+  if (agent.owner) {
+    return (
+      <div>
+        <div>{agent.owner}</div>
+        {agent.ownerSource === "claimed" && (
+          <div className="ar-gov-claimed" title={agent.claim?.at ? `Claimed ${new Date(agent.claim.at).toLocaleString()}` : undefined}>
+            claimed by {agent.claim?.by} · declare it in the manifest to make it permanent
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div>
+      <Undeclared what="no owner" />
+      {agent.ownerSuggestion && (
+        <div className="ar-gov-suggest">
+          <span className="ar-gov-suggest-name">{agent.ownerSuggestion.owner}</span>
+          <span className="ar-gov-suggest-from" title={agent.ownerSuggestion.why}>
+            suggested · {agent.ownerSuggestion.from}
+          </span>
+        </div>
+      )}
+      <div className="ar-gov-claim-row">
+        <button className="ar-gov-claim" disabled={busy} onClick={() => onClaim(agent, null)}
+          title="Record that you are accountable for this agent">Claim</button>
+        {agent.ownerSuggestion && (
+          <button className="ar-gov-claim ghost" disabled={busy}
+            onClick={() => onClaim(agent, agent.ownerSuggestion.owner)}
+            title={`Accept the suggestion from ${agent.ownerSuggestion.from}`}>
+            Accept suggestion
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GovernanceLens({ data, onClaim, busyId }) {
   if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
 
   const agents = Array.isArray(data.agents) ? data.agents : [];
@@ -153,7 +203,7 @@ function GovernanceLens({ data }) {
                     <div className="ar-gov-id">{a.id} · {a.toolCount} tool{a.toolCount === 1 ? "" : "s"}</div>
                     {a.category && <div className="ar-gov-cat">{a.category}</div>}
                   </td>
-                  <td>{a.owner || <Undeclared what="no owner" />}</td>
+                  <td><OwnerCell agent={a} onClaim={onClaim} busy={busyId === a.id} /></td>
                   <td>{a.trustTier
                     ? <span className={"ar-gov-pill " + (a.trustTier === "external" ? "crit" : "good")}>{a.trustTier}</span>
                     : <Undeclared />}</td>
@@ -209,6 +259,7 @@ export function AgentRegistryModal({ open, onClose }) {
      chrome they navigate by. This shrinks the content and leaves the header,
      the lens and the close button at full size. */
   const [zoom, setZoom] = useState(1);
+  const [claiming, setClaiming] = useState(null);
 
   const { data: registryData } = useQuery({
     queryKey: ["/api/agents"],
@@ -240,12 +291,41 @@ export function AgentRegistryModal({ open, onClose }) {
 
   /* Posture reads telemetry, so it is only fetched when the lens asks for it —
      the catalog stays as cheap as it is today. */
-  const { data: govData } = useQuery({
+  const { data: govData, refetch: refetchGov } = useQuery({
     queryKey: ["/api/agents/governance"],
     queryFn: ({ signal }) => apiGet("/api/agents/governance?days=30", { signal }).catch(() => ({})),
     staleTime: 60_000,
     enabled: open && lens === "governance",
   });
+
+  /* Claiming is accepting accountability, so it asks first and says exactly
+     what it is recording. `owner` null means "me" — the server fills in the
+     signed-in user, which is the common case and should not need a form. */
+  const claimAgent = async (agent, suggested) => {
+    const who = suggested || "you";
+    if (!window.confirm(
+      `Record ${suggested ? `${suggested} as the owner` : "yourself as the owner"} of ${agent.name}?\n\n` +
+      `This is a statement that ${suggested ? "they are" : "you are"} accountable for what this agent does. ` +
+      `It is recorded with your name and the time.\n\n` +
+      `It is held in the database — to make it permanent, add governance.owner to ` +
+      `src/agents/manifests/${agent.id}.json.`
+    )) return;
+    setClaiming(agent.id);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/owner`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(suggested ? { owner: suggested, source: "suggestion" } : {}),
+      }).then((x) => x.json());
+      if (!r.ok) { window.alert(r.error || `Could not record ${who} as the owner.`); return; }
+      if (r.warning) window.alert(r.warning);
+      await refetchGov();
+    } catch (e) {
+      window.alert(e.message);
+    } finally {
+      setClaiming(null);
+    }
+  };
 
   if (!open) return null;
 
@@ -337,7 +417,7 @@ export function AgentRegistryModal({ open, onClose }) {
             // leave the panel scrolling sideways at 70%.
           }}>
           {lens === "governance" ? (
-            <GovernanceLens data={govData} />
+            <GovernanceLens data={govData} onClaim={claimAgent} busyId={claiming} />
           ) : (<>
           {/* Stats Hero */}
           <div className="ar-stats-row">

@@ -144,6 +144,24 @@ export async function handleAgentRoutes(req, res, url) {
       observedBy = new Map((an.agents || []).map((a) => [a.agent_id || a.agent_name, a]));
     } catch { /* no traces — posture still answers the declared half */ }
 
+    // Accepted ownership, and candidates for the agents nobody has accepted.
+    // Both best-effort: a registry that fails to load because CODEOWNERS is
+    // missing would be a poor trade for a convenience.
+    let claims = new Map();
+    try {
+      const { getOwnership } = await import("../services/agent-ownership.js");
+      claims = await getOwnership();
+    } catch { /* no claims — manifest declarations still stand */ }
+
+    let hints = new Map();
+    try {
+      const unowned = agents.filter((a) => !a.governance?.owner && !claims.has(a.id)).map((a) => a.id);
+      if (unowned.length) {
+        const { suggestOwners } = await import("./owner-hints.js");
+        hints = await suggestOwners(unowned);
+      }
+    } catch { /* no suggestions — the Claim field is then simply empty */ }
+
     const now = Date.now();
     const postures = agents.map((a) => {
       const seen = observedBy.get(a.id) || null;
@@ -152,7 +170,7 @@ export async function handleAgentRoutes(req, res, url) {
         // Egress and caller attribution are not captured yet. An empty array
         // would read as "nothing observed, all clear"; these stay undefined so
         // the posture reports them as unobserved rather than clean.
-      } : null, now);
+      } : null, now, { claim: claims.get(a.id) || null, suggestion: hints.get(a.id) || null });
       const u = usage.byAgent.get(a.id) || null;
       return {
         ...p,

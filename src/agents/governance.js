@@ -55,7 +55,7 @@ function certification(g, now) {
  * @param {object} observed    what telemetry saw — { tools:[], egress:[], calledBy:[] }
  * @param {number} now         epoch ms, injected so this stays pure and testable
  */
-export function agentPosture(manifest = {}, observed = null, now = Date.now()) {
+export function agentPosture(manifest = {}, observed = null, now = Date.now(), ownership = null) {
   const g = manifest.governance || {};
   const declaredTools = new Set(manifest.tools || []);
   const declaredEgress = new Set(g.egress || []);
@@ -63,8 +63,23 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now()) {
   const trustTier = TRUST_TIERS.includes(g.trustTier) ? g.trustTier : null;
   const blastRadius = BLAST_RADII.includes(g.blastRadius) ? g.blastRadius : null;
   const autonomy = AUTONOMY_LEVELS.includes(g.autonomyLevel) ? g.autonomyLevel : null;
-  const owner = g.owner || null;
   const cert = certification(g, now);
+
+  // ── Who owns it ──────────────────────────────────────────────────────
+  // A manifest declaration wins: it went through review and lives in git. A
+  // claim is a person pressing Claim in the console, which is a real act of
+  // acceptance and is recorded with who and when — but it is held in a database
+  // rather than in the reviewed artefact, so it ranks second and the console
+  // says so.
+  //
+  // A SUGGESTION IS NOT AN OWNER and is never promoted to one here. It is
+  // carried alongside so the console can offer it for one-click acceptance. An
+  // agent with a suggestion and no acceptance is still unowned, because the
+  // suggested person has not agreed to anything.
+  const claim = ownership?.claim || null;
+  const owner = g.owner || claim?.owner || null;
+  const ownerSource = g.owner ? "manifest" : claim ? "claimed" : null;
+  const suggestion = owner ? null : (ownership?.suggestion || null);
 
   // ── Findings ─────────────────────────────────────────────────────────
   // Ordered by consequence. The first one is what the row reports, because a
@@ -104,8 +119,17 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now()) {
   if (cert.state === "expired") {
     findings.push({ code: "certification-expired", severity: "serious", message: `Certification lapsed ${Math.abs(cert.expiresInDays)} day(s) ago.` });
   }
-  // Undeclared is its own finding, never silence.
-  if (!owner) findings.push({ code: "no-owner", severity: "serious", message: "No owner is declared. Nobody is accountable for what this agent does." });
+  // Undeclared is its own finding, never silence. A suggestion changes the
+  // wording — there is something to accept — but not the verdict: nobody has
+  // accepted it yet, and that is what "unowned" means.
+  if (!owner) {
+    findings.push({
+      code: "no-owner", severity: "serious",
+      message: suggestion
+        ? `No owner has accepted this agent. ${suggestion.owner} is suggested, from ${suggestion.from}.`
+        : "No owner is declared. Nobody is accountable for what this agent does.",
+    });
+  }
   if (!blastRadius) findings.push({ code: "no-blast-radius", severity: "serious", message: "Blast radius is not declared, so what this agent can do to the estate is unknown." });
   if (!trustTier) findings.push({ code: "no-trust-tier", severity: "warning", message: "Trust tier is not declared." });
   if (!autonomy) findings.push({ code: "no-autonomy", severity: "warning", message: "Autonomy level is not declared." });
@@ -130,7 +154,12 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now()) {
     name: manifest.name || manifest.id || null,
     category: manifest.category || null,
     toolCount: (manifest.tools || []).length,
-    owner, trustTier, blastRadius, autonomy,
+    owner, ownerSource,
+    // Present only when nobody has accepted the agent. The console renders it
+    // as an offer with its provenance, never as the owner.
+    ownerSuggestion: suggestion,
+    claim: claim ? { by: claim.claimedBy, at: claim.claimedAt, source: claim.source } : null,
+    trustTier, blastRadius, autonomy,
     certification: cert,
     budget: {
       tokensPerMonth: Number.isFinite(g.budgetTokensPerMonth) ? g.budgetTokensPerMonth : null,

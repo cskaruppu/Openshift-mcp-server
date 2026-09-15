@@ -102,6 +102,10 @@ export async function connectServer(config) {
     tools,
     status: "connected",
     connectedAt: new Date().toISOString(),
+    // Who connected it. A fact, captured at the only moment it is free to
+    // capture, and deliberately NOT an owner: connecting a server is not
+    // accepting accountability for what it does.
+    onboardedBy: config.onboardedBy || null,
   };
 
   connections.set(id, entry);
@@ -216,6 +220,7 @@ function serializeEntry(entry) {
     command: entry.command,
     status: entry.status,
     connectedAt: entry.connectedAt,
+    onboardedBy: entry.onboardedBy || null,
     toolCount: entry.tools.length,
     tools: entry.tools.map((t) => ({ name: t.name, description: t.description })),
   };
