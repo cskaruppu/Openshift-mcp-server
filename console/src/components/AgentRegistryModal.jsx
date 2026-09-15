@@ -89,6 +89,47 @@ function Undeclared({ what = "not declared" }) {
 
 const nf = new Intl.NumberFormat();
 
+/* Grades, not a gradient. A number alone invites arguing about whether 71 is
+   good; a letter with a meaning beside it does not. */
+const GRADE = {
+  A: { fg: "var(--st-good-ink)", bg: "var(--st-good-bg)" },
+  B: { fg: "var(--st-good-ink)", bg: "var(--st-good-bg)" },
+  C: { fg: "var(--st-warn-ink)", bg: "var(--st-warn-bg)" },
+  D: { fg: "var(--st-crit-ink)", bg: "var(--st-crit-bg)" },
+  E: { fg: "var(--st-crit-ink)", bg: "var(--st-crit-bg)" },
+};
+
+/**
+ * The score, the grade, and — on hover — every check behind it.
+ *
+ * Confidence sits next to the score rather than being folded into it. A high
+ * score over half the checks is a weaker claim than the same score over all of
+ * them, and merging the two is how a dashboard starts to mislead.
+ */
+function ScoreCell({ card }) {
+  if (!card || card.score == null) return <Undeclared what="not scored" />;
+  const g = GRADE[card.grade] || GRADE.E;
+  const failed = (card.checks || []).filter((c) => c.state === "fail");
+  const title = [
+    `${card.meaning}`,
+    `Scored over ${card.coverage.ran} of ${card.coverage.total} checks.`,
+    ...(failed.length ? ["", "Failing:"] : []),
+    ...failed.map((c) => `• ${c.label}`),
+  ].join("\n");
+
+  return (
+    <div className="ar-score" title={title}>
+      <span className="ar-score-grade" style={{ background: g.bg, color: g.fg }}>{card.grade}</span>
+      <span className="ar-score-num">{card.score}%</span>
+      {card.confidence !== "full" && (
+        <span className="ar-score-conf" title={`Only ${card.coverage.ran} of ${card.coverage.total} checks could be run.`}>
+          {card.coverage.ran}/{card.coverage.total}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
  * The governance lens — the same agents, asked what they are permitted to do.
  *
@@ -274,14 +315,198 @@ function ConnectAgentForm({ onDone }) {
   );
 }
 
+/**
+ * The golden path: create a new agent that is already governed.
+ *
+ * Every one of the sixteen agents here began unreviewed, because the manifest
+ * format never asked who owned it or what it could do. Reporting that afterwards
+ * is the expensive way to fix it; asking at creation is close to free, and it is
+ * the only approach that stops the problem growing — at sixty agents nobody
+ * audits their way back.
+ *
+ * The grade is shown BEFORE anything is created, which is the point: fill in the
+ * four governance fields and watch it go from E to B. That is a far better
+ * teacher than a policy document.
+ */
+function NewAgentForm({ onClose }) {
+  const [f, setF] = useState({
+    id: "", name: "", description: "", category: "Operations",
+    owner: "", trustTier: "first-party", blastRadius: "", autonomyLevel: "",
+    tools: [], exampleTitle: "", examplePrompt: "",
+  });
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [toolFilter, setToolFilter] = useState("");
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+
+  // Which tools exist and which are already claimed. Previously knowable only
+  // by reading the source, which is why manifests drifted from reality.
+  const { data: toolData } = useQuery({
+    queryKey: ["/api/agents/available-tools"],
+    queryFn: ({ signal }) => apiGet("/api/agents/available-tools", { signal }).catch(() => ({ tools: [] })),
+    staleTime: 300_000,
+  });
+  const allTools = Array.isArray(toolData?.tools) ? toolData.tools : [];
+  const shown = toolFilter
+    ? allTools.filter((t) => t.name.includes(toolFilter.toLowerCase()))
+    : allTools.slice(0, 40);
+
+  const toggleTool = (name) => setF((p) => ({
+    ...p,
+    tools: p.tools.includes(name) ? p.tools.filter((t) => t !== name) : [...p.tools, name],
+  }));
+
+  const preview = async () => {
+    setBusy(true);
+    try {
+      const body = {
+        id: f.id.trim(), name: f.name.trim(), description: f.description.trim(),
+        category: f.category, tools: f.tools,
+        governance: {
+          owner: f.owner.trim() || null,
+          trustTier: f.trustTier || null,
+          blastRadius: f.blastRadius || null,
+          autonomyLevel: f.autonomyLevel || null,
+        },
+        examples: f.exampleTitle.trim()
+          ? [{ title: f.exampleTitle.trim(), prompt: f.examplePrompt.trim() }] : [],
+      };
+      const r = await fetch("/api/agents/scaffold", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      setResult(await r.json());
+    } catch (e) {
+      setResult({ ok: false, errors: [{ message: e.message }] });
+    } finally { setBusy(false); }
+  };
+
+  const g = result?.preview;
+  const grade = g?.grade ? (GRADE[g.grade] || GRADE.E) : null;
+
+  return (
+    <div className="ar-connect">
+      <div className="ar-connect-title">New agent</div>
+
+      <div className="ar-connect-grid">
+        <label htmlFor="na-id">Id</label>
+        <input id="na-id" value={f.id} onChange={set("id")} placeholder="node-hygiene" />
+        <label htmlFor="na-name">Name</label>
+        <input id="na-name" value={f.name} onChange={set("name")} placeholder="Node Hygiene Agent" />
+        <label htmlFor="na-desc">Description</label>
+        <input id="na-desc" value={f.description} onChange={set("description")} placeholder="Finds and reports nodes needing attention." />
+        <label htmlFor="na-cat">Category</label>
+        <select id="na-cat" value={f.category} onChange={set("category")}>
+          {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+
+        <label htmlFor="na-owner">Owner</label>
+        <input id="na-owner" value={f.owner} onChange={set("owner")} placeholder="who is accountable for this" />
+        <label htmlFor="na-trust">Trust tier</label>
+        <select id="na-trust" value={f.trustTier} onChange={set("trustTier")}>
+          <option value="first-party">First-party</option>
+          <option value="partner">Partner</option>
+          <option value="external">External</option>
+        </select>
+        <label htmlFor="na-blast">Blast radius</label>
+        <select id="na-blast" value={f.blastRadius} onChange={set("blastRadius")}>
+          <option value="">Not declared</option>
+          <option value="read-only">Read-only</option>
+          <option value="mutating">Mutating</option>
+          <option value="irreversible">Irreversible</option>
+        </select>
+        <label htmlFor="na-auto">Autonomy</label>
+        <select id="na-auto" value={f.autonomyLevel} onChange={set("autonomyLevel")}>
+          <option value="">Not declared</option>
+          <option value="advisory">Advisory</option>
+          <option value="propose-and-wait">Propose and wait</option>
+          <option value="act-within-policy">Act within policy</option>
+        </select>
+
+        <label htmlFor="na-ex">Example</label>
+        <input id="na-ex" value={f.exampleTitle} onChange={set("exampleTitle")} placeholder="List unhealthy nodes" />
+        <label htmlFor="na-exp">Example prompt</label>
+        <input id="na-exp" value={f.examplePrompt} onChange={set("examplePrompt")} placeholder="which nodes are not ready?" />
+      </div>
+
+      <div className="ar-na-tools">
+        <div className="ar-na-tools-head">
+          <b>Tools</b>
+          <span className="ar-na-count">{f.tools.length} selected</span>
+          <input className="ar-na-filter" value={toolFilter} onChange={(e) => setToolFilter(e.target.value)}
+            placeholder={`filter ${allTools.length} served tools`} />
+        </div>
+        <div className="ar-na-tool-list">
+          {shown.map((t) => (
+            <button key={t.name} type="button"
+              className={"ar-na-tool" + (f.tools.includes(t.name) ? " on" : "")}
+              onClick={() => toggleTool(t.name)}
+              title={t.claimedBy ? `Also exposed by ${t.claimedBy}` : "Not claimed by any agent"}>
+              {t.name}{t.claimedBy ? <span className="ar-na-claimed"> · {t.claimedBy}</span> : null}
+            </button>
+          ))}
+          {!shown.length && <span className="ar-gov-note">No served tool matches that filter.</span>}
+        </div>
+        <p className="ar-connect-note">
+          Only tools this server actually serves are listed. Twenty-four tools declared across the existing
+          manifests do not exist, and a client connecting to those agents gets an empty list and no error —
+          this is the check that prevents the next one.
+        </p>
+      </div>
+
+      <div className="ar-connect-actions">
+        <button className="ar-gov-claim" disabled={busy} onClick={preview}>
+          {busy ? "Checking…" : "Check and generate"}
+        </button>
+        <button className="ar-gov-claim ghost" onClick={onClose}>Close</button>
+      </div>
+
+      {result && (
+        <div className="ar-na-result">
+          {g && (
+            <div className="ar-na-grade">
+              <span className="ar-score-grade" style={{ background: grade.bg, color: grade.fg }}>{g.grade}</span>
+              <span className="ar-score-num">{g.score}%</span>
+              <span className="ar-na-grade-say">
+                {g.meaning} {g.checks.filter((c) => c.state === "fail").length > 0 &&
+                  `Fill in what is missing below and this rises before the agent exists.`}
+              </span>
+            </div>
+          )}
+
+          {(result.errors || []).map((e, i) => (
+            <div key={"e" + i} className="ar-na-err">✖ {e.field ? <b>{e.field}: </b> : null}{e.message}</div>
+          ))}
+          {(result.warnings || []).map((w, i) => (
+            <div key={"w" + i} className="ar-na-warn">⚠ {w.field ? <b>{w.field}: </b> : null}{w.message}</div>
+          ))}
+
+          {result.ok && (<>
+            <div className="ar-na-path">
+              Create this file: <code>{result.path}</code>
+              <CopyBtn text={result.file} small />
+            </div>
+            <pre className="ar-na-file">{result.file}</pre>
+            <p className="ar-connect-note">{result.next}</p>
+          </>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GovernanceLens({ data, onClaim, busyId }) {
   if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
 
   const agents = Array.isArray(data.agents) ? data.agents : [];
   const fleet = data.fleet || {};
+  const health = data.health || null;
   const ORDER = { "action-required": 0, attention: 1, unreviewed: 2, governed: 3 };
+  /* Worst first. The whole reason for a score is to produce a worklist, and a
+     worklist that opens on the healthiest agent is a table. Posture still wins
+     the tie: an agent acting outside its declaration outranks a low score. */
   const rows = agents.slice().sort((a, b) =>
     (ORDER[a.verdict] ?? 9) - (ORDER[b.verdict] ?? 9)
+    || (a.scorecard?.score ?? 101) - (b.scorecard?.score ?? 101)
     || (b.usage?.totalTokens || 0) - (a.usage?.totalTokens || 0)
     || (a.name || "").localeCompare(b.name || ""));
 
@@ -303,6 +528,30 @@ function GovernanceLens({ data, onClaim, busyId }) {
         {stat(fleet.needsAttention ?? "--", "Needs attention", null, (fleet.needsAttention || 0) > 0)}
       </div>
 
+      {/* One number for the fleet, and the single fix that lifts the most
+          agents. At sixty agents this is what turns a list of problems into a
+          job somebody can actually take on. */}
+      {health?.average != null && (
+        <div className="ar-health">
+          <div className="ar-health-num">{health.average}%</div>
+          <div className="ar-health-body">
+            <div className="ar-health-line">{health.headline}</div>
+            <div className="ar-health-dist">
+              {["A", "B", "C", "D", "E"].map((g) => (
+                <span key={g} className="ar-health-band" title={`${health.distribution[g]} agent(s) graded ${g}`}>
+                  <b style={{ color: (GRADE[g] || GRADE.E).fg }}>{g}</b> {health.distribution[g]}
+                </span>
+              ))}
+              {health.lowConfidence > 0 && (
+                <span className="ar-health-band" title="Fewer than 70% of checks could be run for these agents.">
+                  {health.lowConfidence} low confidence
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* The worst true thing, in one sentence, before any table. */}
       {fleet.headline && (
         <div className={"ar-gov-headline" + (fleet.byVerdict?.["action-required"] ? " crit" : "")}>
@@ -316,7 +565,7 @@ function GovernanceLens({ data, onClaim, busyId }) {
         <table className="ar-gov-table">
           <thead>
             <tr>
-              <th>Agent</th><th>Owner</th><th>Trust</th><th>Blast radius</th><th>Autonomy</th>
+              <th>Agent</th><th>Health</th><th>Owner</th><th>Trust</th><th>Blast radius</th><th>Autonomy</th>
               <th className="ar-num">Tokens 30d</th><th>Certified</th><th>Posture</th>
             </tr>
           </thead>
@@ -341,6 +590,7 @@ function GovernanceLens({ data, onClaim, busyId }) {
                       </div>
                     )}
                   </td>
+                  <td><ScoreCell card={a.scorecard} /></td>
                   <td><OwnerCell agent={a} onClaim={onClaim} busy={busyId === a.id} /></td>
                   <td>{a.trustTier
                     ? <span className={"ar-gov-pill " + (a.trustTier === "external" ? "crit" : "good")}>{a.trustTier}</span>
@@ -398,6 +648,7 @@ export function AgentRegistryModal({ open, onClose }) {
      the lens and the close button at full size. */
   const [zoom, setZoom] = useState(1);
   const [claiming, setClaiming] = useState(null);
+  const [newAgent, setNewAgent] = useState(false);
 
   const { data: registryData, refetch: refetchRegistry } = useQuery({
     queryKey: ["/api/agents"],
@@ -617,7 +868,16 @@ export function AgentRegistryModal({ open, onClose }) {
           {/* The only way to add an external agent. This lived behind the API
               alone, so in practice nobody created one — and the agent nobody
               can create is the agent nobody governs. */}
-          <ConnectAgentForm onDone={() => { refetchRegistry(); refetchGov(); }} />
+          <div className="ar-create-row">
+            <ConnectAgentForm onDone={() => { refetchRegistry(); refetchGov(); }} />
+            {/* The golden path. Shaping agents at creation is the only thing on
+                this screen that reduces the future problem rather than
+                reporting on it. */}
+            {newAgent
+              ? null
+              : <button className="ar-connect-open" onClick={() => setNewAgent(true)}>+ New agent</button>}
+          </div>
+          {newAgent && <NewAgentForm onClose={() => setNewAgent(false)} />}
 
           <div className="ar-toolbar">
             <input

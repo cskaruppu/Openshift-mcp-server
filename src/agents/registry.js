@@ -263,6 +263,15 @@ export async function handleAgentRoutes(req, res, url) {
       }
     } catch { /* no suggestions — the Claim field is then simply empty */ }
 
+    // Which declared tools are actually served. Cached after the first call.
+    let served = null;
+    try {
+      const { implementedTools } = await import("./tool-index.js");
+      served = await implementedTools();
+    } catch { /* probe unavailable — the tools check reports unknown */ }
+
+    const { scoreAgent, scoreFleet } = await import("./scorecard.js");
+
     const now = Date.now();
     const postures = agents.map((a) => {
       const seen = observedBy.get(a.id) || null;
@@ -288,12 +297,29 @@ export async function handleAgentRoutes(req, res, url) {
         external: !!a._external,
         onboardedBy: a._onboardedBy || null,
         connectionStatus: a._status || null,
+        // One number and the reasons it is not higher. Sixteen agents fit in a
+        // table; sixty need a ranked worklist.
+        scorecard: scoreAgent({
+          owner: p.owner,
+          blastRadius: p.blastRadius,
+          trustTier: p.trustTier,
+          autonomy: p.autonomy,
+          certification: p.certification,
+          reconciled: p.reconciled,
+          // null, not [], when the probe could not run — "checked, none
+          // missing" and "could not check" score very differently.
+          missingTools: served ? (a.tools || []).filter((t) => !served.has(t)) : null,
+          lastUsed: seen?.last_used || null,
+          errorRate: seen?.error_rate ?? null,
+          hasExamples: !!(a.examples?.length),
+        }),
       };
     });
 
     sendJson(res, 200, {
       days,
       fleet: fleetPosture(postures),
+      health: scoreFleet(postures.map((p) => p.scorecard)),
       tokensAttributed: usage.available,
       unattributed: usage.unattributed,
       // Said once, plainly, so the console does not have to guess why a whole

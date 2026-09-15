@@ -2412,6 +2412,47 @@ async function startSSE() {
       // authenticated user: WHO pressed Claim is the substance of the record,
       // not a detail of it. A claim attributed to "operator" would be worth
       // very little at the incident review it exists for.
+      // The golden path. Produces a manifest and the grade it will be born
+      // with — and deliberately does NOT write it. The manifest belongs in git,
+      // reviewed and versioned; a file written into a running pod exists on one
+      // replica, vanishes on restart, and disagrees with the repository, which
+      // is exactly the drift the governance view is built to report.
+      if (url.pathname === "/api/agents/scaffold" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req).catch(() => ({}));
+          const [{ scaffoldAgent }, { implementedTools }, { getAgents: all }] = await Promise.all([
+            import("./agents/scaffold.js"),
+            import("./agents/tool-index.js"),
+            import("./agents/registry.js"),
+          ]);
+          const out = scaffoldAgent(body, {
+            existingIds: (await all()).map((a) => a.id),
+            servedTools: await implementedTools(),
+          });
+          return sendJson(res, 200, out);
+        } catch (err) { return sendJson(res, 400, { ok: false, errors: [{ message: err.message }] }); }
+      }
+
+      // The tools a new agent can legitimately claim — the served ones, minus
+      // any already taken. Offered because "which tools exist" was previously
+      // knowable only by reading the source.
+      if (url.pathname === "/api/agents/available-tools" && req.method === "GET") {
+        try {
+          const [{ implementedTools }, { getAgents: all }] = await Promise.all([
+            import("./agents/tool-index.js"),
+            import("./agents/registry.js"),
+          ]);
+          const served = await implementedTools();
+          if (!served) return sendJson(res, 200, { available: false, tools: [], note: "The served tool list could not be read." });
+          const taken = new Map();
+          for (const a of await all()) for (const t of a.tools || []) taken.set(t, a.id);
+          return sendJson(res, 200, {
+            available: true,
+            tools: [...served].sort().map((name) => ({ name, claimedBy: taken.get(name) || null })),
+          });
+        } catch (err) { return sendJson(res, 400, { available: false, tools: [], error: err.message }); }
+      }
+
       const claimMatch = url.pathname.match(/^\/api\/agents\/([\w.-]+)\/owner$/);
       if (claimMatch) {
         const agentId = claimMatch[1];

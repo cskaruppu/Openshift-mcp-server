@@ -7359,3 +7359,91 @@ h3.widget-title {
   .ar-connect-grid { grid-template-columns: 1fr; gap: 4px; }
   .ar-connect-grid label { margin-top: 6px; }
 }
+
+/* ── Scorecard ─────────────────────────────────────────────────────────────
+   A letter with a meaning, not a bare number: 71 invites an argument about
+   whether 71 is good. Coverage sits beside the score rather than inside it —
+   a high score over half the checks is a weaker claim than the same score
+   over all of them, and merging the two is how a dashboard starts to lie. */
+.ar-score { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ar-score-grade {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 6px;
+  font-size: 12px; font-weight: 800; flex: none;
+}
+.ar-score-num { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ar-score-conf {
+  font-size: 9.5px; color: var(--text2); font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+}
+
+/* Fleet health — one number, and the single fix that lifts the most agents. */
+.ar-health {
+  display: flex; gap: 14px; align-items: center;
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 11px 15px; margin-bottom: 12px; background: var(--bg);
+}
+.ar-health-num {
+  font-size: 30px; font-weight: 800; letter-spacing: -.02em;
+  color: var(--accent2); font-variant-numeric: tabular-nums; line-height: 1;
+}
+.ar-health-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ar-health-line { font-size: 13px; font-weight: 600; }
+.ar-health-dist { display: flex; gap: 10px; flex-wrap: wrap; }
+.ar-health-band {
+  font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums;
+}
+.ar-health-band b { font-weight: 800; }
+
+/* ── New agent (golden path) ─────────────────────────────────────────────── */
+.ar-create-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ar-na-tools { margin-top: 14px; }
+.ar-na-tools-head { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-bottom: 7px; }
+.ar-na-tools-head b { font-size: 12px; }
+.ar-na-count { font-size: 11px; color: var(--text2); }
+.ar-na-filter {
+  font-family: inherit; font-size: 12px; padding: 4px 9px; margin-left: auto;
+  border-radius: 7px; border: 1px solid var(--border2);
+  background: var(--bg-alt, var(--card)); color: var(--text); min-width: 180px;
+}
+.ar-na-tool-list {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  max-height: 168px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 9px; padding: 9px;
+}
+.ar-na-tool {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 10.5px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border2); background: transparent; color: var(--text2);
+}
+.ar-na-tool:hover { color: var(--text); }
+.ar-na-tool.on { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.ar-na-tool:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.ar-na-claimed { opacity: .65; }
+
+.ar-na-result { margin-top: 13px; border-top: 1px solid var(--border); padding-top: 12px; }
+.ar-na-grade { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; flex-wrap: wrap; }
+.ar-na-grade .ar-score-grade { width: 26px; height: 26px; font-size: 14px; }
+.ar-na-grade .ar-score-num { font-size: 16px; }
+.ar-na-grade-say { font-size: 12px; color: var(--text2); }
+.ar-na-err, .ar-na-warn {
+  font-size: 12px; padding: 6px 10px; border-radius: 7px; margin-bottom: 5px; line-height: 1.5;
+}
+.ar-na-err { background: var(--st-crit-bg); color: var(--st-crit-ink); }
+.ar-na-warn { background: var(--st-warn-bg); color: var(--st-warn-ink); }
+.ar-na-path {
+  display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
+  font-size: 12px; margin: 10px 0 7px;
+}
+.ar-na-path code {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; font-size: 11.5px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
+}
+.ar-na-file {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 11px; line-height: 1.55; margin: 0;
+  max-height: 260px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 11px 13px; color: var(--text);
+  white-space: pre; tab-size: 2;
+}
