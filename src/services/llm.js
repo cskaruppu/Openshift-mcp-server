@@ -611,6 +611,10 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
     temperature: o.temperature,
     stream: !!stream,
   };
+  // A streamed response carries no usage unless it is asked for, and without it
+  // every streamed call recorded NULL tokens — which is nearly all of them,
+  // because the chat UI streams. See the note on readUsageChunk().
+  if (stream) body.stream_options = { include_usage: true };
   if (o.tools && o.tools.length) {
     body.tools = o.tools.map((t) => ({
       type: "function",
@@ -652,10 +656,12 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
   // Streaming — parse SSE lines
   let text = "";
   const toolCalls = [];
+  let usage = null;
   await readSSE(resp.body, (evt) => {
     if (evt === "[DONE]") return;
     let chunk;
     try { chunk = JSON.parse(evt); } catch { return; }
+    if (chunk.usage) usage = chunk.usage;
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) return;
     if (delta.content) {
@@ -678,7 +684,9 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
     arguments: safeJSON(tc.arguments),
   }));
   for (const tc of parsedCalls) hooks.onToolCall?.(tc);
-  return { text, toolCalls: parsedCalls };
+  // `raw` is where normaliseUsage() looks, so shape it like the non-streaming
+  // body and one extractor serves both paths.
+  return { text, toolCalls: parsedCalls, raw: usage ? { usage } : null };
 }
 
 // ===========================================================================
@@ -731,6 +739,8 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     // Stable seed helps Azure's automatic prompt caching match prefixes
     seed: 42,
   };
+  // Same as OpenAI: a streamed response carries no usage unless asked.
+  if (stream) body.stream_options = { include_usage: true };
   if (o.tools && o.tools.length) {
     body.tools = o.tools.map((t) => ({
       type: "function",
@@ -797,10 +807,14 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
   // Streaming — Azure uses same SSE format as OpenAI
   let text = "";
   const toolCalls = [];
+  let usage = null;
   await readSSE(resp.body, (evt) => {
     if (evt === "[DONE]") return;
     let chunk;
     try { chunk = JSON.parse(evt); } catch { return; }
+    // The usage chunk arrives with an EMPTY choices array, so it has to be
+    // read before the `!delta` guard below discards it.
+    if (chunk.usage) usage = chunk.usage;
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) return;
     if (delta.content) {
@@ -823,7 +837,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     arguments: safeJSON(tc.arguments),
   }));
   for (const tc of parsedCalls) hooks.onToolCall?.(tc);
-  return { text, toolCalls: parsedCalls };
+  return { text, toolCalls: parsedCalls, raw: usage ? { usage } : null };
 }
 
 // ===========================================================================
@@ -898,9 +912,15 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
   const toolCalls = [];
   let currentTool = null;
   let currentToolJson = "";
+  // Anthropic splits usage across two events and never repeats it: input_tokens
+  // arrive on message_start, output_tokens on message_delta. Taking either one
+  // alone would record half the call, so both are merged.
+  const usage = {};
   await readSSE(resp.body, (evt) => {
     let chunk;
     try { chunk = JSON.parse(evt); } catch { return; }
+    if (chunk.type === "message_start" && chunk.message?.usage) Object.assign(usage, chunk.message.usage);
+    if (chunk.type === "message_delta" && chunk.usage) Object.assign(usage, chunk.usage);
     if (chunk.type === "content_block_start" && chunk.content_block?.type === "tool_use") {
       currentTool = { id: chunk.content_block.id, name: chunk.content_block.name, arguments: null };
       currentToolJson = "";
@@ -921,7 +941,7 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
       currentTool = null;
     }
   });
-  return { text, toolCalls };
+  return { text, toolCalls, raw: Object.keys(usage).length ? { usage } : null };
 }
 
 // ===========================================================================
@@ -972,7 +992,14 @@ async function callOllama(messages, o, stream, hooks = {}) {
   // Streaming — Ollama emits NDJSON
   let text = "";
   const toolCalls = [];
+  // Ollama reports counts on its final chunk under its own names. Mapped to
+  // the OpenAI shape here so normaliseUsage() needs no third branch.
+  let usage = null;
   await readNDJSON(resp.body, (chunk) => {
+    if (chunk.done && (chunk.prompt_eval_count != null || chunk.eval_count != null)) {
+      const p = chunk.prompt_eval_count ?? null, c = chunk.eval_count ?? null;
+      usage = { prompt_tokens: p, completion_tokens: c, total_tokens: p != null && c != null ? p + c : null };
+    }
     if (chunk.message?.content) {
       text += chunk.message.content;
       hooks.onDelta?.(chunk.message.content);
@@ -988,7 +1015,7 @@ async function callOllama(messages, o, stream, hooks = {}) {
       }
     }
   });
-  return { text, toolCalls };
+  return { text, toolCalls, raw: usage ? { usage } : null };
 }
 
 // ---------------------------------------------------------------------------

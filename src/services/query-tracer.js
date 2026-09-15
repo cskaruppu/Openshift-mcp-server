@@ -119,6 +119,72 @@ export async function recordTrace({ traceId, conversationId, queryText, provider
   return traceId;
 }
 
+/**
+ * Record one agent operation that did NOT come through chat.
+ *
+ * recordTrace() was only ever called from chat-api.js, so Agent Traces showed
+ * chat and nothing else. Everything driven from the Automation Hub — a VM
+ * migration, an app deployment, a ServiceNow fix — ran through REST routes that
+ * recorded no span at all, which is why a whole migration wave was invisible in
+ * the panel and why average agents-per-query sat near zero: most rows were chat
+ * turns that called no tool, and the work that DID call tools was not being
+ * counted at all.
+ *
+ * Deliberately a one-span trace. These are not multi-agent conversations; one
+ * agent was asked to do one thing. Wrapping them to look like a chat turn would
+ * make the agents-per-query average meaningless in the other direction.
+ *
+ * Never throws: a missing trace must not fail the operation it describes.
+ * Telemetry is a record of the work, not a participant in it.
+ */
+export async function traceAgentOperation({
+  agentId, agentName, operation, toolsCalled = [],
+  durationMs = null, status = "success", conversationId = null,
+  cluster = null, resourcesTouched = null, category = null,
+}) {
+  if (!agentId || !operation) return null;
+  try {
+    return await recordTrace({
+      traceId: generateTraceId(),
+      conversationId,
+      queryText: operation,
+      provider: cluster ? `rest:${cluster}` : "rest",
+      totalDurationMs: durationMs,
+      status,
+      spans: [{
+        agentId,
+        agentName: agentName || agentId,
+        category,
+        toolsCalled,
+        status: status === "success" ? "success" : "error",
+        durationMs,
+        resourcesTouched,
+      }],
+    });
+  } catch (err) {
+    console.error(`[tracer] could not record ${agentId}/${operation}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Wrap an agent operation: run it, time it, record what happened either way.
+ *
+ * A failed operation is the one most worth having in the trace, so the span is
+ * written on the error path too and the error is then re-thrown unchanged.
+ */
+export async function withAgentTrace(meta, fn) {
+  const t0 = Date.now();
+  try {
+    const out = await fn();
+    traceAgentOperation({ ...meta, durationMs: Date.now() - t0, status: "success" });
+    return out;
+  } catch (err) {
+    traceAgentOperation({ ...meta, durationMs: Date.now() - t0, status: "error" });
+    throw err;
+  }
+}
+
 export async function getTrace(traceId) {
   if (await dbEnabled()) {
     await ensureSchema();

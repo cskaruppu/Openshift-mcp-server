@@ -672,6 +672,70 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+/**
+ * Record an Automation Hub agent's work in the trace, so Agent Traces stops
+ * being a view of chat only.
+ *
+ * recordTrace() had exactly one caller — chat-api.js — so a whole migration
+ * wave, every app deployment and every ServiceNow fix left no span at all.
+ * The panel then read "0.13 agents per query", which was not a measure of
+ * anything: it counted chat turns that called no tool, and omitted the work
+ * that actually called tools.
+ *
+ * STATE-CHANGING CALLS ONLY. The console polls plan status every few seconds
+ * while a migration runs; tracing GETs would bury the real operations under
+ * thousands of poll rows and make the table useless for the question it exists
+ * to answer.
+ *
+ * Hooked on "finish" rather than wrapping the handler: these route blocks reply
+ * from dozens of branches, and a wrapper around all of them is far more likely
+ * to change behaviour than a listener that only reads what was sent.
+ */
+/**
+ * Which registered agent owns which route prefix.
+ *
+ * Every id here must exist in src/agents/manifests/ — a span carrying an id the
+ * registry does not know would appear in Agent Traces and nowhere in the
+ * Governance lens, which is exactly the kind of quiet disagreement between two
+ * views of the same thing that makes both untrustworthy.
+ *
+ * Longest prefix first: /api/migration/ must not be caught by a shorter rule.
+ */
+const HUB_AGENT_ROUTES = [
+  ["/api/migration/",  "vm-migration",           "VM Migration Agent",            "Lifecycle"],
+  ["/api/automation/", "cicd-gitops",            "CI/CD & GitOps Agent",          "Platform"],
+  ["/api/servicenow/", "itsm-change-management", "ITSM & Change Management Agent", "Lifecycle"],
+  ["/api/compliance/", "security-compliance",    "Security & Compliance Agent",   "Governance"],
+  ["/api/rca/",        "diagnostics-healing",    "Diagnostics & Healing Agent",   "Operations"],
+];
+
+function traceHubAgent(req, res, url, agentId, agentName, category) {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return;
+  const t0 = Date.now();
+  res.once("finish", () => {
+    // The tail of the path is the verb — /plans/wave-3/migrate → "migrate".
+    // Names are echoed back from the URL, so cap them: this string is rendered
+    // in the console and stored.
+    const parts = url.pathname.split("/").filter(Boolean);
+    const verb = parts[parts.length - 1] || "request";
+    const subject = parts.length > 3 ? decodeURIComponent(parts[parts.length - 2]).slice(0, 80) : null;
+    try {
+      import("./services/query-tracer.js").then(({ traceAgentOperation }) => {
+        traceAgentOperation({
+          agentId, agentName, category,
+          operation: subject && subject !== verb ? `${verb} ${subject}` : verb,
+          toolsCalled: [`${agentId}:${verb}`],
+          durationMs: Date.now() - t0,
+          // 2xx is the only success. A 400 that the console renders as a
+          // friendly message is still an operation that did not happen.
+          status: res.statusCode >= 200 && res.statusCode < 300 ? "success" : "error",
+          cluster: url.searchParams.get("cluster") || "local",
+        });
+      }).catch(() => {});
+    } catch { /* never let telemetry break the response that already went out */ }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Cluster Isolation Policy — validate that a cluster name is known before
 // accepting it in any API request. Returns the resolved key or "local".
@@ -2237,6 +2301,14 @@ async function startSSE() {
     // Auth middleware — protect non-public routes
     const authOk = await authMiddleware(req, res, url);
     if (!authOk) return;
+
+    // Attribute Automation Hub work to the agent that did it. Registered here,
+    // after auth so an unauthenticated probe is not recorded as agent activity,
+    // and in one place because these routes reply from dozens of branches
+    // scattered across the file. State-changing calls only — see traceHubAgent.
+    for (const [prefix, id, name, cat] of HUB_AGENT_ROUTES) {
+      if (url.pathname.startsWith(prefix)) { traceHubAgent(req, res, url, id, name, cat); break; }
+    }
 
     // Cluster isolation: cross-check X-Cluster-Context header against query param.
     // If both are present and disagree, reject the request to prevent spoofing.
