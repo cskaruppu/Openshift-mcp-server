@@ -97,6 +97,147 @@ function Undeclared({ what = "not declared" }) {
 
 const nf = new Intl.NumberFormat();
 
+/**
+ * Four questions, four answers — and three of them are "nothing to deploy".
+ *
+ * "How do we deploy these agents?" kept being asked by teams who had a 37KB
+ * reference document available to them, which is evidence that a document was
+ * the wrong shape for the question rather than that the document was
+ * incomplete. Somebody asking it is standing in front of the registry, so the
+ * answer goes here, and its only job is to get them to the right one of four
+ * places in ten seconds.
+ *
+ * Dismissible, and it stays dismissed — this is first contact, not a banner
+ * regulars should have to read every time.
+ */
+function StartHere({ onNew, onConnect }) {
+  const KEY = "ar-start-here-dismissed";
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(KEY) !== "1"; } catch { return true; }
+  });
+  const dismiss = () => {
+    setOpen(false);
+    try { localStorage.setItem(KEY, "1"); } catch { /* private window — it just reappears */ }
+  };
+  if (!open) {
+    return <button className="ar-sh-reopen" onClick={() => setOpen(true)}>? How do I use these</button>;
+  }
+
+  const ROWS = [
+    ["Use these agents from my app or IDE",
+     <>Click any agent below — <b>Use it — paste this</b> has the snippet. Nothing to deploy.</>],
+    ["Get my cluster managed",
+     <>Close this and use <b>Connect a Cluster</b> on the cluster screen. One agent pod, not sixteen.</>],
+    ["Build an agent of my own",
+     <><button className="ar-sh-link" onClick={onNew}>+ New agent</button> — it grades the manifest, you commit the file.</>],
+    ["Plug in an MCP server I already run",
+     <><button className="ar-sh-link" onClick={onConnect}>+ Connect an external agent</button> — it stays where it is.</>],
+  ];
+
+  return (
+    <div className="ar-sh">
+      <div className="ar-sh-head">
+        <b>New here?</b>
+        <span>An agent is not a deployable — all {"\u200B"}sixteen run on this server. Mostly you need a URL and a token.</span>
+        <button className="ar-sh-x" onClick={dismiss} aria-label="Dismiss">&times;</button>
+      </div>
+      <div className="ar-sh-rows">
+        {ROWS.map(([q, a], i) => (
+          <div className="ar-sh-row" key={i}>
+            <span className="ar-sh-q">{q}</span>
+            <span className="ar-sh-a">{a}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Copy-paste connect snippets for one agent.
+ *
+ * These already existed — in docs/AGENT-CATALOG.md, 37KB of thorough reference
+ * that people were still not reading, because somebody who wants to connect is
+ * looking at the AGENT, not hunting for a markdown file. Same content, moved to
+ * where the question is actually asked, and pre-filled with this agent's id so
+ * there is nothing to substitute.
+ *
+ * The example tool is the agent's own first tool rather than a placeholder: a
+ * snippet you can paste and run beats one you have to edit first.
+ */
+function ConnectSnippets({ agent }) {
+  const [tab, setTab] = useState("client");
+  const sse = sseUrlOf(agent);
+  const tool = (agent.tools || [])[0] || "list_namespaces";
+
+  const clientJson = JSON.stringify({
+    mcpServers: {
+      [`tcs-${agent.id}`]: { url: sse, headers: { Authorization: "Bearer ${MCP_API_TOKEN}" } },
+    },
+  }, null, 2);
+
+  const python = `from mcp import ClientSession
+from mcp.client.sse import sse_client
+
+URL = "${sse}"
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+
+async with sse_client(URL, headers=HEADERS) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        tools = await session.list_tools()
+        print([t.name for t in tools.tools])
+
+        result = await session.call_tool("${tool}", {})
+        print(result.content[0].text)`;
+
+  const langchain = `from langchain_mcp_adapters.client import MultiServerMCPClient
+
+client = MultiServerMCPClient({
+    "${agent.id.replace(/-/g, "_")}": {
+        "url": "${sse}",
+        "transport": "sse",
+        "headers": {"Authorization": f"Bearer {TOKEN}"},
+    },
+})
+tools = await client.get_tools()`;
+
+  const curl = `curl -N -H "Authorization: Bearer $MCP_API_TOKEN" \\
+  ${sse}
+
+# The tool list over plain REST, no MCP client needed:
+curl -s -H "Authorization: Bearer $MCP_API_TOKEN" \\
+  ${agent.toolsUrl || `${window.location.origin}/api/agents/${agent.id}/tools`} | jq '.tools[].name'`;
+
+  const TABS = [
+    ["client", "MCP client", clientJson],
+    ["python", "Python", python],
+    ["langchain", "LangChain", langchain],
+    ["curl", "curl", curl],
+  ];
+  const active = TABS.find(([k]) => k === tab) || TABS[0];
+
+  return (
+    <>
+      <h4>Use it — paste this</h4>
+      <div className="ar-snip">
+        <div className="ar-snip-tabs">
+          {TABS.map(([k, label]) => (
+            <button key={k} className={"ar-snip-tab" + (tab === k ? " active" : "")}
+              onClick={() => setTab(k)}>{label}</button>
+          ))}
+          <CopyBtn text={active[2]} small />
+        </div>
+        <pre className="ar-snip-code">{active[2]}</pre>
+        <div className="ar-snip-note">
+          Nothing to deploy — this agent already runs here. You need a URL and a token.
+          {" "}<b>{(agent.tools || []).length} tool(s)</b> come with it.
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* Grades, not a gradient. A number alone invites arguing about whether 71 is
    good; a letter with a meaning beside it does not. */
 const GRADE = {
@@ -208,8 +349,7 @@ function OwnerCell({ agent, onClaim, busy }) {
  * must read as undeclared, and a comfortable default is how an agent that can
  * change the estate ends up looking harmless.
  */
-function ConnectAgentForm({ onDone }) {
-  const [open, setOpen] = useState(false);
+function ConnectAgentForm({ onDone, open, setOpen }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [f, setF] = useState({
@@ -718,6 +858,7 @@ export function AgentRegistryModal({ open, onClose }) {
   /* "Mine" is the default for anyone who owns something. At sixty agents the
      fleet table is the platform team's view; an owner wants their own rows. */
   const [scope, setScope] = useState("mine");
+  const [connectOpen, setConnectOpen] = useState(false);
 
   const { data: registryData, refetch: refetchRegistry } = useQuery({
     queryKey: ["/api/agents"],
@@ -965,8 +1106,12 @@ export function AgentRegistryModal({ open, onClose }) {
           {/* The only way to add an external agent. This lived behind the API
               alone, so in practice nobody created one — and the agent nobody
               can create is the agent nobody governs. */}
+          <StartHere onNew={() => { setNewAgent(true); setConnectOpen(false); }}
+            onConnect={() => { setConnectOpen(true); setNewAgent(false); }} />
+
           <div className="ar-create-row">
-            <ConnectAgentForm onDone={() => { refetchRegistry(); refetchGov(); }} />
+            <ConnectAgentForm open={connectOpen} setOpen={setConnectOpen}
+              onDone={() => { refetchRegistry(); refetchGov(); }} />
             {/* The golden path. Shaping agents at creation is the only thing on
                 this screen that reduces the future problem rather than
                 reporting on it. */}
@@ -1142,6 +1287,8 @@ export function AgentRegistryModal({ open, onClose }) {
                   </div>
                 );
               })()}
+
+              <ConnectSnippets agent={detailAgent} />
 
               {Array.isArray(detailAgent.capabilities) && detailAgent.capabilities.length > 0 && (
                 <>

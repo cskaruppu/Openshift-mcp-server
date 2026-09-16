@@ -9288,14 +9288,24 @@ spec:
           "product-overview": "TCS-Agentic-AI-Product-Overview.docx",
           "customer-benefits": "TCS-Agentic-AI-Customer-Benefits.docx",
           "mcp-comparison": "TCS-Agentic-AI-vs-Official-MCP-Comparison.docx",
+          // Markdown, read in the browser rather than downloaded. The registry
+          // has always advertised a catalogDoc URL; it pointed at ?file= while
+          // this route reads ?doc=, and the catalog was not in the map either,
+          // so the one link telling another team how to connect was a 404.
+          "agent-catalog": "AGENT-CATALOG.md",
+          "start-here": "START-HERE.md",
         };
         const fileName = docMap[docName];
         if (!fileName) { sendJson(res, 404, { error: "Unknown document: " + docName, available: Object.keys(docMap) }); return; }
         const filePath = resolve("docs", fileName);
         const fileData = await readFile(filePath);
+        const isMd = fileName.endsWith(".md");
         res.writeHead(200, {
-          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "Content-Disposition": `attachment; filename="${fileName}"`,
+          "Content-Type": isMd
+            ? "text/plain; charset=utf-8"
+            : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          // Markdown opens in the tab; a .docx is still a download.
+          ...(isMd ? {} : { "Content-Disposition": `attachment; filename="${fileName}"` }),
           "Content-Length": fileData.length,
         });
         res.end(fileData);

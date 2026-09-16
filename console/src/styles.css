@@ -7465,3 +7465,73 @@ h3.widget-title {
 /* Lifecycle, and the action that changes it. */
 .ar-life { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .ar-life .ar-gov-claim { font-size: 10px; padding: 1px 8px; }
+
+/* ── Connect snippets ──────────────────────────────────────────────────────
+   The same content as docs/AGENT-CATALOG.md, moved to where the question is
+   actually asked. Someone who wants to connect is looking at the agent, not
+   hunting for a markdown file. */
+.ar-snip { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.ar-snip-tabs {
+  display: flex; gap: 4px; align-items: center; padding: 7px 9px;
+  background: var(--bg); border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+.ar-snip-tab {
+  font-family: inherit; font-size: 11.5px; font-weight: 700;
+  padding: 3px 11px; border-radius: 7px; cursor: pointer;
+  border: 1px solid transparent; background: transparent; color: var(--text2);
+}
+.ar-snip-tab:hover { color: var(--text); }
+.ar-snip-tab.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.ar-snip-tab:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.ar-snip-tabs .ar-snip-tab + :not(.ar-snip-tab) { margin-left: auto; }
+.ar-snip-code {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 11px; line-height: 1.6; margin: 0; padding: 12px 14px;
+  max-height: 300px; overflow: auto; white-space: pre; tab-size: 2;
+  background: var(--bg-alt, var(--card)); color: var(--text);
+}
+.ar-snip-note {
+  font-size: 11.5px; color: var(--text2); line-height: 1.55;
+  padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg);
+}
+
+/* ── Start here: four questions, three of which need no deployment ─────────
+   The question this answers was being asked by people who already had a 37KB
+   reference available — which says the document was the wrong shape for the
+   question, not that it was incomplete. So the answer lives where the question
+   is asked, and gets out of the way once it has been read. */
+.ar-sh {
+  border: 1px solid var(--accent2); border-left-width: 3px;
+  border-radius: 0 10px 10px 0; background: rgba(61,90,254,.05);
+  padding: 11px 14px; margin-bottom: 14px;
+}
+.ar-sh-head { display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap; margin-bottom: 9px; }
+.ar-sh-head b { font-size: 13px; }
+.ar-sh-head span { font-size: 12px; color: var(--text2); }
+.ar-sh-x {
+  margin-left: auto; background: none; border: none; cursor: pointer;
+  font-size: 18px; line-height: 1; color: var(--text2); padding: 0 2px;
+}
+.ar-sh-x:hover { color: var(--text); }
+.ar-sh-rows { display: flex; flex-direction: column; gap: 5px; }
+.ar-sh-row {
+  display: grid; grid-template-columns: minmax(180px, 250px) 1fr; gap: 12px;
+  font-size: 12px; line-height: 1.5;
+}
+.ar-sh-q { color: var(--text); font-weight: 600; }
+.ar-sh-a { color: var(--text2); }
+.ar-sh-link {
+  font-family: inherit; font-size: 12px; font-weight: 700; padding: 0;
+  background: none; border: none; cursor: pointer; color: var(--accent2);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.ar-sh-reopen {
+  font-family: inherit; font-size: 11.5px; font-weight: 700;
+  padding: 3px 11px; border-radius: 999px; cursor: pointer; margin-bottom: 12px;
+  border: 1px solid var(--border2); background: transparent; color: var(--text2);
+}
+.ar-sh-reopen:hover { color: var(--accent2); border-color: var(--accent2); }
+
+@media (max-width: 620px) {
+  .ar-sh-row { grid-template-columns: 1fr; gap: 1px; }
+}

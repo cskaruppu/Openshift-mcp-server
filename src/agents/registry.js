@@ -241,7 +241,8 @@ export async function handleAgentRoutes(req, res, url) {
     agents: `${base0}/api/agents`,
     categories: `${base0}/api/agents/categories`,
     combinedMcpSse: `${base0}/sse`,
-    catalogDoc: `${base0}/api/docs/download?file=AGENT-CATALOG.md`,
+    catalogDoc: `${base0}/api/docs/download?doc=agent-catalog`,
+    startHere: `${base0}/api/docs/download?doc=start-here`,
   };
 
   // ── Governance lens ────────────────────────────────────────────────────
