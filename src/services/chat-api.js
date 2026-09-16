@@ -98,6 +98,26 @@ import { lookupError, findMatchingErrors, getErrorsForReason } from "./error-kno
 import { buildIncidentContext, recordIncidentResolution } from "./incident-rag.js";
 import { buildPlatformPromptSection, getPlatformCommands } from "../platform/intent-router.js";
 
+/**
+ * Attribute a chat turn's token spend to the agent that handled it.
+ *
+ * Only when exactly one agent did. A turn spanning three agents is genuinely
+ * ambiguous, and picking one — or splitting between them — is the guess this
+ * codebase keeps having to undo. Ambiguous stays unattributed, which is true.
+ *
+ * Best-effort and never awaited into the response path: attribution is a record
+ * of the work, not part of it.
+ */
+function attributeTurn(agentTrace, conversationId, startedAt) {
+  try {
+    const ids = [...new Set((agentTrace || []).map((a) => a.agentId).filter(Boolean))];
+    if (ids.length !== 1 || !conversationId) return;
+    import("./telemetry.js")
+      .then((t) => t.attributeConversation(conversationId, ids[0], { sinceMs: startedAt }))
+      .catch(() => {});
+  } catch { /* never let attribution affect the turn it describes */ }
+}
+
 // Build agent trace: maps tools used in a chat response back to their owning agents.
 async function buildAgentTrace(toolsUsed, contextKeys, durationMs) {
   if (!toolsUsed || toolsUsed.length === 0) {
@@ -17866,6 +17886,7 @@ export async function handleChatCompareAPI(req, res) {
     const contextKeys = context ? Object.keys(context) : [];
     const traceId = generateTraceId();
     const agentTrace = await buildAgentTrace(toolsUsed, contextKeys, Date.now() - startedAt).catch(() => []);
+    attributeTurn(agentTrace, conversationId, startedAt);
     recordTrace({
       traceId,
       conversationId,
@@ -17970,6 +17991,7 @@ export async function handleChatInvestigateAPI(req, res) {
 
     const traceId = generateTraceId();
     const agentTrace = await buildAgentTrace(toolsUsed, contextKeys, Date.now() - startedAt).catch(() => []);
+    attributeTurn(agentTrace, conversationId, startedAt);
     recordTrace({
       traceId,
       conversationId,

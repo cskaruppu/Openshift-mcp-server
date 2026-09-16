@@ -138,6 +138,7 @@ import { loadKubeconfig, registerMultiClusterTools } from "./services/multi-clus
 import { handleAgentRoutes as handleAgentRegistryRoutes, loadAgents } from "./agents/registry.js";
 import { handleAgentChannel, handleToolRegistration, handleToolResponse, invokeAgentTool, hasActiveChannel, getChannelStatus, pushEventToAgent, broadcastEvent } from "./services/agent-bridge.js";
 import { handleAgentMcpRoutes } from "./agents/mcp-router.js";
+import { withAgentContext, setCurrentAgent } from "./services/agent-context.js";
 import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
@@ -2268,7 +2269,7 @@ async function startSSE() {
   // instance (the SDK ties one transport to one server).
   const sessions = new Map();
 
-  const httpServer = createServer(async (req, res) => {
+  const httpServer = createServer(async (req, res) => withAgentContext(async () => {
    try {
     // Stash accept-encoding so downstream json() helpers can gzip responses
     res._req_accept_encoding = req.headers["accept-encoding"] || "";
@@ -2307,7 +2308,15 @@ async function startSSE() {
     // and in one place because these routes reply from dozens of branches
     // scattered across the file. State-changing calls only — see traceHubAgent.
     for (const [prefix, id, name, cat] of HUB_AGENT_ROUTES) {
-      if (url.pathname.startsWith(prefix)) { traceHubAgent(req, res, url, id, name, cat); break; }
+      if (url.pathname.startsWith(prefix)) {
+        traceHubAgent(req, res, url, id, name, cat);
+        // Every model call made while serving this request now lands on this
+        // agent, with no call site needing to know. Set here rather than passed
+        // down because the route is the only place that knows, and threading it
+        // through 36 call sites is the kind of change that is never finished.
+        setCurrentAgent(id);
+        break;
+      }
     }
 
     // Cluster isolation: cross-check X-Cluster-Context header against query param.
@@ -9494,7 +9503,7 @@ spec:
       res.end(JSON.stringify({ error: `${err.message} [at ${(err.stack || "").split("\n")[1]?.trim() || "unknown"}]` }));
     }
    }
-  });
+  }));
 
   // Warm-load the Agent Registry so /.well-known/agent.json is fast on first hit.
   loadAgents().then((list) => {

@@ -175,6 +175,41 @@ export async function recordMigration(entry = {}) {
   return rec;
 }
 
+/**
+ * What one migration cost in AI, per machine moved.
+ *
+ * The number that answers the question an executive actually asks. "The fleet
+ * spent $62 this month" is a cost line; "£0.38 per VM migrated" against a
+ * manual runbook is a return, and it is the same data read the other way up.
+ *
+ * Only possible because cost is recorded in the same row as the outcome it
+ * bought — vmCount, actualMinutes, totalGiB. Nothing else has to be joined.
+ *
+ * Returns null rather than zero when either half is missing. A migration whose
+ * AI cost was never captured did not cost nothing; it is unmeasured, and a
+ * per-VM figure of £0.00 is the kind of flattering number that gets quoted once
+ * and then has to be retracted.
+ */
+export function costPerOutcome(rec = {}) {
+  const usd = rec.ai?.costUsd;
+  const vms = rec.vmCount;
+  if (usd == null || !Number.isFinite(Number(usd))) return null;
+  if (!vms || !Number.isFinite(Number(vms)) || Number(vms) <= 0) return null;
+  const per = Number(usd) / Number(vms);
+  return {
+    costUsd: Number(usd),
+    vmCount: Number(vms),
+    perVmUsd: per,
+    // Tokens per machine is the engineering half of the same question, and it
+    // is what moves when a prompt changes.
+    tokensPerVm: rec.ai?.totalTokens != null ? Math.round(Number(rec.ai.totalTokens) / Number(vms)) : null,
+    // Flagged rather than hidden: a partial token count makes the cost a floor,
+    // not a figure, and anyone quoting it should know which they have.
+    partial: !!rec.ai?.tokensPartial,
+    perVm: per < 0.01 ? `$${per.toFixed(4)}` : `$${per.toFixed(2)}`,
+  };
+}
+
 /** Past migrations, newest first. Reads the database when there is one. */
 export async function listMigrations({ limit = 50, cluster = null, planName = null, includeDismissed = false } = {}) {
   const lim = Math.min(500, Math.max(1, limit));
@@ -193,10 +228,15 @@ export async function listMigrations({ limit = 50, cluster = null, planName = nu
       );
       return {
         durable: true, retentionDays: RETENTION_DAYS,
-        migrations: (r.rows || []).map((row) => ({
-          ...(typeof row.data === "string" ? JSON.parse(row.data) : row.data),
-          dismissedAt: row.dismissed_at || null, dismissedBy: row.dismissed_by || null,
-        })),
+        migrations: (r.rows || []).map((row) => {
+          const rec = {
+            ...(typeof row.data === "string" ? JSON.parse(row.data) : row.data),
+            dismissedAt: row.dismissed_at || null, dismissedBy: row.dismissed_by || null,
+          };
+          // Derived on read rather than stored: the rate card can change, and a
+          // figure frozen at write time would quietly go stale.
+          return { ...rec, unitCost: costPerOutcome(rec) };
+        }),
       };
     }
   } catch { /* fall through to memory */ }
@@ -213,7 +253,8 @@ export async function listMigrations({ limit = 50, cluster = null, planName = nu
     .sort((a, b) => String(b.finishedAt || "").localeCompare(String(a.finishedAt || "")))
     .slice(0, lim);
   return {
-    durable: false, retentionDays: RETENTION_DAYS, migrations: rows,
+    durable: false, retentionDays: RETENTION_DAYS,
+    migrations: rows.map((rec) => ({ ...rec, unitCost: costPerOutcome(rec) })),
     // Said plainly rather than left for someone to discover after a restart.
     note: "No database is configured, so this history is held in memory and is lost when the pod restarts. The change requests in ServiceNow remain the durable record.",
   };

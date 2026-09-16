@@ -2246,6 +2246,19 @@ function MigrationAgent({ clusters, activeCluster }) {
                   {a.ai.costUsd != null ? ` · $${a.ai.costUsd < 0.01 ? a.ai.costUsd.toFixed(4) : a.ai.costUsd.toFixed(2)}` : ""}
                 </span>
               )}
+              {/* Cost read the other way up. "The wave cost $1.52" is an
+                  expense; "$0.38 per machine" is the number that gets compared
+                  against doing it by hand, and it is the same data. Shown only
+                  when both halves were measured — a per-VM figure derived from
+                  a missing cost would read as free. */}
+              {a.unitCost && (
+                <span style={{ fontWeight: 700, color: "var(--st-good-ink)" }}
+                  title={`${a.unitCost.costUsd < 0.01 ? "$" + a.unitCost.costUsd.toFixed(4) : "$" + a.unitCost.costUsd.toFixed(2)} of AI across ${a.unitCost.vmCount} machine(s)`
+                    + (a.unitCost.tokensPerVm != null ? ` · ${a.unitCost.tokensPerVm.toLocaleString()} tokens per machine` : "")
+                    + (a.unitCost.partial ? " · token count is partial, so this is a floor" : "")}>
+                  {a.unitCost.partial ? "≥" : ""}{a.unitCost.perVm} per VM
+                </span>
+              )}
               <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
                 {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
               </span>

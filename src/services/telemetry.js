@@ -151,6 +151,47 @@ export async function recordLLMCall({
 }
 
 /**
+ * Attribute a conversation's model calls to an agent, after the fact.
+ *
+ * Chat is the one place the agent cannot be known in advance: which agent
+ * handled a turn is revealed by the tools the model chose, which is only known
+ * once the model has already run and the tokens are already spent. So those
+ * rows are written unattributed and corrected here, keyed on the conversation
+ * they belong to — which was always recorded.
+ *
+ * ONLY WHEN THERE IS EXACTLY ONE AGENT. A turn that touched three agents is
+ * genuinely ambiguous, and splitting the tokens between them — or picking the
+ * first — is precisely the apportionment mistake this work exists to undo. An
+ * ambiguous turn stays unattributed, which is true.
+ *
+ * Never overwrites a row that already names an agent.
+ */
+export async function attributeConversation(conversationId, agentId, { sinceMs = null } = {}) {
+  if (!conversationId || !agentId) return { ok: false, updated: 0 };
+  try {
+    await ensureTelemetrySchema();
+    const params = [conversationId, agentId];
+    let sinceClause = "";
+    if (sinceMs) {
+      params.push(new Date(sinceMs).toISOString());
+      sinceClause = ` AND created_at >= $${params.length}`;
+    }
+    const r = await query(
+      `UPDATE telemetry_events
+          SET agent_id = $2
+        WHERE conversation_id = $1
+          AND event_type = 'llm_call'
+          AND agent_id IS NULL${sinceClause}`,
+      params,
+    );
+    if (!r) return { ok: false, updated: 0 };
+    return { ok: true, updated: r.rowCount || 0 };
+  } catch {
+    return { ok: false, updated: 0 };
+  }
+}
+
+/**
  * Tokens actually spent per agent, over a window.
  *
  * Returns only what was measured. An agent whose calls carry no agent_id is

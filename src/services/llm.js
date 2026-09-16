@@ -456,16 +456,24 @@ async function _recordTelemetry(params) {
     const ff = await import("./feature-flags.js");
     if (!ff.flags.pillar6Telemetry()) return;
     const tel = await import("./telemetry.js");
+    // Read once, here, at the only boundary that records usage.
+    let ambient = { agentId: null, agentVersion: null };
+    try {
+      const { currentAgent } = await import("./agent-context.js");
+      ambient = currentAgent();
+    } catch { /* no context — the call is recorded unattributed */ }
     tel.recordLLMCall({
       provider: params.provider,
       model: params.model,
       conversationId: params.conversationId,
-      // Carried from the caller so spend lands on the agent that caused it.
-      // Absent means absent — it is recorded as NULL and reported as "not
-      // attributed", never spread across the agents that did identify
-      // themselves. See getAgentTokenUsage().
-      agentId: params.agentId || null,
-      agentVersion: params.agentVersion || null,
+      // Spend lands on the agent that caused it. An explicit agentId from the
+      // caller wins; otherwise the ambient context set by whichever route is
+      // being served supplies it, so a call site never has to know. Absent from
+      // both means absent — recorded as NULL and reported as "not attributed",
+      // never spread across the agents that did identify themselves, and never
+      // guessed from whichever agent happens to be nearby.
+      agentId: params.agentId || ambient.agentId,
+      agentVersion: params.agentVersion || ambient.agentVersion,
       durationMs: params.durationMs,
       success: params.success,
       // recordLLMCall's documented contract is snake_case; normaliseUsage
