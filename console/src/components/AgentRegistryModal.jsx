@@ -82,6 +82,14 @@ const VERDICT = {
    Pills in this console mean state that changes. */
 const RADIUS_COLOR = { "read-only": "var(--st-unknown)", mutating: "var(--st-warn)", irreversible: "var(--st-crit)" };
 
+/* Where an agent is in its working life. `active` is the ordinary state and
+   gets no badge — a label on every row labels nothing. */
+const LIFECYCLE_BADGE = {
+  experimental: { label: "probation", bg: "var(--st-warn-bg)", fg: "var(--st-warn-ink)" },
+  deprecated:   { label: "deprecated", bg: "var(--st-crit-bg)", fg: "var(--st-crit-ink)" },
+  retired:      { label: "retired",   bg: "var(--st-unknown-bg)", fg: "var(--st-unknown-ink)" },
+};
+
 /** An undeclared field reads as undeclared, never as blank. */
 function Undeclared({ what = "not declared" }) {
   return <span style={{ color: "var(--st-unknown-ink)", fontStyle: "italic", fontSize: "0.72rem" }}>{what}</span>;
@@ -494,7 +502,48 @@ function NewAgentForm({ onClose }) {
   );
 }
 
-function GovernanceLens({ data, onClaim, busyId }) {
+/**
+ * Lifecycle, and the one action that changes it.
+ *
+ * Promotion is offered only on an agent still on probation, and the button
+ * carries what it is for: letting other teams depend on this. The server
+ * refuses when the agent is not ready, and the refusal names the first reason —
+ * so this does not duplicate the bar, it just asks.
+ */
+function LifecycleCell({ agent, onPromote, busy }) {
+  const badge = LIFECYCLE_BADGE[agent.lifecycle];
+  const promo = agent.promotion;
+  if (!badge && !promo) return null;
+
+  return (
+    <div className="ar-life">
+      {badge && (
+        <span className="ar-gov-pill" style={{ background: badge.bg, color: badge.fg }}
+          title={agent.lifecycleSource === "promoted"
+            ? "Promoted by approval — land governance.lifecycle in the manifest to make it permanent."
+            : agent.daysInLifecycle != null ? `${agent.daysInLifecycle} days in this state` : undefined}>
+          {badge.label}
+        </span>
+      )}
+      {agent.lifecycleSource === "promoted" && (
+        <span className="ar-gov-claimed">promoted by approval · not yet in the manifest</span>
+      )}
+      {promo?.state === "pending" && (
+        <span className="ar-gov-claimed">
+          {promo.changeRequest ? `${promo.changeRequest} awaiting approval` : "awaiting approval"}
+        </span>
+      )}
+      {agent.promotable && promo?.state !== "pending" && (
+        <button className="ar-gov-claim" disabled={busy} onClick={() => onPromote(agent)}
+          title="Ask for this agent to leave probation so other teams may depend on it">
+          Request promotion
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GovernanceLens({ data, onClaim, onPromote, busyId, scope, onScope }) {
   if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
 
   const agents = Array.isArray(data.agents) ? data.agents : [];
@@ -527,6 +576,22 @@ function GovernanceLens({ data, onClaim, busyId }) {
         {stat(fleet.unowned ?? "--", "Unowned", "nobody accountable", (fleet.unowned || 0) > 0)}
         {stat(fleet.needsAttention ?? "--", "Needs attention", null, (fleet.needsAttention || 0) > 0)}
       </div>
+
+      {/* Whose agents. Offered only to somebody who owns any — a Mine tab that
+          is always empty is worse than no tab. */}
+      {data.user && (data.mineCount > 0 || scope === "mine") && (
+        <div className="ar-scope">
+          <button className={"ar-scope-btn" + (scope === "mine" ? " active" : "")}
+            onClick={() => onScope("mine")}>Mine <span>{data.mineCount}</span></button>
+          <button className={"ar-scope-btn" + (scope === "all" ? " active" : "")}
+            onClick={() => onScope("all")}>All <span>{data.totalCount}</span></button>
+          {scope === "mine" && data.mineCount === 0 && (
+            <span className="ar-gov-note" style={{ margin: 0 }}>
+              You do not own any agent yet. Claim one from <b>All</b>.
+            </span>
+          )}
+        </div>
+      )}
 
       {/* One number for the fleet, and the single fix that lifts the most
           agents. At sixty agents this is what turns a list of problems into a
@@ -589,6 +654,7 @@ function GovernanceLens({ data, onClaim, busyId }) {
                         {a.connectionStatus && a.connectionStatus !== "connected" ? ` · ${a.connectionStatus}` : ""}
                       </div>
                     )}
+                    <LifecycleCell agent={a} onPromote={onPromote} busy={busyId === a.id} />
                   </td>
                   <td><ScoreCell card={a.scorecard} /></td>
                   <td><OwnerCell agent={a} onClaim={onClaim} busy={busyId === a.id} /></td>
@@ -649,6 +715,9 @@ export function AgentRegistryModal({ open, onClose }) {
   const [zoom, setZoom] = useState(1);
   const [claiming, setClaiming] = useState(null);
   const [newAgent, setNewAgent] = useState(false);
+  /* "Mine" is the default for anyone who owns something. At sixty agents the
+     fleet table is the platform team's view; an owner wants their own rows. */
+  const [scope, setScope] = useState("mine");
 
   const { data: registryData, refetch: refetchRegistry } = useQuery({
     queryKey: ["/api/agents"],
@@ -681,8 +750,8 @@ export function AgentRegistryModal({ open, onClose }) {
   /* Posture reads telemetry, so it is only fetched when the lens asks for it —
      the catalog stays as cheap as it is today. */
   const { data: govData, refetch: refetchGov } = useQuery({
-    queryKey: ["/api/agents/governance"],
-    queryFn: ({ signal }) => apiGet("/api/agents/governance?days=30", { signal }).catch(() => ({})),
+    queryKey: ["/api/agents/governance", scope],
+    queryFn: ({ signal }) => apiGet(`/api/agents/governance?days=30&scope=${scope}`, { signal }).catch(() => ({})),
     staleTime: 60_000,
     enabled: open && lens === "governance",
   });
@@ -690,6 +759,33 @@ export function AgentRegistryModal({ open, onClose }) {
   /* Claiming is accepting accountability, so it asks first and says exactly
      what it is recording. `owner` null means "me" — the server fills in the
      signed-in user, which is the common case and should not need a form. */
+  /* Promotion is a request, not a switch: it raises a change and the agent
+     stays on probation until somebody else approves it. The confirm says so,
+     because the button reads like it promotes. */
+  const promoteAgent = async (agent) => {
+    if (!window.confirm(
+      `Request promotion for ${agent.name}?\n\n` +
+      `This asks for the agent to leave probation so other teams may depend on it. ` +
+      `Its scorecard is attached as the evidence.\n\n` +
+      `It stays on probation until someone other than you approves it.`
+    )) return;
+    setClaiming(agent.id);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/promotion`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      }).then((x) => x.json());
+      if (!r.ok) {
+        window.alert(r.blockers?.length
+          ? `Not ready for promotion:\n\n• ${r.blockers.join("\n• ")}`
+          : (r.error || "Could not request promotion."));
+        return;
+      }
+      window.alert(r.message);
+      await refetchGov();
+    } catch (e) { window.alert(e.message); }
+    finally { setClaiming(null); }
+  };
+
   const claimAgent = async (agent, suggested) => {
     const who = suggested || "you";
     if (!window.confirm(
@@ -806,7 +902,8 @@ export function AgentRegistryModal({ open, onClose }) {
             // leave the panel scrolling sideways at 70%.
           }}>
           {lens === "governance" ? (
-            <GovernanceLens data={govData} onClaim={claimAgent} busyId={claiming} />
+            <GovernanceLens data={govData} onClaim={claimAgent} onPromote={promoteAgent}
+              busyId={claiming} scope={scope} onScope={setScope} />
           ) : (<>
           {/* Stats Hero */}
           <div className="ar-stats-row">

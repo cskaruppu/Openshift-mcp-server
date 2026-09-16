@@ -7447,3 +7447,21 @@ h3.widget-title {
   border-radius: 9px; padding: 11px 13px; color: var(--text);
   white-space: pre; tab-size: 2;
 }
+
+/* ── Scope: mine vs the fleet ─────────────────────────────────────────────
+   At sixty agents the fleet table belongs to the platform team; an owner wants
+   their own rows, which is why this defaults to Mine for anyone who owns
+   something and is not shown at all to anyone who owns nothing. */
+.ar-scope { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.ar-scope-btn {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border2); background: transparent; color: var(--text2);
+}
+.ar-scope-btn.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.ar-scope-btn span { opacity: .7; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.ar-scope-btn:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+
+/* Lifecycle, and the action that changes it. */
+.ar-life { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.ar-life .ar-gov-claim { font-size: 10px; padding: 1px 8px; }

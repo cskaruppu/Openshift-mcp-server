@@ -142,6 +142,56 @@ export async function listProfiles() {
   return out;
 }
 
+/**
+ * Posture and scorecard for ONE agent, by the same route the lens takes.
+ *
+ * Exists so a promotion request carries exactly the evidence the requester was
+ * looking at when they pressed the button. Recomputing it differently — or
+ * later — would mean the change request says something the console never
+ * showed, which is the sort of discrepancy that surfaces at an audit.
+ */
+export async function buildPostureFor(agentId) {
+  const agent = await getAgentById(agentId);
+  if (!agent) return null;
+
+  const { agentPosture } = await import("./governance.js");
+  const { scoreAgent } = await import("./scorecard.js");
+
+  let claim = null, promotion = null, served = null, seen = null;
+  try {
+    const { getOwnership } = await import("../services/agent-ownership.js");
+    claim = (await getOwnership()).get(agentId) || null;
+  } catch { /* no claims */ }
+  try {
+    const { getPromotion } = await import("./promotion.js");
+    promotion = await getPromotion(agentId);
+  } catch { /* no promotions */ }
+  try {
+    const { implementedTools } = await import("./tool-index.js");
+    served = await implementedTools();
+  } catch { /* probe unavailable */ }
+  try {
+    const { getAgentAnalytics } = await import("../services/query-tracer.js");
+    seen = ((await getAgentAnalytics({ days: 30 })).agents || [])
+      .find((x) => (x.agent_id || x.agent_name) === agentId) || null;
+  } catch { /* no traces */ }
+
+  const posture = agentPosture(
+    agent,
+    seen ? { tools: seen.most_common_tools || [] } : null,
+    Date.now(),
+    { claim, promotion },
+  );
+  const scorecard = scoreAgent({
+    owner: posture.owner, blastRadius: posture.blastRadius, trustTier: posture.trustTier,
+    autonomy: posture.autonomy, certification: posture.certification, reconciled: posture.reconciled,
+    missingTools: served ? (agent.tools || []).filter((t) => !served.has(t)) : null,
+    lastUsed: seen?.last_used || null, errorRate: seen?.error_rate ?? null,
+    hasExamples: !!(agent.examples?.length),
+  });
+  return { agent, posture, scorecard };
+}
+
 export async function getAgentsByTool(toolName) {
   await loadAgents();
   return _byTool.get(toolName) || [];
@@ -254,6 +304,15 @@ export async function handleAgentRoutes(req, res, url) {
       claims = await getOwnership();
     } catch { /* no claims — manifest declarations still stand */ }
 
+    // Approved promotions move an agent off probation and certify it, the same
+    // way a claim gives it an owner: recorded here, merged at read time, with
+    // the manifest still the durable answer.
+    let promotions = new Map();
+    try {
+      const { getPromotions } = await import("./promotion.js");
+      promotions = await getPromotions();
+    } catch { /* no promotions — every agent sits at its declared lifecycle */ }
+
     let hints = new Map();
     try {
       const unowned = agents.filter((a) => !a.governance?.owner && !claims.has(a.id)).map((a) => a.id);
@@ -280,7 +339,11 @@ export async function handleAgentRoutes(req, res, url) {
         // Egress and caller attribution are not captured yet. An empty array
         // would read as "nothing observed, all clear"; these stay undefined so
         // the posture reports them as unobserved rather than clean.
-      } : null, now, { claim: claims.get(a.id) || null, suggestion: hints.get(a.id) || null });
+      } : null, now, {
+        claim: claims.get(a.id) || null,
+        suggestion: hints.get(a.id) || null,
+        promotion: promotions.get(a.id) || null,
+      });
       const u = usage.byAgent.get(a.id) || null;
       return {
         ...p,
@@ -316,10 +379,22 @@ export async function handleAgentRoutes(req, res, url) {
       };
     });
 
+    // "My agents". At sixty agents nobody reads the fleet table, but every
+    // owner reads their own five rows — the same reason an HR system opens on
+    // your team rather than the company directory. Matches an owner declared in
+    // the manifest OR accepted by claim, since both mean the same thing here.
+    const me = req.user?.name || null;
+    const scope = url.searchParams.get("scope") === "mine" ? "mine" : "all";
+    const mine = me
+      ? postures.filter((p) => p.owner === me || p.claim?.by === me)
+      : [];
+    const shown = scope === "mine" ? mine : postures;
+
     sendJson(res, 200, {
       days,
-      fleet: fleetPosture(postures),
-      health: scoreFleet(postures.map((p) => p.scorecard)),
+      scope, user: me, mineCount: mine.length, totalCount: postures.length,
+      fleet: fleetPosture(shown),
+      health: scoreFleet(shown.map((p) => p.scorecard)),
       tokensAttributed: usage.available,
       unattributed: usage.unattributed,
       // Said once, plainly, so the console does not have to guess why a whole
@@ -329,7 +404,7 @@ export async function handleAgentRoutes(req, res, url) {
           ? `${usage.unattributed.calls} model call(s) in this window carry no agent, so their ${usage.unattributed.totalTokens.toLocaleString()} tokens are unattributed rather than shared out.`
           : null)
         : "Per-agent token usage is not being recorded yet, so cost per agent is not attributed.",
-      agents: postures,
+      agents: shown,
     });
     return true;
   }

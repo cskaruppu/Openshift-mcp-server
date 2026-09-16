@@ -27,10 +27,41 @@ export const BLAST_RADII = ["read-only", "mutating", "irreversible"];
 /** How far it may act without a person. */
 export const AUTONOMY_LEVELS = ["advisory", "propose-and-wait", "act-within-policy"];
 
+/**
+ * Where an agent is in its working life.
+ *
+ * A new hire does not get production access on the first morning, and a new
+ * agent should not either. `experimental` is probation: reachable by its owner,
+ * kept out of general circulation, and promoted only when somebody reviews it.
+ *
+ * GRANDFATHERING IS DELIBERATE. An agent whose manifest says nothing is `active`,
+ * NOT `experimental`. The sixteen that exist today are in production and were
+ * written before this field did; reading their silence as "on probation" would
+ * take a working fleet out of circulation on deploy. Probation applies to agents
+ * created from here on, which is the only place it can do any good anyway.
+ */
+export const LIFECYCLE = ["experimental", "active", "deprecated", "retired"];
+export const DEFAULT_LIFECYCLE = "active";
+
+/** How long is too long to sit on probation. */
+const PROBATION_DAYS = 90;
+
 const DAY = 86400000;
 
-/** Certification is a claim with a date on it. One without is not a claim. */
-function certification(g, now) {
+/**
+ * Certification is a claim with a date on it. One without is not a claim.
+ *
+ * Resolved the same way ownership is: DECLARED in the manifest beats an
+ * APPROVED PROMOTION beats nothing. A promotion approved through a change
+ * request cannot write the manifest — the manifest lives in git and a file
+ * written into a running pod disagrees with the repository — so the approval is
+ * held in its own store and merged here. One precedence rule, used twice; two
+ * different ones in the same panel is how people stop trusting either.
+ */
+function certification(g, now, approved = null) {
+  if (!g.certifiedAt && approved?.certifiedAt) {
+    g = { ...g, certifiedAt: approved.certifiedAt, recertifyBy: approved.recertifyBy, certifiedBy: approved.approvedBy };
+  }
   const at = g.certifiedAt ? Date.parse(g.certifiedAt) : NaN;
   if (!Number.isFinite(at)) {
     return { state: "never", certifiedAt: null, certifiedBy: g.certifiedBy || null, expiresInDays: null };
@@ -63,7 +94,20 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now(), o
   const trustTier = TRUST_TIERS.includes(g.trustTier) ? g.trustTier : null;
   const blastRadius = BLAST_RADII.includes(g.blastRadius) ? g.blastRadius : null;
   const autonomy = AUTONOMY_LEVELS.includes(g.autonomyLevel) ? g.autonomyLevel : null;
-  const cert = certification(g, now);
+  const cert = certification(g, now, ownership?.promotion || null);
+
+  // Silence means active — see LIFECYCLE. An unrecognised value is not trusted
+  // into circulation either, so it reads as experimental rather than as active.
+  const declaredLifecycle = g.lifecycle
+    ? (LIFECYCLE.includes(g.lifecycle) ? g.lifecycle : "experimental")
+    : DEFAULT_LIFECYCLE;
+  // An approved promotion moves the agent off probation at read time, the same
+  // way a claim gives it an owner — the durable answer is still the manifest.
+  const promo = ownership?.promotion || null;
+  const lifecycle = declaredLifecycle === "experimental" && promo?.state === "approved"
+    ? "active" : declaredLifecycle;
+  const sinceMs = g.lifecycleSince ? Date.parse(g.lifecycleSince) : NaN;
+  const daysInState = Number.isFinite(sinceMs) ? Math.floor((now - sinceMs) / DAY) : null;
 
   // ── Who owns it ──────────────────────────────────────────────────────
   // A manifest declaration wins: it went through review and lives in git. A
@@ -119,6 +163,30 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now(), o
   if (cert.state === "expired") {
     findings.push({ code: "certification-expired", severity: "serious", message: `Certification lapsed ${Math.abs(cert.expiresInDays)} day(s) ago.` });
   }
+  // A deprecated agent that is still being called is the dangerous half of
+  // offboarding: the notice went out and somebody is still depending on it.
+  if (lifecycle === "deprecated") {
+    findings.push({
+      code: "deprecated", severity: "warning",
+      message: g.sunsetOn
+        ? `Deprecated, due to be retired on ${g.sunsetOn}. Anything still calling it needs to move.`
+        : "Deprecated, with no retirement date set. A deprecation nobody has to act on does not end.",
+    });
+  }
+  if (lifecycle === "retired") {
+    findings.push({ code: "retired", severity: "warning", message: "Retired. It should no longer be reachable." });
+  }
+  // Probation that never ends is not probation — it is a permanent exception
+  // wearing a temporary name, and it is exactly how "experimental" becomes a
+  // production dependency nobody reviewed.
+  if (declaredLifecycle === "experimental" && lifecycle === "experimental"
+      && daysInState != null && daysInState > PROBATION_DAYS) {
+    findings.push({
+      code: "stale-probation", severity: "warning",
+      message: `Experimental for ${daysInState} days. Promote it or retire it — anything this old is being used.`,
+    });
+  }
+
   // Undeclared is its own finding, never silence. A suggestion changes the
   // wording — there is something to accept — but not the verdict: nobody has
   // accepted it yet, and that is what "unowned" means.
@@ -154,6 +222,16 @@ export function agentPosture(manifest = {}, observed = null, now = Date.now(), o
     name: manifest.name || manifest.id || null,
     category: manifest.category || null,
     toolCount: (manifest.tools || []).length,
+    lifecycle, declaredLifecycle,
+    lifecycleSource: lifecycle !== declaredLifecycle ? "promoted" : "manifest",
+    lifecycleSince: g.lifecycleSince || null, daysInLifecycle: daysInState,
+    sunsetOn: g.sunsetOn || null,
+    // Probation means out of general circulation, whatever the manifest says.
+    // An agent nobody has reviewed must not be picked up by default.
+    selectable: lifecycle === "experimental" || lifecycle === "retired" ? false : manifest.selectable !== false,
+    // What a promotion would need before it could be approved.
+    promotable: lifecycle === "experimental",
+    promotion: ownership?.promotion || null,
     owner, ownerSource,
     // Present only when nobody has accepted the agent. The console renders it
     // as an offer with its provenance, never as the owner.

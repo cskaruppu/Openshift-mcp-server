@@ -2453,6 +2453,44 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { available: false, tools: [], error: err.message }); }
       }
 
+      // Promoting an agent off probation. Routed through the same approval
+      // workflow a migration uses, with the agent's scorecard as the evidence —
+      // "let other teams depend on this" is a request that has to justify
+      // itself, and the ten checks are the justification.
+      {
+        const m = url.pathname.match(/^\/api\/agents\/([\w.-]+)\/promotion$/);
+        if (m) {
+          const agentId = m[1];
+          const actor = req.user?.name || null;
+          const promo = await import("./agents/promotion.js");
+
+          if (req.method === "GET") {
+            return sendJson(res, 200, { agentId, promotion: await promo.getPromotion(agentId) });
+          }
+          if (!actor) return sendJson(res, 401, { ok: false, error: "Sign in before requesting or deciding a promotion." });
+
+          if (req.method === "POST") {
+            const body = await readJsonBody(req).catch(() => ({}));
+            // Posture and scorecard come from the same place the console shows
+            // them, so the evidence on the change request is exactly what the
+            // requester was looking at.
+            const { buildPostureFor } = await import("./agents/registry.js");
+            const ctx = await buildPostureFor(agentId).catch(() => null);
+            if (!ctx) return sendJson(res, 404, { ok: false, error: `No agent "${agentId}" in the registry.` });
+
+            if (body?.decision) {
+              return sendJson(res, 200, await promo.decidePromotion(agentId, {
+                decision: body.decision, approver: actor, comment: body.comment || null,
+              }));
+            }
+            const out = await promo.requestPromotion(agentId, {
+              posture: ctx.posture, scorecard: ctx.scorecard, actor, reason: body?.reason || null,
+            });
+            return sendJson(res, out.ok ? 200 : 400, out);
+          }
+        }
+      }
+
       const claimMatch = url.pathname.match(/^\/api\/agents\/([\w.-]+)\/owner$/);
       if (claimMatch) {
         const agentId = claimMatch[1];

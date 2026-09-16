@@ -103,7 +103,10 @@ export function buildManifest(input = {}) {
     capabilities: input.capabilities?.length ? input.capabilities : tools.map((t) => t.replace(/_/g, " ")),
     requires: input.requires?.length ? input.requires : ["core"],
     protocols: ["mcp", "rest"],
-    selectable: input.selectable !== false,
+    // Out of general circulation until somebody promotes it. This is the half
+    // of probation that actually protects anything — an unreviewed agent that
+    // is selectable by default is a production dependency waiting to happen.
+    selectable: (g.lifecycle || "experimental") !== "experimental" && input.selectable !== false,
     mcpEndpoint: `/mcp/${id}`,
     tags: input.tags || [],
   };
@@ -119,7 +122,15 @@ export function buildManifest(input = {}) {
   if (g.certifiedAt) gov.certifiedAt = g.certifiedAt;
   if (g.recertifyBy) gov.recertifyBy = g.recertifyBy;
   if (Array.isArray(g.egress) && g.egress.length) gov.egress = g.egress;
-  if (Object.keys(gov).length) manifest.governance = gov;
+
+  // A new agent starts on probation, and says when probation started so the
+  // registry can notice one that has been sitting there for a year. Written
+  // explicitly rather than left to the default — silence means `active` for the
+  // agents that predate this field, and a new agent must not inherit that.
+  gov.lifecycle = g.lifecycle || "experimental";
+  gov.lifecycleSince = g.lifecycleSince || new Date().toISOString().slice(0, 10);
+
+  manifest.governance = gov;
 
   if (input.examples?.length) manifest.examples = input.examples;
 

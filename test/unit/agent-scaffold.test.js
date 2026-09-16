@@ -78,15 +78,22 @@ test("an agent with no tools exposes nothing and is refused", () => {
 });
 
 // ══ The manifest ══════════════════════════════════════════════════════════
-test("the governance block carries only what was answered", () => {
+test("the governance block carries only what was answered, plus lifecycle", () => {
   const m = buildManifest({ ...base, governance: { owner: "s.menon" } });
-  assert.deepEqual(Object.keys(m.governance), ["owner"],
-    "a block full of nulls reads as declared-and-empty, which is the one thing to avoid");
+  assert.deepEqual(Object.keys(m.governance), ["owner", "lifecycle", "lifecycleSince"],
+    "an unanswered field stays out — a block full of nulls reads as declared-and-empty");
 });
 
-test("no governance at all leaves the key off entirely", () => {
+// Lifecycle is the one field a new agent must state rather than leave to the
+// default, because silence means `active` for the agents that predate the
+// field. A new agent inheriting that would be active on day one, which is
+// exactly what probation exists to prevent.
+test("lifecycle is always written, even when nothing else is answered", () => {
   const m = buildManifest(base);
-  assert.equal(m.governance, undefined);
+  assert.equal(m.governance.lifecycle, "experimental");
+  assert.ok(m.governance.lifecycleSince);
+  assert.deepEqual(Object.keys(m.governance), ["lifecycle", "lifecycleSince"],
+    "still nothing invented beyond the two that must be explicit");
 });
 
 test("the manifest matches the shape the existing sixteen use", () => {
