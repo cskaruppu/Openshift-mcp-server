@@ -190,9 +190,6 @@ export function AuditView() {
      sections of one scroll. */
   const [tracesView, setTracesView] = useState("executions");
   const [tracePage, setTracePage] = useState(1);
-  /* Reset paging when the view or the agent filter changes — otherwise "showing
-     50" carries over to a filter with three results and reads as broken. */
-  useEffect(() => { setTracePage(1); }, [tracesView, traceAgentFilter]);
   /* Audits work in periods and by person. The API has supported `from`, `to`
      and `username` since it shipped; the UI simply never sent them. */
   const [trailFrom, setTrailFrom] = useState("");
@@ -201,6 +198,13 @@ export function AuditView() {
   const [trailSearch, setTrailSearch] = useState("");
   const [expandedTrace, setExpandedTrace] = useState(null);
   const [traceAgentFilter, setTraceAgentFilter] = useState("");
+  /* Reset paging when the view or the agent filter changes — otherwise "showing
+     50" carries over to a filter with three results and reads as broken.
+     MUST sit below traceAgentFilter: a dependency array is evaluated on every
+     render, so reading it above its declaration threw "Cannot access before
+     initialization" the moment this view mounted — the whole page, not just
+     the panel, because React has no way to recover from a throw during render. */
+  useEffect(() => { setTracePage(1); }, [tracesView, traceAgentFilter]);
   const [activitySearch, setActivitySearch] = useState("");
   const [crStatusFilter, setCrStatusFilter] = useState("all");
   const [syncingAll, setSyncingAll] = useState(false);
