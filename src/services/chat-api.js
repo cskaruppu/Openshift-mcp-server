@@ -17610,10 +17610,17 @@ export async function handleChatAPI(req, res) {
           let toolsUsed = [];
           const streamLlmOpts = {
             system: augmentedSystem,
-            maxTokens: 2000,
+            maxTokens: CHAT_MAX_TOKENS,
             temperature: 0.15,
             ...llmOpts,
             tools: INVESTIGATION_TOOLS,
+            // WITHOUT THIS, AI USAGE NEVER UPDATES. Every telemetry row from a
+            // chat turn was written with conversation_id NULL, and
+            // getConversationUsage filters on `conversation_id IS NOT NULL` —
+            // so the console asked for per-conversation usage and the database
+            // correctly returned nothing. The non-streaming path has always
+            // passed it; the console streams, so in practice it never did.
+            conversationId: conversationId || null,
           };
 
           // Agentic streaming loop — LLM can call tools, then we continue streaming

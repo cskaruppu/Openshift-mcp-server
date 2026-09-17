@@ -64,7 +64,11 @@ const UI = readFileSync("console/src/views/AuditView.jsx", "utf8");
 test("success rate is null, not 0%, when nothing has run", () => {
   assert.match(UI, /const rate = total \? Math\.round\(\(successCount \/ total\) \* 100\) : null/);
   assert.match(UI, /rate === null \? "—"/, "it must render as unknown, not as zero");
-  assert.match(UI, /rate === null \? "#64748b"/, "and not in red");
+  // Colour now comes from a class, not an inline --stat-c: null adds no
+  // class at all, so the card stays neutral rather than turning red.
+  assert.match(UI, /rate === null \? "" : rate >= 90 \? " good" : rate >= 70 \? " warn" : " alert"/,
+    "no data must add no colour class");
+  assert.doesNotMatch(UI, /"--stat-c"/, "six inline accent colours gave the row no hierarchy");
 });
 
 test("the CIS score carries a denominator", () => {

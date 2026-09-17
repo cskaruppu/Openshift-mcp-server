@@ -5617,77 +5617,93 @@ h3.widget-title {
 .aud { padding: 20px 24px; }
 
 /* ── HERO ── */
+/* Every colour here was a literal — #0f172a, #f8fafc, #334155 — so the whole
+   header stayed dark on a light page: a navy slab floating above white
+   content, and the first thing anyone saw. On tokens now, so it follows the
+   theme instead of fighting it. */
 .aud-hero {
   position: relative;
-  background: linear-gradient(135deg, #0f172a 0%, #1a1040 50%, #0f172a 100%);
-  border: 1px solid #334155; border-radius: 16px;
-  padding: 22px 26px; margin-bottom: 16px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 15px 18px; margin-bottom: 12px; overflow: hidden;
 }
-.aud-hero-glow {
-  position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(circle at 25% 50%, rgba(34,197,94,0.1) 0%, transparent 55%),
-              radial-gradient(circle at 75% 40%, rgba(59,130,246,0.08) 0%, transparent 55%);
-}
+/* The radial glow went with the gradient — decoration that only read on a
+   dark ground, and vertical space above the fold. */
+.aud-hero-glow { display: none; }
 .aud-hero-inner { position: relative; z-index: 1; }
 .aud-hero-top {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 18px; gap: 14px; flex-wrap: wrap;
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 14px; gap: 14px; flex-wrap: wrap;
 }
 .aud-hero-title { display: flex; align-items: center; gap: 14px; }
-.aud-hero-icon {
-  width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
-  background: linear-gradient(135deg, #22c55e, #3b82f6);
-  display: flex; align-items: center; justify-content: center;
-}
-.aud-hero-title h2 { margin: 0; font-size: 22px; font-weight: 800; color: #f8fafc; letter-spacing: -.5px; }
-.aud-hero-title p { margin: 2px 0 0; font-size: 12px; color: #94a3b8; }
+.aud-hero-title h2 { margin: 0; font-size: 17px; font-weight: 800; color: var(--text); letter-spacing: -.02em; }
+.aud-hero-title p { margin: 2px 0 0; font-size: 12px; color: var(--text2); }
 .aud-cluster-badge {
   display: inline-block; font-size: 10px; font-weight: 700; color: #0f172a;
   background: #38bdf8; border-radius: 5px; padding: 2px 7px; margin-left: 8px;
 }
 .aud-hero-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .aud-hero-btn {
-  background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
-  border-radius: 6px; padding: 6px 14px; cursor: pointer;
-  font-size: 11px; font-weight: 600; transition: all .15s;
+  background: transparent; border: 1px solid var(--border2); color: var(--text2);
+  border-radius: 7px; padding: 5px 12px; cursor: pointer;
+  font-size: 11.5px; font-weight: 700; transition: color .15s, border-color .15s;
 }
-.aud-hero-btn:hover { border-color: #6366f1; color: #e0e7ff; box-shadow: 0 0 10px rgba(99,102,241,.15); }
+.aud-hero-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+.aud-hero-btn:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
 .aud-hero-btn:disabled { opacity: .5; cursor: wait; }
-.aud-hero-btn.scan {
-  background: linear-gradient(135deg, rgba(34,197,94,.15), rgba(59,130,246,.1));
-  border-color: rgba(34,197,94,.4); color: #86efac;
-}
-.aud-hero-btn.scan:hover { border-color: #22c55e; box-shadow: 0 0 10px rgba(34,197,94,.2); }
+/* The one action on this header, so it is the one that looks like an action. */
+.aud-hero-btn.scan { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+.aud-hero-btn.scan:hover { filter: brightness(1.08); color: #fff; }
 
 /* Hero stats */
+/* Was repeat(6, 1fr) at every width: below about 1100px the numbers wrapped
+   into their labels. Now it rewraps instead of crushing. */
 .aud-hero-stats {
-  display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px;
 }
+/* Neutral by default. Six accent colours gave the row no hierarchy — the eye
+   could not rank them, so it read none of them. Only a card that needs
+   attention takes colour. */
 .aud-stat-box {
-  background: rgba(30,41,59,.5); border: 1px solid #334155;
-  border-left: 3px solid var(--stat-c); border-radius: 10px; padding: 12px 14px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 12px;
 }
-.aud-stat-val { font-size: 22px; font-weight: 800; color: var(--stat-c); line-height: 1; }
+.aud-stat-box.alert { border-color: var(--st-crit); background: var(--st-crit-bg); }
+.aud-stat-box.warn  { border-color: var(--st-warn); background: var(--st-warn-bg); }
+.aud-stat-box.good  { border-color: var(--st-good); background: var(--st-good-bg); }
+.aud-stat-val {
+  font-size: 21px; font-weight: 800; color: var(--text);
+  line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+.aud-stat-box.alert .aud-stat-val { color: var(--st-crit-ink); }
+.aud-stat-box.warn  .aud-stat-val { color: var(--st-warn-ink); }
+.aud-stat-box.good  .aud-stat-val { color: var(--st-good-ink); }
 .aud-stat-lbl {
-  font-size: 9px; color: #64748b; margin-top: 4px;
-  text-transform: uppercase; letter-spacing: .5px; font-weight: 600;
+  font-size: 9.5px; color: var(--text2); margin-top: 4px;
+  text-transform: uppercase; letter-spacing: .5px; font-weight: 700;
 }
 
 /* ── TABS ── */
 .aud-tabs {
-  display: flex; gap: 4px; margin-bottom: 16px;
+  display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap;
   background: var(--card); border-radius: 10px; padding: 4px;
   border: 1px solid var(--border);
 }
+/* Was flex: 1 — every tab the same width, so "Framework Profiles" clipped to
+   "Framework Pro…" while "Audit Trail" had room to spare. Sized to its label
+   now, and the row wraps rather than compressing. */
 .aud-tab {
-  flex: 1; background: transparent; border: 1px solid transparent; color: var(--text2);
-  padding: 9px 14px; border-radius: 7px; cursor: pointer;
+  flex: 0 1 auto; background: transparent; border: 1px solid transparent; color: var(--text2);
+  padding: 8px 13px; border-radius: 7px; cursor: pointer; white-space: nowrap;
   font-size: 12px; font-weight: 600; text-align: center; transition: all .15s;
 }
-.aud-tab:hover { color: var(--text); background: rgba(255,255,255,.03); }
+.aud-tab:hover { color: var(--text); background: rgba(127,127,127,.08); }
+.aud-tab:focus-visible { outline: 2px solid var(--accent2); outline-offset: -1px; }
+/* Green means "healthy" everywhere else in this product. On a tab it meant
+   "selected", which is a different thing wearing the same colour. */
 .aud-tab.active {
-  background: linear-gradient(135deg, rgba(34,197,94,.1), rgba(59,130,246,.08));
-  color: #86efac; border-color: rgba(34,197,94,.2);
+  background: var(--accent2);
+  color: #fff; border-color: var(--accent2);
 }
 
 /* ── SECTION ── */
@@ -6032,13 +6048,16 @@ h3.widget-title {
 .aud-ac-lbl { font-size: 10px; color: var(--text2); margin-top: 4px; text-transform: uppercase; letter-spacing: .4px; }
 
 /* ── LIGHT THEME ── */
-.light-theme .aud-hero { background: linear-gradient(135deg, #ecfdf5 0%, #e0f2fe 50%, #f1f5f9 100%); border-color: #a7f3d0; }
-.light-theme .aud-hero-title h2 { color: #064e3b; }
-.light-theme .aud-hero-title p { color: #6b7280; }
-.light-theme .aud-stat-box { background: rgba(255,255,255,.7); border-color: #e2e8f0; }
-.light-theme .aud-hero-btn { background: #fff; border-color: #d1d5db; color: #374151; }
-.light-theme .aud-tabs { background: #fff; border-color: #e5e7eb; }
-.light-theme .aud-tab.active { background: rgba(34,197,94,.06); color: #065f46; border-color: rgba(34,197,94,.2); }
+/* The audit header used to carry two hand-maintained palettes — a dark
+   gradient in the base rules and a mint-to-sky one here — which is why a
+   colour change had to be made twice and occasionally was not. Those rules
+   now use tokens, so the overrides that duplicated them are gone and the
+   header follows the theme like everything else.
+
+   Deliberately NOT deleted below: the rules for sections, cards, findings and
+   tables still carry literals in their base and genuinely need the override.
+   Tokenising those is the same job, one component at a time. */
+.light-theme .aud-tabs { background: var(--card); border-color: var(--border); }
 .light-theme .aud-section { background: #fff; border-color: #e5e7eb; }
 .light-theme .aud-cat-card { background: #f9fafb; border-color: #e5e7eb; }
 .light-theme .aud-finding { background: #f9fafb; border-color: #e5e7eb; }

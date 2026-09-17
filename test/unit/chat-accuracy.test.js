@@ -123,3 +123,18 @@ test("streaming text is announced to a screen reader", () => {
     "streaming updates were silent — the response simply never announced");
   assert.match(UI, /aria-busy=/);
 });
+
+// ── AI usage never updated because the streaming path dropped the id ──────
+test("the streaming chat path passes conversationId to the LLM call", () => {
+  const block = SRC.slice(SRC.indexOf("const streamLlmOpts = {"));
+  const opts = block.slice(0, block.indexOf("};"));
+  assert.match(opts, /conversationId: conversationId \|\| null/,
+    "without it every telemetry row is written with conversation_id NULL, and "
+    + "getConversationUsage filters those out — so AI usage stays empty forever");
+});
+
+test("both chat paths use the same token ceiling", () => {
+  const streamBlock = SRC.slice(SRC.indexOf("const streamLlmOpts = {"));
+  assert.match(streamBlock.slice(0, streamBlock.indexOf("};")), /maxTokens: CHAT_MAX_TOKENS/,
+    "the streaming path is the one the console uses; a lower ceiling there is the one users feel");
+});

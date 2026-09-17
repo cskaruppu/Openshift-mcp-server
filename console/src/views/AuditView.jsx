@@ -440,13 +440,13 @@ export function AuditView() {
         <div className="aud-hero-glow" />
         <div className="aud-hero-inner">
           <div className="aud-hero-top">
+            {/* The 42px gradient badge and the radial glow are gone. Together
+                with tighter padding they were about 70px of chrome above the
+                fold — roughly a screenful of audit data on a laptop. */}
             <div className="aud-hero-title">
-              <div className="aud-hero-icon">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              </div>
               <div>
-                <h2>Audit &amp; Compliance Center</h2>
-                <p>CIS benchmarks, compliance frameworks, audit trail &amp; activity
+                <h2>Audit &amp; Compliance</h2>
+                <p>CIS benchmarks, security events, commands run and agent activity
                   {cluster !== "local" && <span className="aud-cluster-badge">{cluster}</span>}
                 </p>
               </div>
@@ -472,7 +472,12 @@ export function AuditView() {
 
           {/* Hero stats */}
           <div className="aud-hero-stats">
-            <div className="aud-stat-box" title="View CIS compliance detail" style={{ "--stat-c": compScore !== null ? gradeColor(compGrade) : "#64748b", cursor: "pointer" }}
+            {/* Six accent colours gave the row no hierarchy — the eye could not
+                rank them, so it read none of them. Only the score and the
+                failures carry colour now; the rest are counts and read as
+                counts. Same rule as the Agent Registry's stat row. */}
+            <div className={"aud-stat-box" + (compScore === null ? "" : compScore < 50 ? " alert" : compScore < 80 ? " warn" : " good")}
+              title="View CIS compliance detail" style={{ cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("all"); }}>
               {/* A bare "6" is unreadable — six out of what? The denominator is
                   the first thing anyone asks, and the first thing an auditor
@@ -483,7 +488,8 @@ export function AuditView() {
               <div className="aud-stat-lbl">CIS Score &rsaquo;</div>
               {compScore === null && <div className="aud-stat-sub">no scan yet</div>}
             </div>
-            <div className="aud-stat-box" title="Show only failed findings" style={{ "--stat-c": "#ef4444", cursor: "pointer" }}
+            <div className={"aud-stat-box" + ((compTotals.fail || 0) > 0 ? " alert" : "")}
+              title="Show only failed findings" style={{ cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("FAIL"); }}>
               <div className="aud-stat-val">{compTotals.fail || 0}</div>
               <div className="aud-stat-lbl">Findings (Fail) &rsaquo;</div>
@@ -491,7 +497,7 @@ export function AuditView() {
                   turns 925 findings into a morning's work. */}
               {sevSplit && <div className="aud-stat-sub">{sevSplit}</div>}
             </div>
-            <div className="aud-stat-box" title="Show passing controls" style={{ "--stat-c": "#22c55e", cursor: "pointer" }}
+            <div className="aud-stat-box" title="Show passing controls" style={{ cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("PASS"); }}>
               <div className="aud-stat-val">{compTotals.controlsTotal ? `${compTotals.controlsPassed}/${compTotals.controlsTotal}` : (compTotals.pass || 0)}</div>
               <div className="aud-stat-lbl">Controls Passed &rsaquo;</div>
@@ -501,20 +507,20 @@ export function AuditView() {
                 <div className="aud-stat-sub">no scan has run</div>
               )}
             </div>
-            <div className="aud-stat-box" title="View actions taken" style={{ "--stat-c": "#3b82f6", cursor: "pointer" }}
+            <div className="aud-stat-box" title="View actions taken" style={{ cursor: "pointer" }}
               onClick={() => setActiveTab("activity")}>
               <div className="aud-stat-val">{total}</div>
               <div className="aud-stat-lbl">Actions Executed &rsaquo;</div>
             </div>
-            <div className="aud-stat-box"
+            <div className={"aud-stat-box" + (rate === null ? "" : rate >= 90 ? " good" : rate >= 70 ? " warn" : " alert")}
               title={rate === null ? "No actions have been executed yet" : "View activity & success rate"}
-              style={{ "--stat-c": rate === null ? "#64748b" : rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444", cursor: "pointer" }}
+              style={{ cursor: "pointer" }}
               onClick={() => setActiveTab("activity")}>
               <div className="aud-stat-val">{rate === null ? "—" : `${rate}%`}</div>
               <div className="aud-stat-lbl">Success Rate &rsaquo;</div>
               {rate === null && <div className="aud-stat-sub">nothing run yet</div>}
             </div>
-            <div className="aud-stat-box" title="View framework profiles" style={{ "--stat-c": "#8b5cf6", cursor: "pointer" }}
+            <div className="aud-stat-box" title="View framework profiles" style={{ cursor: "pointer" }}
               onClick={() => setActiveTab("frameworks")}>
               <div className="aud-stat-val">{frameworks.length}</div>
               <div className="aud-stat-lbl">Frameworks &rsaquo;</div>
