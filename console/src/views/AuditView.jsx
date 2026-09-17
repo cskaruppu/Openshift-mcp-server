@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useClusterQuery } from "../hooks/useClusterQuery";
 import { useActiveCluster } from "../store/clusterStore";
 import { clusterUrl } from "../api/client";
@@ -32,6 +32,17 @@ const statusIcon = (st) =>
    on this page goes through TimeCell so the whole page reads one clock; a
    convenient shortcut back to local-only formatting is how the two clocks
    appeared in the first place. */
+
+/** Milliseconds a person can read. 7362ms is a number; 7.4s is a duration. */
+function ms(v) {
+  if (v == null) return "\u2014";
+  return v < 1000 ? `${Math.round(v)}ms` : `${(v / 1000).toFixed(1)}s`;
+}
+/** How many traces render before "Show more". Was unbounded. */
+const TRACES_PER_PAGE = 25;
+
+const _nf = new Intl.NumberFormat();
+function nf(v) { return v == null ? "\u2014" : _nf.format(v); }
 
 /**
  * A timestamp an auditor can act on.
@@ -174,6 +185,14 @@ export function AuditView() {
   const [actionType, setActionType] = useState("All");
 
   const [trailType, setTrailType] = useState("all");
+  /* Which of the three analyses is showing. They answer different questions for
+     different people — debugging, finance, capacity — so they are views, not
+     sections of one scroll. */
+  const [tracesView, setTracesView] = useState("executions");
+  const [tracePage, setTracePage] = useState(1);
+  /* Reset paging when the view or the agent filter changes — otherwise "showing
+     50" carries over to a filter with three results and reads as broken. */
+  useEffect(() => { setTracePage(1); }, [tracesView, traceAgentFilter]);
   /* Audits work in periods and by person. The API has supported `from`, `to`
      and `username` since it shipped; the UI simply never sent them. */
   const [trailFrom, setTrailFrom] = useState("");
@@ -1113,26 +1132,58 @@ export function AuditView() {
             </p>
           </div>
 
-          {/* Stats bar */}
+          {/* Stats bar. p50 and p95 rather than a mean: fifty fast queries and
+              one that took six minutes average out to something that looks
+              fine, and the slow one is what people complain about. */}
           <div className="aud-analytics-grid">
-            <div className="aud-analytics-card" style={{ "--ac-c": "#8b5cf6" }}>
-              <div className="aud-ac-val">{traceStatsData.total_queries ?? allTraces.length ?? 0}</div>
-              <div className="aud-ac-lbl">Total Queries</div>
+            <div className="aud-analytics-card">
+              <div className="aud-ac-val">{nf(traceStatsData.total_queries ?? allTraces.length ?? 0)}</div>
+              <div className="aud-ac-lbl">Queries</div>
+              <div className="aud-ac-sub">last 30 days</div>
             </div>
-            <div className="aud-analytics-card" style={{ "--ac-c": "#06b6d4" }}>
+            <div className="aud-analytics-card">
               <div className="aud-ac-val">{traceStatsData.avg_agents_per_query ?? 0}</div>
-              <div className="aud-ac-lbl">Avg Agents / Query</div>
+              <div className="aud-ac-lbl">Agents / query</div>
             </div>
-            <div className="aud-analytics-card" style={{ "--ac-c": "#f59e0b" }}>
-              <div className="aud-ac-val">{traceStatsData.avg_duration_ms != null ? `${traceStatsData.avg_duration_ms}ms` : "—"}</div>
-              <div className="aud-ac-lbl">Avg Duration</div>
+            <div className="aud-analytics-card">
+              <div className="aud-ac-val">{ms(traceStatsData.p50_duration_ms ?? traceStatsData.avg_duration_ms)}</div>
+              <div className="aud-ac-lbl">{traceStatsData.p50_duration_ms != null ? "p50 duration" : "Avg duration"}</div>
+              {traceStatsData.p95_duration_ms != null && (
+                <div className="aud-ac-sub">p95 {ms(traceStatsData.p95_duration_ms)}</div>
+              )}
             </div>
-            <div className="aud-analytics-card" style={{ "--ac-c": "#22c55e" }}>
-              <div className="aud-ac-val" style={{ fontSize: "1.1rem" }}>{(traceStatsData.top_agents || [])[0]?.agent_name || "N/A"}</div>
-              <div className="aud-ac-lbl">Top Agent</div>
+            <div className={"aud-analytics-card" + (traceStatsData.error_rate > 5 ? " alert" : "")}>
+              {/* Null, not 0%. No queries is not a perfect record. */}
+              <div className="aud-ac-val">{traceStatsData.error_rate == null ? "—" : `${traceStatsData.error_rate}%`}</div>
+              <div className="aud-ac-lbl">Error rate</div>
+              {traceStatsData.error_rate == null && <div className="aud-ac-sub">no queries yet</div>}
+            </div>
+            <div className="aud-analytics-card">
+              <div className="aud-ac-val" style={{ fontSize: "1rem" }}>{(traceStatsData.top_agents || [])[0]?.agent_name || "—"}</div>
+              <div className="aud-ac-lbl">Busiest agent</div>
             </div>
           </div>
 
+          {/* Three questions, three views. Stacked vertically they were one
+              column with the longest list first, so "By Conversation" and "By
+              Agent" sat roughly 3,000px down and nobody reached them. */}
+          <div className="aud-subtabs">
+            {[["executions", "Executions", traces.length],
+              ["conversation", "By Conversation", (convUsage?.conversations || []).length],
+              ["agent", "By Agent", agentAnalytics.length]].map(([k, label, n]) => (
+              <button key={k} className={"aud-subtab" + (tracesView === k ? " active" : "")}
+                onClick={() => setTracesView(k)}>
+                {label}{n > 0 && <span className="aud-subtab-n">{n}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="aud-subtab-hint">
+            {tracesView === "executions" && "One request at a time — what ran, in what order, and how long each step took."}
+            {tracesView === "conversation" && "What each chat conversation consumed, and what it cost."}
+            {tracesView === "agent" && "Which agents are busiest, slowest and most expensive."}
+          </div>
+
+          {tracesView === "executions" && (<>
           {/* Agent filter */}
           <div className="aud-trail-filters" style={{ marginTop: 14 }}>
             <button className={"aud-trail-pill" + (traceAgentFilter === "" ? " active" : "")} onClick={() => setTraceAgentFilter("")}>All Agents</button>
@@ -1149,7 +1200,9 @@ export function AuditView() {
             {traces.length === 0 && (
               <div className="aud-empty">No agent execution traces recorded yet. Traces are captured when queries are processed through AI Chat.</div>
             )}
-            {traces.map((t, ti) => {
+            {/* Was traces.map() over all 50 at once — roughly 3,000px of cards
+                before anything else on the tab could be reached. */}
+            {traces.slice(0, tracePage * TRACES_PER_PAGE).map((t, ti) => {
               const spans = t.spans || [];
               const tid = t.trace_id || `trace-${ti}`;
               const isOpen = expandedTrace === tid;
@@ -1214,8 +1267,16 @@ export function AuditView() {
                 </div>
               );
             })}
+            {traces.length > tracePage * TRACES_PER_PAGE && (
+              <button className="aud-more" onClick={() => setTracePage((p) => p + 1)}>
+                Show {Math.min(TRACES_PER_PAGE, traces.length - tracePage * TRACES_PER_PAGE)} more
+                of {traces.length} &rarr;
+              </button>
+            )}
           </div>
+          </>)}
 
+          {tracesView === "conversation" && (<>
           {/* ── AI usage by conversation ───────────────────────────────────
               The table below this one totals tokens per AGENT, which answers
               "what does the platform cost". It cannot answer the question an
@@ -1299,8 +1360,15 @@ export function AuditView() {
               )}
             </>
           )}
+          </>)}
 
+          {tracesView === "agent" && (<>
           {/* Per-agent token & usage table */}
+          {agentRows.length === 0 && (
+            <div className="aud-empty">
+              No agent usage recorded in the last 30 days. Rows appear as agents handle requests.
+            </div>
+          )}
           {agentRows.length > 0 && (
             <>
               <h4 className="aud-sub-title" style={{ marginTop: 18 }}>Agent Usage &amp; Token Consumption (30 days)</h4>
@@ -1326,6 +1394,7 @@ export function AuditView() {
               </div>
             </>
           )}
+          </>)}
         </div>
       )}
 

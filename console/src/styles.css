@@ -7738,3 +7738,42 @@ h3.widget-title {
 }
 .aud-blocked-risk.caution { background: var(--st-warn); }
 .aud-blocked-more { font-size: 11px; color: var(--text2); padding-top: 6px; }
+
+/* ── Agent Traces: three views, not one long scroll ───────────────────────
+   Executions, By Conversation and By Agent answer different questions for
+   different people — debugging, finance, capacity. Stacked vertically with the
+   longest list first, two of the three sat thousands of pixels down and nobody
+   reached them. */
+.aud-subtabs {
+  display: flex; gap: 3px; margin-top: 14px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+.aud-subtab {
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  padding: 7px 14px; border-radius: 8px 8px 0 0; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-bottom: none;
+  color: var(--text2); margin-bottom: -1px; white-space: nowrap;
+}
+.aud-subtab:hover { color: var(--text); }
+.aud-subtab.active {
+  background: var(--bg); color: var(--accent2);
+  border-color: var(--border); border-bottom-color: var(--bg);
+}
+.aud-subtab:focus-visible { outline: 2px solid var(--accent2); outline-offset: -2px; }
+.aud-subtab-n { opacity: .6; margin-left: 5px; font-variant-numeric: tabular-nums; }
+.aud-subtab-hint { font-size: 11.5px; color: var(--text2); padding: 9px 2px 0; }
+
+/* "Show more" beats rendering everything: the list was uncapped. */
+.aud-more {
+  display: block; width: 100%; text-align: left;
+  font-family: inherit; font-size: 11.5px; font-weight: 700;
+  padding: 9px 4px; margin-top: 4px; cursor: pointer;
+  background: none; border: none; border-top: 1px solid var(--border);
+  color: var(--accent2);
+}
+.aud-more:hover { text-decoration: underline; }
+
+/* Metrics: neutral unless something is wrong. */
+.aud-analytics-card.alert { border-color: var(--st-crit); background: var(--st-crit-bg); }
+.aud-analytics-card.alert .aud-ac-val { color: var(--st-crit-ink); }
+.aud-ac-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }

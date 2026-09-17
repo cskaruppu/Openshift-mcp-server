@@ -413,10 +413,17 @@ export async function getTraceStats(opts = {}) {
     await ensureSchema();
     const [overview, topAgents, busyHours] = await Promise.all([
       dbQuery(
+        // A mean hides the tail, and the tail is what people complain about:
+        // fifty fast queries and one that took six minutes average out to
+        // something that looks fine. p50 is the typical experience, p95 is the
+        // one somebody is annoyed about.
         `SELECT
            COUNT(*)::int AS total_queries,
            ROUND(AVG(agent_count), 2) AS avg_agents_per_query,
-           ROUND(AVG(total_duration_ms))::int AS avg_duration_ms
+           ROUND(AVG(total_duration_ms))::int AS avg_duration_ms,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_duration_ms)::int AS p50_duration_ms,
+           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY total_duration_ms)::int AS p95_duration_ms,
+           COUNT(*) FILTER (WHERE status <> 'success')::int AS failed_queries
          FROM query_traces
          WHERE created_at >= $1`,
         [cutoff]
@@ -445,6 +452,14 @@ export async function getTraceStats(opts = {}) {
       total_queries: stats.total_queries ?? 0,
       avg_agents_per_query: parseFloat(stats.avg_agents_per_query ?? 0),
       avg_duration_ms: stats.avg_duration_ms ?? 0,
+      p50_duration_ms: stats.p50_duration_ms ?? null,
+      p95_duration_ms: stats.p95_duration_ms ?? null,
+      failed_queries: stats.failed_queries ?? 0,
+      // Null rather than 0 when there is nothing to divide by: no queries is
+      // not a 0% error rate.
+      error_rate: stats.total_queries
+        ? Math.round((1000 * (stats.failed_queries || 0)) / stats.total_queries) / 10
+        : null,
       top_agents: topAgents?.rows ?? [],
       busiest_hours: busyHours?.rows ?? [],
     };
@@ -481,6 +496,19 @@ export async function getTraceStats(opts = {}) {
     total_queries: totalQueries,
     avg_agents_per_query: totalQueries > 0 ? Math.round((100 * totalAgents) / totalQueries) / 100 : 0,
     avg_duration_ms: totalQueries > 0 ? Math.round(totalDuration / totalQueries) : 0,
+    // Same fields from the ring buffer, so the console reads one shape whether
+    // or not a database is configured.
+    ...(() => {
+      const ds = recent.map((t) => t.total_duration_ms).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+      const at = (q) => (ds.length ? ds[Math.min(ds.length - 1, Math.floor(q * ds.length))] : null);
+      const failed = recent.filter((t) => (t.status || "success") !== "success").length;
+      return {
+        p50_duration_ms: at(0.5),
+        p95_duration_ms: at(0.95),
+        failed_queries: failed,
+        error_rate: totalQueries ? Math.round((1000 * failed) / totalQueries) / 10 : null,
+      };
+    })(),
     top_agents: topAgents,
     busiest_hours: busiestHours,
   };
