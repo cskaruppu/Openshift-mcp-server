@@ -73,3 +73,53 @@ test("hitting the iteration ceiling is said out loud", () => {
   assert.match(SRC, /Investigation stopped after \$\{MAX_TOOL_ITERATIONS\} rounds/,
     "running out of rounds means the investigation was cut short, not that it concluded");
 });
+
+// ── What the user can see and do ─────────────────────────────────────────
+import { readFileSync as rf } from "node:fs";
+const UI = rf("console/src/views/ChatView.jsx", "utf8");
+
+test("the raw tool output reaches the user, not just the tool names", () => {
+  assert.match(SRC, /function evidenceEntry/, "the server must capture what each tool returned");
+  assert.match(SRC, /sseSend\(res, \{ evidence: trimEvidence/, "and send it");
+  assert.match(UI, /if \(evt\.evidence\)/, "and the UI must receive it");
+  assert.match(UI, /function EvidencePanel/, "and render it");
+});
+
+test("evidence is capped so a large cluster read cannot hang the tab", () => {
+  assert.match(SRC, /EVIDENCE_MAX_BYTES/);
+  assert.match(SRC, /EVIDENCE_MAX_TOTAL/);
+  // Truncation must be marked, or a reader cannot tell a short result from a
+  // shortened one — which makes the evidence worth less than none.
+  assert.match(SRC, /clipped/);
+  assert.match(UI, /clipped/);
+});
+
+// Found while wiring the reasons: the UI sent `reaction`, the server required
+// `rating` and returned 400, and the UI swallowed it. Nothing was ever stored.
+test("feedback sends the field the server actually requires", () => {
+  assert.match(UI, /rating: reaction === "like" \? "positive" : "negative"/,
+    "sending only `reaction` is rejected with a 400 that the UI never surfaces");
+});
+
+test("a thumbs-down is recorded before the reason is asked for", () => {
+  assert.match(UI, /sendFeedback\(i, "dislike"\); setReasonFor\(i\)/,
+    "asking first would lose the signal from anyone who does not answer");
+  assert.match(UI, /function FeedbackReasons/);
+});
+
+test("only known feedback reasons are stored", () => {
+  assert.match(SRC, /\["wrong-facts", "missed-the-point", "too-long", "incomplete"\]\.includes\(reason\)/,
+    "free text belongs in `comment`, not in a column meant to be counted");
+});
+
+test("an answer can be re-asked of a different, configured provider", () => {
+  assert.match(UI, /const askAgainWith = useCallback/);
+  assert.match(UI, /k !== activeProvider && providerConfigured\(k\)/,
+    "offering a model that cannot run is worse than offering nothing");
+});
+
+test("streaming text is announced to a screen reader", () => {
+  assert.match(UI, /aria-live=\{m\.role === "assistant" && isLastAI \? "polite" : undefined\}/,
+    "streaming updates were silent — the response simply never announced");
+  assert.match(UI, /aria-busy=/);
+});

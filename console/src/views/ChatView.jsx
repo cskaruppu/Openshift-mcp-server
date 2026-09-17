@@ -104,6 +104,81 @@ function timeGroup(ts) {
   return { label: "Older", order: 4 };
 }
 
+/**
+ * What the agent actually read.
+ *
+ * Collapsed by default: this is for checking an answer, not for reading
+ * alongside it. One line per tool call — name, arguments, size, how long it
+ * took — expanding to the raw body.
+ *
+ * Truncation is stated rather than silent. A reader has to be able to tell a
+ * short result from a shortened one, or the evidence is worth less than none.
+ */
+function EvidencePanel({ data, open, onToggle }) {
+  if (!data?.items?.length) return null;
+  const n = data.items.length;
+  return (
+    <div className="ac-evidence">
+      <button className="ac-evidence-head" onClick={onToggle} aria-expanded={open}>
+        <span className="ac-evidence-caret">{open ? "▾" : "▸"}</span>
+        Evidence — {n} tool call{n === 1 ? "" : "s"}
+        <span className="ac-evidence-hint">what this answer was read from</span>
+      </button>
+      {open && (
+        <div className="ac-evidence-body">
+          {data.items.map((e, i) => (
+            <details key={i} className="ac-ev-item">
+              <summary>
+                <code>{e.tool}</code>
+                {Object.keys(e.args || {}).length > 0 && (
+                  <span className="ac-ev-args">
+                    ({Object.entries(e.args).map(([k, v]) => `${k}: ${v}`).join(", ")})
+                  </span>
+                )}
+                <span className="ac-ev-meta">
+                  {e.bytes != null ? `${e.bytes.toLocaleString()} B` : ""}
+                  {e.durationMs != null ? ` · ${e.durationMs} ms` : ""}
+                  {e.omitted ? " · not shown" : e.clipped ? " · clipped" : ""}
+                </span>
+              </summary>
+              {e.omitted
+                ? <div className="ac-ev-note">Too large to send with the answer. Re-run the tool to see it in full.</div>
+                : <pre className="ac-ev-pre">{e.body}</pre>}
+              {e.clipped && !e.omitted && (
+                <div className="ac-ev-note">Showing the first {e.body.length.toLocaleString()} of {e.bytes.toLocaleString()} bytes.</div>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Why an answer was not helpful.
+ *
+ * A bare thumbs-down records that somebody was unhappy and nothing about what
+ * to fix. Four chips cost one click and make the signal countable.
+ */
+function FeedbackReasons({ onPick, onDismiss }) {
+  const REASONS = [
+    ["wrong-facts", "Wrong facts"],
+    ["missed-the-point", "Missed the point"],
+    ["incomplete", "Incomplete"],
+    ["too-long", "Too long"],
+  ];
+  return (
+    <div className="ac-reasons" role="group" aria-label="What was wrong?">
+      <span className="ac-reasons-q">What was wrong?</span>
+      {REASONS.map(([k, label]) => (
+        <button key={k} className="ac-reason-chip" onClick={() => onPick(k)}>{label}</button>
+      ))}
+      <button className="ac-reason-skip" onClick={onDismiss}>Skip</button>
+    </div>
+  );
+}
+
 export function ChatView() {
   const cluster = useActiveCluster();
   const conv = useChatStore((s) => s.byCluster[cluster]) || { messages: [], conversationId: null, chatId: null };
@@ -136,6 +211,13 @@ export function ChatView() {
 
   const [likedMsgs, setLikedMsgs] = useState(new Set());
   const [dislikedMsgs, setDislikedMsgs] = useState(new Set());
+  /* What the agent actually read, per assistant message. Tool results used to
+     go into the model's context and vanish, so an answer could say a pod was
+     OOMKilled and the only option was to believe it. */
+  const [evidenceByMsg, setEvidenceByMsg] = useState({});
+  const [openEvidence, setOpenEvidence] = useState(new Set());
+  /* A thumbs-down that does not say why is the least useful signal available. */
+  const [reasonFor, setReasonFor] = useState(null);
 
   const [savedChats, setSavedChats] = useState([]);
 
@@ -512,7 +594,7 @@ export function ChatView() {
     if (lastUser) sendText(lastUser.text);
   }
 
-  const sendFeedback = useCallback(async (msgIdx, reaction) => {
+  const sendFeedback = useCallback(async (msgIdx, reaction, reason) => {
     try {
       await fetch(clusterUrl("/api/chat/feedback", cluster), {
         method: "POST",
@@ -520,7 +602,13 @@ export function ChatView() {
         body: JSON.stringify({
           conversationId: conv.conversationId,
           messageIndex: msgIdx,
+          // The server requires `rating` and rejects anything else with a 400.
+          // This sent `reaction: "like"` and nothing else, so every click was
+          // refused — and the catch below swallowed it, which is why the
+          // feedback table has been empty rather than obviously broken.
+          rating: reaction === "like" ? "positive" : "negative",
           reaction,
+          reason: reason || null,
           cluster,
         }),
       });
@@ -648,6 +736,13 @@ export function ChatView() {
               if (evt.toolCall) {
                 currentToolCalls.push(evt.toolCall);
                 setToolCalls([...currentToolCalls]);
+              }
+              // What the agent read. Arrives as its own event rather than as a
+              // delta — it is data to inspect, not prose to read, and folding
+              // it into the answer would make the answer unreadable.
+              if (evt.evidence) {
+                const idx = useChatStore.getState().getConversation(sendingCluster).messages.length - 1;
+                setEvidenceByMsg((p) => ({ ...p, [idx]: { items: evt.evidence, readAt: evt.readAt || null } }));
               }
               if (evt.done) {
                 if (evt.conversationId) setConversationId(sendingCluster, evt.conversationId);
@@ -804,6 +899,40 @@ export function ChatView() {
     if (key === "azure") return !!(cfg.apiKey && cfg.apiUrl && (cfg.deployment || cfg.model));
     return !!cfg.apiKey; // openai, anthropic, google, bedrock
   }
+
+  /**
+   * Re-ask the same question of a different provider.
+   *
+   * This platform has been provider-agnostic since it was built, and until now
+   * that only showed up in a settings dropdown. Offering it on the ANSWER — "that
+   * looked wrong, try Claude" — is where a user can feel it, and for a technical
+   * assistant a second opinion from a different model is a genuinely useful
+   * check rather than a novelty.
+   *
+   * Only the providers that are enabled AND configured, minus the one that
+   * produced this answer — offering a model that cannot run is worse than
+   * offering nothing.
+   */
+  const altProviders = useMemo(
+    () => availableProviders.filter((k) => k !== activeProvider && providerConfigured(k)).slice(0, 3),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [providers, activeProvider],
+  );
+
+  /** The question that produced message `i` is the user turn before it. */
+  const askAgainWith = useCallback((aiIdx, providerKey) => {
+    const msgs = useChatStore.getState().getConversation(cluster).messages;
+    for (let k = aiIdx - 1; k >= 0; k--) {
+      if (msgs[k]?.role === "user" && msgs[k]?.text) {
+        setActiveProvider(providerKey);
+        // Re-ask rather than edit in place: the original answer stays, which is
+        // the whole point of asking a second model.
+        sendText(msgs[k].text);
+        return;
+      }
+    }
+  }, [cluster]);
+
 
   function stageState(key) {
     if (completedStages.has(key)) return "done";
@@ -1063,7 +1192,12 @@ export function ChatView() {
                   )}
 
                   {/* Window body */}
-                  <div className={"ac-win-body" + (busy && isLastAI ? " ac-streaming-cursor" : "")}>
+                  {/* Streaming text updated silently for a screen reader, so a
+                      response simply never announced. Polite rather than
+                      assertive: it should not interrupt what is being read. */}
+                  <div className={"ac-win-body" + (busy && isLastAI ? " ac-streaming-cursor" : "")}
+                    aria-live={m.role === "assistant" && isLastAI ? "polite" : undefined}
+                    aria-busy={busy && isLastAI ? "true" : undefined}>
                     {m.text && <ChatMessageBody text={m.text} cluster={cluster} onQuery={(q) => sendText(q)} onItsmSubmitted={(info) => handleItsmSubmitted(i, info)} />}
                   </div>
 
@@ -1094,7 +1228,11 @@ export function ChatView() {
                             const wasDisliked = dislikedMsgs.has(i);
                             setDislikedMsgs((p) => { const n = new Set(p); wasDisliked ? n.delete(i) : n.add(i); return n; });
                             setLikedMsgs((p) => { const n = new Set(p); n.delete(i); return n; });
-                            if (!wasDisliked) sendFeedback(i, "dislike");
+                            // Record it immediately — the reason is a bonus,
+                            // not a condition. Asking first would lose the
+                            // signal from anyone who does not answer.
+                            if (!wasDisliked) { sendFeedback(i, "dislike"); setReasonFor(i); }
+                            else setReasonFor(null);
                           }}
                           title="Not helpful"
                           aria-label="Mark response as not helpful"
@@ -1105,7 +1243,36 @@ export function ChatView() {
                         <button className="ac-action-btn" onClick={retryLast} title="Retry" aria-label="Retry last message">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
                         </button>
+                        {/* Ask the same question of a different provider. The
+                            platform has been provider-agnostic all along; this
+                            is the first place a user can feel it. */}
+                        {askAgainWith && (
+                          <span className="ac-again">
+                            <span className="ac-again-label">Ask again with</span>
+                            {altProviders.map((p) => (
+                              <button key={p} className="ac-again-btn" disabled={busy}
+                                onClick={() => askAgainWith(i, p)}
+                                title={`Re-ask the same question using ${p}`}>{p}</button>
+                            ))}
+                          </span>
+                        )}
                       </div>
+
+                      {reasonFor === i && (
+                        <FeedbackReasons
+                          onPick={(r) => { sendFeedback(i, "dislike", r); setReasonFor(null); }}
+                          onDismiss={() => setReasonFor(null)}
+                        />
+                      )}
+
+                      <EvidencePanel
+                        data={evidenceByMsg[i]}
+                        open={openEvidence.has(i)}
+                        onToggle={() => setOpenEvidence((p) => {
+                          const n = new Set(p); n.has(i) ? n.delete(i) : n.add(i); return n;
+                        })}
+                      />
+
                       {/* Follow-ups */}
                       {!busy && isLastAI && followUps.length > 0 && (
                         <div className="ac-follow-ups">

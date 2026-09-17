@@ -10778,6 +10778,58 @@ function markDegraded(reply, why) {
     + reply;
 }
 
+/**
+ * One entry of "what the agent actually read", sized to survive the wire.
+ *
+ * Tool results went into the model's context and were then discarded, so the
+ * chat could say a pod was OOMKilled and the user had to take it on faith. The
+ * evidence line names the tools; this carries what they returned, which is the
+ * difference between an assistant people verify and one they argue with.
+ *
+ * CAPPED, because these are raw cluster reads. A pod list on a busy cluster is
+ * hundreds of kilobytes, and putting that through an SSE stream and into the
+ * browser would trade a trust feature for a hung tab. Truncation is marked
+ * rather than silent — a reader has to be able to tell a short answer from a
+ * shortened one.
+ */
+const EVIDENCE_MAX_BYTES = 4096;      // per tool call
+const EVIDENCE_MAX_TOTAL = 48 * 1024; // per turn
+
+function evidenceEntry(toolName, args, result, durationMs) {
+  const raw = typeof result === "string" ? result : JSON.stringify(result ?? null);
+  const bytes = Buffer.byteLength(raw || "", "utf8");
+  const clipped = bytes > EVIDENCE_MAX_BYTES;
+  return {
+    tool: toolName,
+    // Only the string arguments, and short ones — an argument list is for
+    // recognising the call, not for reproducing it.
+    args: Object.fromEntries(Object.entries(args || {})
+      .filter(([, v]) => typeof v === "string" || typeof v === "number")
+      .map(([k, v]) => [k, String(v).slice(0, 80)])),
+    durationMs: durationMs ?? null,
+    bytes,
+    clipped,
+    body: clipped ? raw.slice(0, EVIDENCE_MAX_BYTES) : raw,
+  };
+}
+
+/** Keep the batch under the wire budget, saying what was dropped. */
+function trimEvidence(entries) {
+  const kept = [];
+  let total = 0;
+  for (const e of entries) {
+    const size = Buffer.byteLength(e.body || "", "utf8");
+    if (total + size > EVIDENCE_MAX_TOTAL) {
+      kept.push({ tool: e.tool, args: e.args, durationMs: e.durationMs, bytes: e.bytes,
+        clipped: true, omitted: true, body: "" });
+      continue;
+    }
+    total += size;
+    kept.push(e);
+  }
+  return kept;
+}
+
 const MAX_TOOL_ITERATIONS = 5;
 
 /**
@@ -17568,6 +17620,7 @@ export async function handleChatAPI(req, res) {
           let loopMessages = [...priorMessages, { role: "user", content: userContent }];
           let totalUsage = null;
           let truncated = false;
+          const evidence = [];
           const readAt = context?.gatheredAt || Date.now();
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -17606,7 +17659,11 @@ export async function handleChatAPI(req, res) {
             for (const tc of allToolCalls) {
               toolsUsed.push(tc.name);
               sseSend(res, { stage: "investigating", toolProgress: `Investigating: ${tc.name}(${Object.values(tc.arguments || {}).filter(v => typeof v === "string").join(", ")})...` });
+              const _t0 = Date.now();
               const toolResult = await executeInvestigationTool(tc.name, tc.arguments || {});
+              // What the agent actually read, kept so the answer can be checked
+              // rather than believed.
+              evidence.push(evidenceEntry(tc.name, tc.arguments, toolResult, Date.now() - _t0));
               if (llmOpts.provider === "anthropic") {
                 loopMessages.push({ role: "assistant", content: [{ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments || {} }] });
                 loopMessages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: toolResult }] });
@@ -17618,10 +17675,10 @@ export async function handleChatAPI(req, res) {
             sseSend(res, { stage: "generating", toolProgress: `Analyzed ${toolsUsed.length} data sources — generating response...` });
           }
 
-          return { context, fullText, usage: totalUsage, toolsUsed, truncated, readAt };
+          return { context, fullText, usage: totalUsage, toolsUsed, truncated, readAt, evidence };
         });
         const { context, fullText, usage: _streamUsage, toolsUsed: _toolsUsed,
-          truncated: _streamTruncated, readAt: _streamReadAt } = sseTraced;
+          truncated: _streamTruncated, readAt: _streamReadAt, evidence: _streamEvidence } = sseTraced;
         // Post-stream grounding validation — append disclaimer if needed
         const validatedFull = validateResponse(fullText, context);
         if (validatedFull && validatedFull.length > fullText.length) {
@@ -17656,8 +17713,13 @@ export async function handleChatAPI(req, res) {
         // evidence line has to be appended here too — not only on the
         // non-streaming path, where it would be invisible to every real user.
         if (_streamTruncated) sseSend(res, { delta: TRUNCATED_NOTE });
-        const evidence = evidenceLine(_toolsUsed, _streamReadAt);
-        if (evidence) sseSend(res, { delta: evidence });
+        const evLine = evidenceLine(_toolsUsed, _streamReadAt);
+        if (evLine) sseSend(res, { delta: evLine });
+        // A separate event, not a delta: this is data to inspect, not prose to
+        // read, and folding it into the answer would make the answer unreadable.
+        if (_streamEvidence?.length) {
+          sseSend(res, { evidence: trimEvidence(_streamEvidence), readAt: _streamReadAt });
+        }
         sseSend(res, { done: true, provider: activeProvider, conversationId, usage: _streamUsage || null, toolsUsed: _toolsUsed || [] });
         sseEnd(res);
         if (conversationId) {
@@ -18676,7 +18738,7 @@ export async function handleExecuteAPI(req, res) {
 export async function handleFeedbackAPI(req, res) {
   try {
     const body = await readBody(req);
-    const { conversationId, messageIndex, rating, comment } = body;
+    const { conversationId, messageIndex, rating, comment, reason } = body;
 
     if (!rating || !['positive', 'negative'].includes(rating)) {
       return json(res, 400, { error: "Rating must be 'positive' or 'negative'" });
@@ -18695,9 +18757,14 @@ export async function handleFeedbackAPI(req, res) {
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      // A thumbs-down that does not say WHY is the least informative signal
+      // available. Structured so the reasons can be counted, not just read.
+      await dbq(`ALTER TABLE chat_feedback ADD COLUMN IF NOT EXISTS reason TEXT`).catch(() => {});
       await dbq(
-        `INSERT INTO chat_feedback (conversation_id, message_index, rating, comment) VALUES ($1, $2, $3, $4)`,
-        [conversationId || null, messageIndex || 0, rating, comment || null]
+        `INSERT INTO chat_feedback (conversation_id, message_index, rating, comment, reason) VALUES ($1, $2, $3, $4, $5)`,
+        [conversationId || null, messageIndex || 0, rating, comment || null,
+         // Only the shapes the UI offers; free text belongs in `comment`.
+         ["wrong-facts", "missed-the-point", "too-long", "incomplete"].includes(reason) ? reason : null]
       );
     } catch {
       // DB optional — feedback still counted via metrics
