@@ -7618,3 +7618,38 @@ h3.widget-title {
 }
 .ac-again-btn:hover:not(:disabled) { color: var(--accent2); border-color: var(--accent2); }
 .ac-again-btn:disabled { opacity: .4; cursor: default; }
+
+/* ── Audit: honest stat cards ─────────────────────────────────────────────
+   A red "0% success" beside "0 actions executed" does not read as "no data",
+   it reads as a platform that fails everything. The sub-line says which. */
+.aud-stat-sub {
+  font-size: 10px; color: var(--text2); margin-top: 2px;
+  font-weight: 500; letter-spacing: 0;
+}
+.aud-stat-denom { font-size: .55em; opacity: .55; font-weight: 600; margin-left: 1px; }
+
+/* ── Audit trail integrity ────────────────────────────────────────────────
+   "We have logs" and "we can show the logs were not edited" are different
+   claims, and only the second survives a regulated review. Unverifiable is its
+   own state: rows written before tamper-evidence existed are not evidence of
+   tampering, and saying otherwise is how a control loses its audience. */
+.aud-integrity {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 9px 13px; border-radius: 9px; margin-bottom: 14px;
+  border: 1px solid var(--border); background: var(--bg);
+}
+.aud-integrity.ok      { border-color: var(--st-good); background: var(--st-good-bg); }
+.aud-integrity.bad     { border-color: var(--st-crit); background: var(--st-crit-bg); }
+.aud-integrity.unknown { border-color: var(--border2); }
+.aud-integrity-badge { font-size: 12px; font-weight: 800; white-space: nowrap; }
+.aud-integrity.ok  .aud-integrity-badge { color: var(--st-good-ink); }
+.aud-integrity.bad .aud-integrity-badge { color: var(--st-crit-ink); }
+.aud-integrity.unknown .aud-integrity-badge { color: var(--text2); }
+.aud-integrity-why { font-size: 11.5px; color: var(--text2); flex: 1 1 260px; min-width: 0; }
+.aud-integrity-btn {
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  padding: 3px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--border2); background: var(--card, var(--bg-alt));
+  color: var(--text2); text-decoration: none;
+}
+.aud-integrity-btn:hover { color: var(--accent2); border-color: var(--accent2); }

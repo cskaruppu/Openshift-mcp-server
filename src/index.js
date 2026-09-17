@@ -8693,6 +8693,22 @@ spec:
           to: url.searchParams.get("to") || undefined,
         };
         const format = url.searchParams.get("format") || "json";
+
+        // OCSF — the schema AWS, Splunk and CrowdStrike converged on. The
+        // difference between an export a security team has to write a parser
+        // for and one their platform already ingests.
+        if (format === "ocsf") {
+          const { toOcsf, queryAuditLog: q } = await import("./services/audit-log.js");
+          const rows = await q({ ...filters, limit: 10000 });
+          const entries = (rows?.events || []).map(toOcsf);
+          res.writeHead(200, {
+            "Content-Type": "application/json",
+            "Content-Disposition": "attachment; filename=audit-trail-ocsf.json",
+          });
+          res.end(JSON.stringify(entries, null, 2));
+          return;
+        }
+
         const data = await exportAuditLog(filters, format);
         if (format === "csv") {
           res.writeHead(200, { "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=audit-trail.csv" });
@@ -8701,6 +8717,19 @@ spec:
           sendJson(res, 200, typeof data === "string" ? JSON.parse(data) : data);
         }
       } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // Is the trail intact? The question a regulated review actually asks, and
+    // one nothing could answer before the chain existed.
+    if (req.method === "GET" && url.pathname === "/api/audit-trail/verify") {
+      try {
+        const { verifyAuditChain, auditRetentionDays } = await import("./services/audit-log.js");
+        const result = await verifyAuditChain({
+          limit: Math.min(50000, parseInt(url.searchParams.get("limit") || "5000", 10)),
+        });
+        sendJson(res, 200, { ...result, retentionDays: auditRetentionDays() });
+      } catch (err) { sendJson(res, 500, { verified: null, error: err.message }); }
       return;
     }
 

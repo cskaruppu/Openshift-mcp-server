@@ -60,6 +60,11 @@ export function AuditView() {
   const { data: trailData, refetch: refetchTrail } =
     useClusterQuery("/api/audit-trail?limit=100", { refetchInterval: 30_000 });
 
+  /* Walks the hash chain. Not polled — it reads the whole trail, and the answer
+     only changes when somebody has been at the database. */
+  const { data: integrity, refetch: refetchIntegrity } =
+    useClusterQuery("/api/audit-trail/verify", { refetchInterval: false, staleTime: 300_000 });
+
   const { data: trailStats } =
     useClusterQuery("/api/audit-trail/stats?days=30", { refetchInterval: 120_000 });
 
@@ -247,12 +252,32 @@ export function AuditView() {
   const total = executed.length;
   const successCount = executed.filter((e) => e.success).length;
   const failedCount = executed.filter((e) => e.success === false).length;
-  const rate = total ? Math.round((successCount / total) * 100) : 0;
+  /* NULL, not 0, when nothing has run. A red "0% success" beside "0 actions
+     executed" does not say "no data" — it says this platform fails everything,
+     which is what a fresh install showed. The same rule the rest of this
+     product holds: unknown is not a failure. */
+  const rate = total ? Math.round((successCount / total) * 100) : null;
 
   const findings = compData?.findings || [];
   const compScore = compData?.score ?? null;
   const compGrade = compData?.grade || "?";
   const compTotals = compData?.totals || {};
+
+  /* "925 findings" is a number nobody can start on; "18 critical, 140 high" is
+     a morning's work. Only the severities that are actually present — a row of
+     zeroes is noise. */
+  const sevSplit = useMemo(() => {
+    const fails = (compData?.findings || []).filter((f) => f.status === "FAIL");
+    if (!fails.length) return null;
+    const counts = {};
+    for (const f of fails) {
+      const k = (f.severity || "info").toLowerCase();
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    const order = ["critical", "high", "medium", "low", "info"];
+    const parts = order.filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`);
+    return parts.length ? parts.join(" · ") : null;
+  }, [compData]);
   const compSummary = compData?.summary || {};
   const categories = Object.keys(compSummary);
 
@@ -381,13 +406,22 @@ export function AuditView() {
           <div className="aud-hero-stats">
             <div className="aud-stat-box" title="View CIS compliance detail" style={{ "--stat-c": compScore !== null ? gradeColor(compGrade) : "#64748b", cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("all"); }}>
-              <div className="aud-stat-val">{compScore !== null ? compScore : "—"}</div>
+              {/* A bare "6" is unreadable — six out of what? The denominator is
+                  the first thing anyone asks, and the first thing an auditor
+                  asks about a score that sits beside 925 findings. */}
+              <div className="aud-stat-val">
+                {compScore !== null ? <>{compScore}<span className="aud-stat-denom">/100</span></> : "—"}
+              </div>
               <div className="aud-stat-lbl">CIS Score &rsaquo;</div>
+              {compScore === null && <div className="aud-stat-sub">no scan yet</div>}
             </div>
             <div className="aud-stat-box" title="Show only failed findings" style={{ "--stat-c": "#ef4444", cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("FAIL"); }}>
               <div className="aud-stat-val">{compTotals.fail || 0}</div>
               <div className="aud-stat-lbl">Findings (Fail) &rsaquo;</div>
+              {/* A flat count is a number nobody can start on. Severity is what
+                  turns 925 findings into a morning's work. */}
+              {sevSplit && <div className="aud-stat-sub">{sevSplit}</div>}
             </div>
             <div className="aud-stat-box" title="Show passing controls" style={{ "--stat-c": "#22c55e", cursor: "pointer" }}
               onClick={() => { setActiveTab("compliance"); setFindingStatus("PASS"); }}>
@@ -399,10 +433,13 @@ export function AuditView() {
               <div className="aud-stat-val">{total}</div>
               <div className="aud-stat-lbl">Actions Executed &rsaquo;</div>
             </div>
-            <div className="aud-stat-box" title="View activity & success rate" style={{ "--stat-c": rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444", cursor: "pointer" }}
+            <div className="aud-stat-box"
+              title={rate === null ? "No actions have been executed yet" : "View activity & success rate"}
+              style={{ "--stat-c": rate === null ? "#64748b" : rate >= 90 ? "#22c55e" : rate >= 70 ? "#f59e0b" : "#ef4444", cursor: "pointer" }}
               onClick={() => setActiveTab("activity")}>
-              <div className="aud-stat-val">{rate}%</div>
+              <div className="aud-stat-val">{rate === null ? "—" : `${rate}%`}</div>
               <div className="aud-stat-lbl">Success Rate &rsaquo;</div>
+              {rate === null && <div className="aud-stat-sub">nothing run yet</div>}
             </div>
             <div className="aud-stat-box" title="View framework profiles" style={{ "--stat-c": "#8b5cf6", cursor: "pointer" }}
               onClick={() => setActiveTab("frameworks")}>
@@ -804,7 +841,38 @@ export function AuditView() {
         <div className="aud-section">
           <div className="aud-section-intro">
             <h3>Persistent Audit Trail</h3>
-            <p>90-day event log of all cluster compliance &amp; security events</p>
+            {/* The retention period was hardcoded at 90 days in the source and
+                stated nowhere a user could see. "How long do you keep it?" is
+                the second question any audit asks; it should not require
+                reading the code. */}
+            <p>
+              Every cluster compliance and security event.
+              {integrity?.retentionDays
+                ? ` Kept for ${integrity.retentionDays} days.`
+                : ""}
+            </p>
+          </div>
+
+          {/* Can this trail be trusted? The question a regulated review
+              actually asks, and one nothing could answer before the chain
+              existed. Unverifiable is shown as its own state — rows written
+              before tamper-evidence are not evidence of tampering. */}
+          <div className={"aud-integrity " + (
+            integrity?.verified === true ? "ok" : integrity?.verified === false ? "bad" : "unknown")}>
+            <span className="aud-integrity-badge">
+              {integrity?.verified === true ? "✓ Chain intact"
+                : integrity?.verified === false ? "✖ Chain broken"
+                : "? Not verified"}
+            </span>
+            <span className="aud-integrity-why">
+              {integrity?.reason || "Checking the tamper-evident chain…"}
+            </span>
+            <button className="aud-integrity-btn" onClick={() => refetchIntegrity()}>Re-check</button>
+            <a className="aud-integrity-btn"
+              href={clusterUrl("/api/audit-trail/export?format=ocsf", cluster)}
+              title="Open Cybersecurity Schema Framework — the shape Splunk, Sentinel and QRadar already understand">
+              Export for SIEM (OCSF)
+            </a>
           </div>
 
           {/* Trail stats */}
