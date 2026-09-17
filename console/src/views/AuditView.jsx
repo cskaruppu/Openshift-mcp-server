@@ -334,7 +334,27 @@ export function AuditView() {
     return [...map.values()].sort((a, b) => b.items.length - a.items.length);
   }, [filteredFindings]);
 
-  const frameworks = fwSummary?.results || [];
+  /**
+   * The evaluator returns frameworkName / compliantControls /
+   * nonCompliantControls; this view read fw.name / fw.compliant /
+   * fw.nonCompliant. Every one of those was undefined, so `|| 0` rendered a
+   * card claiming 0 compliant, 0 partial and 0 non-compliant — while the rows
+   * inside it showed real statuses, because those read fw.controls[].status,
+   * which did match.
+   *
+   * Mapped here rather than renamed on the server: the server's names are the
+   * clearer ones, and the docs generator reads the same shape.
+   */
+  const frameworks = useMemo(() => (fwSummary?.results || []).map((r) => ({
+    ...r,
+    id: r.frameworkId,
+    name: r.frameworkName,
+    description: r.frameworkDescription,
+    compliant: r.compliantControls,
+    partial: r.partialControls,
+    nonCompliant: r.nonCompliantControls,
+    total: r.totalControls,
+  })), [fwSummary]);
 
   // Normalize backend rows (event_type/title/details/created_at) into the shape
   // the UI renders. details is JSONB (an object) — flatten to a string so React

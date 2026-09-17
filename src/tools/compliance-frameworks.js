@@ -238,6 +238,9 @@ export function evaluateFramework(frameworkId, cisFindings) {
   return {
     frameworkId,
     frameworkName: fw.name,
+    // The framework's own description was computed nowhere and the console
+    // rendered a blank line where it should have been.
+    frameworkDescription: fw.description || null,
     totalControls,
     compliantControls,
     partialControls,
