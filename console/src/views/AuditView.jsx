@@ -28,7 +28,10 @@ const sevColor = (s) => {
 const statusIcon = (st) =>
   st === "PASS" ? "✓" : st === "FAIL" ? "✗" : "!";
 
-const fmt = formatTimestamp;
+/* `fmt` (a bare formatTimestamp alias) is deliberately gone. Every timestamp
+   on this page goes through TimeCell so the whole page reads one clock; a
+   convenient shortcut back to local-only formatting is how the two clocks
+   appeared in the first place. */
 
 /**
  * A timestamp an auditor can act on.
@@ -560,7 +563,10 @@ export function AuditView() {
                   <div className="aud-comp-meta">
                     {compTotals.total || 0} checks · {compTotals.pass || 0} passed · {compTotals.fail || 0} failed · {compTotals.warn || 0} warnings
                   </div>
-                  {compData?.scanTime && <div className="aud-comp-time">Scanned: {fmt(compData.scanTime)}</div>}
+                  {/* Through TimeCell like every other timestamp here. These
+                      two bypassed it and showed local time while the trail
+                      beside them showed UTC — one page, two clocks. */}
+                  {compData?.scanTime && <div className="aud-comp-time">Scanned: <TimeCell ts={compData.scanTime} /></div>}
                 </div>
 
                 {/* Category cards */}
@@ -745,7 +751,7 @@ export function AuditView() {
                         <span className="aud-history-score" style={{ color: gradeColor(h.score >= 90 ? "A" : h.score >= 80 ? "B" : h.score >= 70 ? "C" : "D") }}>
                           {h.score}
                         </span>
-                        <span className="aud-history-time">{fmt(h.scanTime)}</span>
+                        <span className="aud-history-time"><TimeCell ts={h.scanTime} /></span>
                         <span className="aud-history-counts">{h.totals?.fail || 0} fail · {h.totals?.pass || 0} pass</span>
                       </div>
                     ))}
@@ -856,7 +862,13 @@ export function AuditView() {
 
             {/* CR list */}
             <div className="aud-cr-list">
-              {filtCRs.length === 0 && <div className="aud-empty">No change requests found</div>}
+              {filtCRs.length === 0 && (
+                <div className="aud-empty">
+                  {(crData?.crs || []).length === 0
+                    ? "No change requests have been raised yet. Migrations and fixes raise one automatically."
+                    : "No change requests match the current filters."}
+                </div>
+              )}
               {filtCRs.map((cr) => {
                 const stColor = STATUS_C[cr.status] || "#64748b";
                 return (
@@ -1005,7 +1017,16 @@ export function AuditView() {
 
           {/* Trail entries */}
           <div className="aud-trail-list">
-            {filteredTrail.length === 0 && <div className="aud-empty">No audit trail entries found</div>}
+            {/* "Not found" cannot tell an empty trail from one filtered to
+                nothing, and now that this page has a period and a user filter
+                the difference is the whole answer. */}
+            {filteredTrail.length === 0 && (
+              <div className="aud-empty">
+                {trailEntries.length === 0
+                  ? "No audit events have been recorded yet. They appear here as scans run and actions are taken."
+                  : `None of the ${trailEntries.length} loaded entries match these filters.`}
+              </div>
+            )}
             {filteredTrail.slice(0, 80).map((e, i) => {
               const ec = e.severity === "critical" ? "#ef4444" : e.severity === "warning" ? "#f59e0b" : "#3b82f6";
               return (

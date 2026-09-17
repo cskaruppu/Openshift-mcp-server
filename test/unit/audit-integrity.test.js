@@ -127,3 +127,33 @@ test("the export buttons say what they export, and how much", () => {
 test("0 of 12 controls before any scan reads as unknown, not as failure", () => {
   assert.match(UI, /no scan has run/);
 });
+
+// ══ One page, one clock ══════════════════════════════════════════════════
+// Changing TimeCell to UTC left two compliance timestamps on local time, so
+// the page showed two clocks at once. This pins every timestamp to TimeCell.
+test("every timestamp on the Audit page goes through TimeCell", () => {
+  const strays = UI.split("\n")
+    .map((l, i) => [i + 1, l])
+    .filter(([, l]) => /\bfmt\(|formatTimestamp\(/.test(l))
+    .filter(([, l]) => !/^\s*\/[/*]|\*/.test(l))          // not a comment
+    .filter(([, l]) => !/title=\{`/.test(l));              // the tooltip inside TimeCell
+  assert.deepEqual(strays, [],
+    "a bare formatTimestamp call renders local time beside UTC everywhere else");
+});
+
+test("the convenient shortcut back to local-only formatting is gone", () => {
+  assert.doesNotMatch(UI, /^const fmt = formatTimestamp;$/m,
+    "the alias is how the two clocks appeared in the first place");
+});
+
+// ══ Empty states say which kind of empty ═════════════════════════════════
+test("an empty trail is distinguished from one filtered to nothing", () => {
+  assert.match(UI, /trailEntries\.length === 0/);
+  assert.match(UI, /None of the \$\{trailEntries\.length\} loaded entries match these filters/,
+    "with a period and a user filter, 'not found' cannot tell you which happened");
+});
+
+test("change requests say the same two things", () => {
+  assert.match(UI, /No change requests have been raised yet/);
+  assert.match(UI, /No change requests match the current filters/);
+});
