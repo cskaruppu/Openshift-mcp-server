@@ -79,6 +79,13 @@ export function AuditView() {
   const { data: trailData, refetch: refetchTrail } =
     useClusterQuery("/api/audit-trail?limit=100", { refetchInterval: 30_000 });
 
+  /* Guardrail decisions: every command classified, and every one REFUSED with
+     the reason. Recorded since this shipped and shown nowhere — arguably the
+     most audit-relevant table in the product, invisible because no view ever
+     called the route. It belongs beside the commands that ran, not in a fourth
+     tab of "things that happened". */
+  const { data: decisionData } = useClusterQuery("/api/audit-log?limit=100", { refetchInterval: 60_000 });
+
   /* Walks the hash chain. Not polled — it reads the whole trail, and the answer
      only changes when somebody has been at the database. */
   const { data: integrity, refetch: refetchIntegrity } =
@@ -415,6 +422,14 @@ export function AuditView() {
     downloadFile(csv, `audit-${cluster}-${Date.now()}.csv`, "text/csv");
   }, [cluster, filteredExecuted]);
 
+  /* Only the refusals. An allowed command already appears in the list below as
+     something that ran; showing it twice is the duplication this review was
+     asked to prevent. A refusal appears nowhere else at all. */
+  const blockedDecisions = useMemo(
+    () => (decisionData?.entries || []).filter((d) => d.allowed === false),
+    [decisionData],
+  );
+
   const historyList = compHistory?.history || [];
 
   return (
@@ -514,9 +529,14 @@ export function AuditView() {
           { key: "compliance", label: "CIS Compliance", icon: "shield" },
           { key: "frameworks", label: "Framework Profiles", icon: "layers" },
           { key: "change-requests", label: "Change Requests", count: (crData?.crs || []).length },
-          { key: "trail", label: "Audit Trail", icon: "scroll" },
+          // Renamed from "Audit Trail". These three tabs hold genuinely
+          // different tables — compliance events, executed commands, agent
+          // activity — and the old names all read as "things that happened",
+          // so nobody could tell which one answered their question. The data
+          // was never duplicated; the labels were.
+          { key: "trail", label: "Security Events", icon: "scroll" },
           { key: "agent-traces", label: "Agent Traces", count: allTraces.length },
-          { key: "activity", label: "Activity & Actions", icon: "zap" },
+          { key: "activity", label: "Commands Run", icon: "zap" },
           { key: "analytics", label: "Query Analytics", icon: "chart" },
         ].map((t) => (
           <button key={t.key} className={"aud-tab" + (activeTab === t.key ? " active" : "")} onClick={() => setActiveTab(t.key)}>
@@ -907,16 +927,18 @@ export function AuditView() {
       {activeTab === "trail" && (
         <div className="aud-section">
           <div className="aud-section-intro">
-            <h3>Persistent Audit Trail</h3>
+            <h3>Security &amp; Compliance Events</h3>
             {/* The retention period was hardcoded at 90 days in the source and
                 stated nowhere a user could see. "How long do you keep it?" is
                 the second question any audit asks; it should not require
                 reading the code. */}
+            {/* Says what this holds AND what it does not. Three tabs whose
+                names all meant "things that happened" is why they read as
+                duplicates when the tables behind them share nothing. */}
             <p>
-              Every cluster compliance and security event.
-              {integrity?.retentionDays
-                ? ` Kept for ${integrity.retentionDays} days.`
-                : ""}
+              Scans, policy violations, logins and role changes.
+              Commands that ran are under <b>Commands Run</b>; agent activity is under <b>Agent Traces</b>.
+              {integrity?.retentionDays ? ` Kept for ${integrity.retentionDays} days.` : ""}
             </p>
           </div>
 
@@ -1059,7 +1081,10 @@ export function AuditView() {
         <div className="aud-section">
           <div className="aud-section-intro">
             <h3>Agent Execution Traces</h3>
-            <p>Which AI agents handled each request, the tools they called, duration &amp; token usage</p>
+            <p>
+              Which AI agents handled each request, the tools they called, duration and token usage.
+              Only queries that went through AI Chat — commands run directly are under <b>Commands Run</b>.
+            </p>
           </div>
 
           {/* Stats bar */}
@@ -1281,6 +1306,43 @@ export function AuditView() {
       {/* ═══ 4. ACTIVITY & ACTIONS ═══ */}
       {activeTab === "activity" && (
         <div className="aud-section">
+          <div className="aud-section-intro">
+            <h3>Commands Run</h3>
+            <p>
+              Every command this platform executed, and every one the guardrails refused.
+              Compliance and security events live under <b>Security Events</b>; which agent
+              handled a question lives under <b>Agent Traces</b>.
+            </p>
+          </div>
+
+          {/* REFUSED COMMANDS — recorded since guardrails shipped and shown
+              nowhere until now. A destructive command that was blocked is the
+              thing an auditor most wants to see, and it was the one thing this
+              page could not show. */}
+          {blockedDecisions.length > 0 && (
+            <div className="aud-blocked">
+              <div className="aud-blocked-head">
+                <b>{blockedDecisions.length} command{blockedDecisions.length === 1 ? "" : "s"} refused by policy</b>
+                <span>These never ran. The guardrails stopped them.</span>
+              </div>
+              {blockedDecisions.slice(0, 8).map((d, i) => (
+                <div className="aud-blocked-row" key={d.id || i}>
+                  <TimeCell ts={d.created_at || d.createdAt} />
+                  <code className="aud-blocked-cmd">{d.command}</code>
+                  <span className="aud-blocked-why">{d.block_reason || d.blockReason || "blocked"}</span>
+                  {(d.risk_level || d.riskLevel) && (
+                    <span className={"aud-blocked-risk " + (d.risk_level || d.riskLevel)}>
+                      {d.risk_level || d.riskLevel}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {blockedDecisions.length > 8 && (
+                <div className="aud-blocked-more">+{blockedDecisions.length - 8} more</div>
+              )}
+            </div>
+          )}
+
           {auditLoading && <div className="aud-loading">Loading audit data…</div>}
           {auditError && <div className="aud-err">{String(auditErr?.message)}</div>}
 

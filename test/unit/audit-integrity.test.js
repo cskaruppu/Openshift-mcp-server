@@ -157,3 +157,36 @@ test("change requests say the same two things", () => {
   assert.match(UI, /No change requests have been raised yet/);
   assert.match(UI, /No change requests match the current filters/);
 });
+
+// ══ Four tables, no duplication ══════════════════════════════════════════
+// Validated against the source: executed_actions, audit_trail, query_traces
+// and audit_log share no rows and no writers. The tabs looked redundant
+// because their names all meant "things that happened", not because the data
+// overlapped — so the fix is labels, plus surfacing the table nothing showed.
+test("each tab says what it holds and points at the others", () => {
+  assert.match(UI, /Security &amp; Compliance Events/);
+  assert.match(UI, /Commands Run/);
+  assert.match(UI, /Scans, policy violations, logins and role changes/);
+  assert.match(UI, /Only queries that went through AI Chat/);
+});
+
+test("the tab labels no longer all read as 'things that happened'", () => {
+  assert.doesNotMatch(UI, /label: "Audit Trail"/);
+  assert.doesNotMatch(UI, /label: "Activity & Actions"/);
+  assert.match(UI, /label: "Security Events"/);
+  assert.match(UI, /label: "Commands Run"/);
+});
+
+// audit_log has recorded every blocked command since guardrails shipped, and
+// no view ever called /api/audit-log. A refused destructive command is the
+// thing an auditor most wants to see.
+test("commands refused by the guardrails are finally visible", () => {
+  assert.match(UI, /api\/audit-log\?limit=100/);
+  assert.match(UI, /commands? refused by policy|command\{blockedDecisions/);
+  assert.match(UI, /block_reason/);
+});
+
+test("only refusals are surfaced, so nothing appears twice", () => {
+  assert.match(UI, /\.filter\(\(d\) => d\.allowed === false\)/,
+    "an allowed command already appears as one that ran; showing it again is the duplication this set out to prevent");
+});

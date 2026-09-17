@@ -7683,3 +7683,39 @@ h3.widget-title {
 @media (max-width: 640px) {
   .aud-period-note { margin-left: 0; width: 100%; }
 }
+
+/* ── Commands the guardrails refused ──────────────────────────────────────
+   Recorded in `audit_log` since guardrails shipped and shown nowhere: a
+   destructive command that was BLOCKED is the thing an auditor most wants to
+   see, and it was the one thing this page could not show. Only refusals appear
+   here — an allowed command is already in the list below as something that
+   ran, and showing it twice would be the duplication this review set out to
+   prevent. */
+.aud-blocked {
+  border: 1px solid var(--st-crit); border-left-width: 3px;
+  background: var(--st-crit-bg); border-radius: 0 10px 10px 0;
+  padding: 11px 14px; margin-bottom: 16px;
+}
+.aud-blocked-head {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px;
+}
+.aud-blocked-head b { font-size: 13px; color: var(--st-crit-ink); }
+.aud-blocked-head span { font-size: 11.5px; color: var(--text2); }
+.aud-blocked-row {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  font-size: 11.5px; padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+.aud-blocked-cmd {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 11px; color: var(--text);
+  flex: 1 1 260px; min-width: 0; word-break: break-all;
+}
+.aud-blocked-why { color: var(--st-crit-ink); font-weight: 600; }
+.aud-blocked-risk {
+  font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--st-crit); color: #fff; white-space: nowrap;
+}
+.aud-blocked-risk.caution { background: var(--st-warn); }
+.aud-blocked-more { font-size: 11px; color: var(--text2); padding-top: 6px; }
