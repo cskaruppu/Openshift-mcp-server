@@ -87,3 +87,43 @@ test("the trail says whether it can be trusted, with unverified as its own state
   assert.match(UI, /Chain broken/);
   assert.match(UI, /Not verified/, "unverifiable is not the same as tampered with");
 });
+
+// ══ The five smaller items ═══════════════════════════════════════════════
+test("the trail can be filtered to a period", () => {
+  assert.match(UI, /const \[trailFrom, setTrailFrom\]/);
+  assert.match(UI, /const \[trailTo, setTrailTo\]/);
+  assert.match(UI, /type="date"/, "audits work in periods, not in scroll distance");
+  // An end date that excluded its own last day would quietly drop evidence.
+  assert.match(UI, /setHours\(23, 59, 59, 999\)/);
+  assert.match(UI, /setHours\(0, 0, 0, 0\)/);
+});
+
+test("the trail can be filtered to a person", () => {
+  assert.match(UI, /const trailUsers = useMemo/);
+  assert.match(UI, /trailUser !== "all"\) list = list\.filter\(\(e\) => e\.username === trailUser\)/);
+});
+
+test("the filter says it only narrows what was loaded", () => {
+  assert.match(UI, /Filters the \{trailEntries\.length\} most recent entries loaded/,
+    "otherwise somebody concludes March was quiet when March was never fetched");
+});
+
+test("timestamps are UTC-first, with local on hover", () => {
+  assert.match(UI, /toISOString\(\)\.replace\("T", " "\)/);
+  assert.match(UI, /aud-ts-z/);
+  assert.match(UI, /local · \$\{timeAgo\(ts\)\}/, "local time belongs on the tooltip, not in the record");
+});
+
+test("an invalid timestamp renders as unknown rather than 'Invalid Date'", () => {
+  assert.match(UI, /Number\.isNaN\(d\.getTime\(\)\)/);
+});
+
+test("the export buttons say what they export, and how much", () => {
+  assert.match(UI, /Export \{filteredExecuted\.length\} action/);
+  assert.doesNotMatch(UI, />Export JSON</, "a bare label on a seven-tab page says nothing");
+  assert.doesNotMatch(UI, />Export CSV</);
+});
+
+test("0 of 12 controls before any scan reads as unknown, not as failure", () => {
+  assert.match(UI, /no scan has run/);
+});

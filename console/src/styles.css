@@ -7653,3 +7653,33 @@ h3.widget-title {
   color: var(--text2); text-decoration: none;
 }
 .aud-integrity-btn:hover { color: var(--accent2); border-color: var(--accent2); }
+
+/* ── Audit: period and person ─────────────────────────────────────────────
+   The two filters an audit actually uses. Both were supported by the API from
+   the start and never offered in the UI. */
+.aud-period {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  margin: 8px 0 14px; font-size: 12px; color: var(--text2);
+}
+.aud-period label { font-weight: 600; }
+.aud-date {
+  font-family: inherit; font-size: 12px; padding: 4px 9px;
+  border-radius: 7px; border: 1px solid var(--border2);
+  background: var(--card, var(--bg-alt)); color: var(--text);
+}
+.aud-date:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
+.aud-period-clear {
+  font-family: inherit; font-size: 11.5px; font-weight: 700;
+  padding: 3px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border2); background: transparent; color: var(--text2);
+}
+.aud-period-clear:hover { color: var(--accent2); border-color: var(--accent2); }
+.aud-period-note { font-size: 11px; opacity: .8; margin-left: auto; }
+
+/* UTC is the instant everybody agrees on; local time lives on the tooltip.
+   A trail whose zone is not stated is a recurring audit finding. */
+.aud-ts-z { opacity: .5; margin-left: 2px; font-size: .85em; }
+
+@media (max-width: 640px) {
+  .aud-period-note { margin-left: 0; width: 100%; }
+}

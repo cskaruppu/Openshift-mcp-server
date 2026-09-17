@@ -30,10 +30,26 @@ const statusIcon = (st) =>
 
 const fmt = formatTimestamp;
 
-/** Monospace, column-aligned timestamp with a relative-time hint on hover. */
+/**
+ * A timestamp an auditor can act on.
+ *
+ * Local time alone is ambiguous in an audit record: two people in different
+ * offices reading the same trail disagree about when an event happened, and a
+ * record whose zone is not stated is a recurring audit finding. So the UTC
+ * instant is shown — that is the one everybody agrees on — with local time and
+ * the relative hint on hover, for the person who just wants to know whether it
+ * was this morning.
+ */
 function TimeCell({ ts }) {
   if (!ts) return <span className="aud-ts">—</span>;
-  return <span className="aud-ts" title={timeAgo(ts)}>{formatTimestamp(ts)}</span>;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return <span className="aud-ts">—</span>;
+  const utc = d.toISOString().replace("T", " ").slice(0, 19);
+  return (
+    <span className="aud-ts" title={`${formatTimestamp(ts)} local · ${timeAgo(ts)}`}>
+      {utc}<span className="aud-ts-z">Z</span>
+    </span>
+  );
 }
 
 function downloadFile(content, filename, mime) {
@@ -148,6 +164,11 @@ export function AuditView() {
   const [actionType, setActionType] = useState("All");
 
   const [trailType, setTrailType] = useState("all");
+  /* Audits work in periods and by person. The API has supported `from`, `to`
+     and `username` since it shipped; the UI simply never sent them. */
+  const [trailFrom, setTrailFrom] = useState("");
+  const [trailTo, setTrailTo] = useState("");
+  const [trailUser, setTrailUser] = useState("all");
   const [trailSearch, setTrailSearch] = useState("");
   const [expandedTrace, setExpandedTrace] = useState(null);
   const [traceAgentFilter, setTraceAgentFilter] = useState("");
@@ -328,8 +349,27 @@ export function AuditView() {
     });
   }, [trailData]);
 
+  /** Everyone who appears in the loaded trail, for the user filter. */
+  const trailUsers = useMemo(() => {
+    const set = new Set();
+    for (const e of trailEntries) if (e.username) set.add(e.username);
+    return [...set].sort();
+  }, [trailEntries]);
+
   const filteredTrail = useMemo(() => {
     let list = trailType === "all" ? trailEntries : trailEntries.filter((e) => e.type === trailType);
+    if (trailUser !== "all") list = list.filter((e) => e.username === trailUser);
+    // Dates are read as whole days in the viewer's zone: somebody asking for
+    // "March" means all of March where they are, and an end date that excluded
+    // its own last day would quietly drop evidence.
+    if (trailFrom) {
+      const f = new Date(trailFrom); f.setHours(0, 0, 0, 0);
+      list = list.filter((e) => new Date(e.timestamp || e.created_at) >= f);
+    }
+    if (trailTo) {
+      const t = new Date(trailTo); t.setHours(23, 59, 59, 999);
+      list = list.filter((e) => new Date(e.timestamp || e.created_at) <= t);
+    }
     const q = trailSearch.trim().toLowerCase();
     if (q) {
       list = list.filter((e) =>
@@ -338,7 +378,7 @@ export function AuditView() {
       );
     }
     return list;
-  }, [trailEntries, trailType, trailSearch]);
+  }, [trailEntries, trailType, trailSearch, trailUser, trailFrom, trailTo]);
 
   // Derive summary counters from the loaded entries. Backend getAuditStats
   // returns byType/bySeverity/byNamespace; the cards below want flat totals.
@@ -397,8 +437,18 @@ export function AuditView() {
               <button className="aud-hero-btn scan" onClick={handleScan} disabled={scanning}>
                 {scanning ? "Scanning…" : "Run CIS Scan"}
               </button>
-              <button className="aud-hero-btn" onClick={handleExportJSON}>Export JSON</button>
-              <button className="aud-hero-btn" onClick={handleExportCSV}>Export CSV</button>
+              {/* "Export JSON" on a seven-tab page does not say what leaves —
+                  the current tab, the current filter, or everything? Both of
+                  these export the FILTERED ACTION list, so they say so and
+                  carry the count. */}
+              <button className="aud-hero-btn" onClick={handleExportJSON}
+                title="Exports the action list currently shown, with any filters applied">
+                Export {filteredExecuted.length} action{filteredExecuted.length === 1 ? "" : "s"} (JSON)
+              </button>
+              <button className="aud-hero-btn" onClick={handleExportCSV}
+                title="Exports the action list currently shown, with any filters applied">
+                Export {filteredExecuted.length} action{filteredExecuted.length === 1 ? "" : "s"} (CSV)
+              </button>
             </div>
           </div>
 
@@ -427,6 +477,11 @@ export function AuditView() {
               onClick={() => { setActiveTab("compliance"); setFindingStatus("PASS"); }}>
               <div className="aud-stat-val">{compTotals.controlsTotal ? `${compTotals.controlsPassed}/${compTotals.controlsTotal}` : (compTotals.pass || 0)}</div>
               <div className="aud-stat-lbl">Controls Passed &rsaquo;</div>
+              {/* "0/12" before any scan has run reads as twelve failures. It is
+                  twelve unknowns, and the difference is the whole point. */}
+              {!compTotals.controlsTotal && !compTotals.pass && (
+                <div className="aud-stat-sub">no scan has run</div>
+              )}
             </div>
             <div className="aud-stat-box" title="View actions taken" style={{ "--stat-c": "#3b82f6", cursor: "pointer" }}
               onClick={() => setActiveTab("activity")}>
@@ -915,6 +970,37 @@ export function AuditView() {
               aria-label="Search audit trail"
             />
             <span className="aud-f-count">Showing {Math.min(filteredTrail.length, 80)} of {filteredTrail.length}</span>
+          </div>
+
+          {/* The two filters an audit actually uses: a period, and a person.
+              Both were supported by the API from the start and never offered. */}
+          <div className="aud-period">
+            <label htmlFor="aud-from">From</label>
+            <input id="aud-from" type="date" className="aud-date" value={trailFrom}
+              max={trailTo || undefined} onChange={(e) => setTrailFrom(e.target.value)} />
+            <label htmlFor="aud-to">To</label>
+            <input id="aud-to" type="date" className="aud-date" value={trailTo}
+              min={trailFrom || undefined} onChange={(e) => setTrailTo(e.target.value)} />
+
+            <label htmlFor="aud-user">User</label>
+            <select id="aud-user" className="aud-date" value={trailUser}
+              onChange={(e) => setTrailUser(e.target.value)}>
+              <option value="all">Anyone</option>
+              {trailUsers.map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+
+            {(trailFrom || trailTo || trailUser !== "all") && (
+              <button className="aud-period-clear"
+                onClick={() => { setTrailFrom(""); setTrailTo(""); setTrailUser("all"); }}>
+                Clear
+              </button>
+            )}
+            {/* The window only narrows what was loaded. Saying so beats letting
+                somebody conclude that March was quiet when March was never
+                fetched. */}
+            <span className="aud-period-note">
+              Filters the {trailEntries.length} most recent entries loaded.
+            </span>
           </div>
 
           {/* Trail entries */}
