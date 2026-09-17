@@ -66,7 +66,7 @@ import {
 } from "./action-workflow.js";
 import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
-import { callLLM, callLLMStream, classifyJSON, llmEnabled, normaliseUsage } from "./llm.js";
+import { callLLM, callLLMStream, classifyJSON, llmEnabled, normaliseUsage, normaliseStopReason } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
 import { diagnosePod } from "./pod-doctor.js";
 import { runAgent } from "./agent-loop.js";
@@ -10726,7 +10726,81 @@ async function executeInvestigationTool(toolName, args) {
   }
 }
 
+/**
+ * The evidence line: which tools produced this answer, and when it was read.
+ *
+ * The tool list was already tracked and then buried in an HTML comment —
+ * `<!--tools:...-->` — which the user never sees. That is the single biggest
+ * gap between this and an assistant people trust: what makes a grounded answer
+ * credible is not that it is right, it is that you can see WHY. A claim about a
+ * pod carries no weight; the same claim with "read from get_pod_details at
+ * 14:02" is evidence.
+ *
+ * The timestamp matters as much as the tool names. Cluster state is gathered at
+ * the start of a turn and a live incident moves underneath it, so an answer
+ * that does not say when it looked is inviting somebody to act on a minute-old
+ * picture without knowing they are.
+ *
+ * The machine-readable marker stays, because the console already parses it.
+ */
+function evidenceLine(toolsUsed, readAt) {
+  const tools = [...new Set(toolsUsed || [])].filter(Boolean);
+  if (!tools.length && !readAt) return "";
+  const when = readAt
+    ? new Date(readAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
+  const bits = [];
+  if (tools.length) bits.push(`Read from ${tools.map((t) => `\`${t}\``).join(", ")}`);
+  if (when) bits.push(`cluster state as of ${when}`);
+  return `\n\n---\n*${bits.join(" · ")}.*`;
+}
+
+/** The same line, plus the marker the console already parses. */
+function withEvidence(reply, toolsUsed, readAt) {
+  const tools = [...new Set(toolsUsed || [])].filter(Boolean);
+  const marker = tools.length ? `<!--tools:${tools.join(",")}-->\n` : "";
+  return `${marker}${reply}${evidenceLine(tools, readAt)}`;
+}
+
+/**
+ * Mark an answer the model did not produce.
+ *
+ * builtInAnalysis() is a genuine graceful degradation and worth keeping — a
+ * static read of cached context beats an error page. What is not acceptable is
+ * serving it as though the assistant had answered: the chat would then always
+ * answer, including when it could not see anything, which is exactly the
+ * failure this product refuses everywhere else. A check with no data is not a
+ * pass, and neither is an answer with no model.
+ */
+function markDegraded(reply, why) {
+  return `> **The assistant could not reach the model${why ? ` — ${why}` : ""}.**\n`
+    + `> What follows is a static analysis of cluster data already gathered, not a considered answer.\n\n`
+    + reply;
+}
+
 const MAX_TOOL_ITERATIONS = 5;
+
+/**
+ * Room for a technical answer.
+ *
+ * This was 2000, which is roughly 1,500 words — tight for an SRE answer that
+ * carries a manifest, a command and the reasoning behind both. A truncated
+ * answer does not read as a short answer; it reads as a WRONG one, because it
+ * stops mid-command and somebody copies half a manifest. Nothing recorded
+ * finish_reason either, so there was no way to know how often it happened.
+ *
+ * Configurable, because the right ceiling depends on the deployment's own
+ * per-request limits.
+ */
+const CHAT_MAX_TOKENS = parseInt(process.env.CHAT_MAX_TOKENS || "4000", 10);
+
+const TRUNCATED_NOTE = "\n\n> **This answer was cut off at the length limit.** "
+  + "Ask for the remaining part, or narrow the question.";
+
+/** Why the model stopped, from whichever field its provider used. */
+function stopOf(r) {
+  try { return normaliseStopReason(r?.raw); } catch { return null; }
+}
 
 async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
   const provider = opts.provider || LLM_PROVIDER;
@@ -10835,7 +10909,7 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     });
     const llmCallOpts = {
       system: augmentedSystem,
-      maxTokens: 2000,
+      maxTokens: CHAT_MAX_TOKENS,
       temperature: 0.15,
       provider: opts.provider,
       apiUrl: opts.apiUrl,
@@ -10851,6 +10925,10 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     };
 
     // Agentic loop: let the LLM call investigation tools up to MAX_TOOL_ITERATIONS times
+    // When the cluster was read. A live incident moves under a long turn, so an
+    // answer that does not say when it looked invites somebody to act on a
+    // stale picture without knowing they are.
+    const readAt = clusterContext?.gatheredAt || Date.now();
     let loopMessages = [...messages];
     let totalUsage = null;
     let toolsUsed = [];
@@ -10871,12 +10949,16 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
         }
       }
       if (!r.toolCalls || r.toolCalls.length === 0) {
-        let reply = validateResponse(r.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+        const validated = validateResponse(r.text, clusterContext);
+        // No usable model answer — say so rather than passing a static read off
+        // as one.
+        let reply = validated || markDegraded(builtInAnalysis(userMessage, clusterContext),
+          r.filtered ? "the response was blocked by a content filter" : "it returned no usable answer");
         reply = await appendFixProposals(reply, ctx);
-        if (toolsUsed.length > 0) {
-          reply = `<!--tools:${toolsUsed.join(",")}-->\n` + reply;
-        }
-        return { text: reply, usage: totalUsage, toolsUsed };
+        // The model was cut off mid-answer. Saying so beats letting somebody
+        // copy half a manifest and conclude the assistant is unreliable.
+        if (stopOf(r)?.truncated) reply += TRUNCATED_NOTE;
+        return { text: withEvidence(reply, toolsUsed, readAt), usage: totalUsage, toolsUsed };
       }
       // Execute tool calls and feed results back to the LLM
       if (r.text) loopMessages.push({ role: "assistant", content: r.text });
@@ -10896,12 +10978,18 @@ async function callLLMWithContext(userMessage, clusterContext, opts = {}) {
     }
     // If we exhausted iterations, return whatever we have
     const finalR = await callLLM({ messages: loopMessages, ...llmCallOpts, tools: null });
-    let reply = validateResponse(finalR.text, clusterContext) || builtInAnalysis(userMessage, clusterContext);
+    const validatedFinal = validateResponse(finalR.text, clusterContext);
+    let reply = validatedFinal || markDegraded(builtInAnalysis(userMessage, clusterContext),
+      "it returned no usable answer after investigating");
     reply = await appendFixProposals(reply, ctx);
-    if (toolsUsed.length > 0) reply = `<!--tools:${toolsUsed.join(",")}-->\n` + reply;
-    return { text: reply, usage: totalUsage, toolsUsed };
+    if (stopOf(finalR)?.truncated) reply += TRUNCATED_NOTE;
+    // Hitting the iteration ceiling means the investigation was cut short, not
+    // that it concluded. The answer stands, with that said out loud.
+    reply += `\n\n> Investigation stopped after ${MAX_TOOL_ITERATIONS} rounds of tool calls. `
+      + `Ask a narrower question if this looks incomplete.`;
+    return { text: withEvidence(reply, toolsUsed, readAt), usage: totalUsage, toolsUsed };
   } catch (err) {
-    let reply = `LLM Error: ${err.message}\n\n---\n\n${builtInAnalysis(userMessage, clusterContext)}`;
+    let reply = markDegraded(builtInAnalysis(userMessage, clusterContext), err.message);
     reply = await appendFixProposals(reply, clusterContext);
     return { text: reply, usage: null };
   }
@@ -17479,10 +17567,13 @@ export async function handleChatAPI(req, res) {
           // Agentic streaming loop — LLM can call tools, then we continue streaming
           let loopMessages = [...priorMessages, { role: "user", content: userContent }];
           let totalUsage = null;
+          let truncated = false;
+          const readAt = context?.gatheredAt || Date.now();
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
             let iterText = "";
             let iterToolCalls = [];
+            // eslint-disable-next-line no-unused-vars
             const iterResult = await callLLMStream({
               messages: loopMessages,
               ...streamLlmOpts,
@@ -17493,6 +17584,11 @@ export async function handleChatAPI(req, res) {
               },
               onToolCall: (tc) => { iterToolCalls.push(tc); },
             });
+            // Only the LAST round can be truncated in a way the reader sees —
+            // an intermediate round cut off before a tool call is a different
+            // problem and would be a misleading thing to report as a short
+            // answer.
+            truncated = !!stopOf(iterResult)?.truncated;
             if (iterResult?.usage) {
               const u2 = normaliseUsage(iterResult.raw);
               if (!totalUsage) totalUsage = { ...u2 };
@@ -17522,9 +17618,10 @@ export async function handleChatAPI(req, res) {
             sseSend(res, { stage: "generating", toolProgress: `Analyzed ${toolsUsed.length} data sources — generating response...` });
           }
 
-          return { context, fullText, usage: totalUsage, toolsUsed };
+          return { context, fullText, usage: totalUsage, toolsUsed, truncated, readAt };
         });
-        const { context, fullText, usage: _streamUsage, toolsUsed: _toolsUsed } = sseTraced;
+        const { context, fullText, usage: _streamUsage, toolsUsed: _toolsUsed,
+          truncated: _streamTruncated, readAt: _streamReadAt } = sseTraced;
         // Post-stream grounding validation — append disclaimer if needed
         const validatedFull = validateResponse(fullText, context);
         if (validatedFull && validatedFull.length > fullText.length) {
@@ -17555,6 +17652,12 @@ export async function handleChatAPI(req, res) {
         if (fixBlock) sseSend(res, { delta: fixBlock });
         const traceMd = renderTraceMarkdown(sseTrace);
         if (traceMd) sseSend(res, { delta: "\n" + traceMd });
+        // The streaming path is the one the console actually uses, so the
+        // evidence line has to be appended here too — not only on the
+        // non-streaming path, where it would be invisible to every real user.
+        if (_streamTruncated) sseSend(res, { delta: TRUNCATED_NOTE });
+        const evidence = evidenceLine(_toolsUsed, _streamReadAt);
+        if (evidence) sseSend(res, { delta: evidence });
         sseSend(res, { done: true, provider: activeProvider, conversationId, usage: _streamUsage || null, toolsUsed: _toolsUsed || [] });
         sseEnd(res);
         if (conversationId) {

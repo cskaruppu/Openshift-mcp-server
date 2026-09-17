@@ -303,6 +303,35 @@ export function normaliseUsage(raw) {
 }
 
 /**
+ * Why the model stopped — and specifically, whether it was cut off.
+ *
+ * A truncated answer reads as a WRONG answer. It stops mid-command, somebody
+ * copies half a manifest, and the conclusion is that the assistant is
+ * unreliable rather than that the ceiling was too low. Nothing recorded this,
+ * so there was no way to know how often it happened: the only symptom is a user
+ * who quietly stops trusting the chat.
+ *
+ * The providers disagree on both the field and the vocabulary. OpenAI and Azure
+ * put `finish_reason` on the choice ("stop" | "length" | "tool_calls" |
+ * "content_filter"); Anthropic puts `stop_reason` on the message ("end_turn" |
+ * "max_tokens" | "tool_use" | "stop_sequence"). Mapped here, once, so callers
+ * ask one question.
+ */
+export function normaliseStopReason(raw) {
+  const fr = raw?.choices?.[0]?.finish_reason || raw?.finish_reason || null;
+  const sr = raw?.stop_reason || raw?.response?.stop_reason || null;
+  const reason = fr || sr || null;
+  if (!reason) return { reason: null, truncated: null, filtered: null };
+  return {
+    reason,
+    // The one that matters. Null when unknown — an unrecorded stop reason is
+    // not evidence that the answer was complete.
+    truncated: reason === "length" || reason === "max_tokens",
+    filtered: reason === "content_filter",
+  };
+}
+
+/**
  * What a call cost, in money rather than tokens.
  *
  * Tokens are an engineering unit. A change board and a budget holder think in
@@ -411,7 +440,7 @@ export async function callLLM({ messages, ...opts }) {
     else if (o.provider === "ollama") result = await callOllama(messages, o, false);
     else result = { text: "", toolCalls: [] };
     // Usage lives inside the provider's raw body, not beside it.
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message });
@@ -442,7 +471,7 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
     else if (o.provider === "anthropic") result = await callAnthropic(messages, o, true, hooks);
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
     else result = { text: "", toolCalls: [] };
-    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, streaming: true });
+    _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, streaming: true });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message, streaming: true });
@@ -487,7 +516,20 @@ async function _recordTelemetry(params) {
         total_tokens: params.usage.totalTokens ?? null,
       } : null,
       errorClass: params.errorClass,
-      metadata: params.errMsg ? { error: String(params.errMsg).slice(0, 200), streaming: params.streaming || false } : (params.streaming ? { streaming: true } : null),
+      // Why it stopped, kept beside the call it describes. `truncated` is the
+      // one worth counting: a cut-off answer reads as a wrong answer, and
+      // nothing recorded it, so nobody could say how often it happened.
+      metadata: (() => {
+        const m = {};
+        if (params.errMsg) m.error = String(params.errMsg).slice(0, 200);
+        if (params.streaming) m.streaming = true;
+        if (params.stop?.reason) {
+          m.stop_reason = params.stop.reason;
+          if (params.stop.truncated) m.truncated = true;
+          if (params.stop.filtered) m.filtered = true;
+        }
+        return Object.keys(m).length ? m : null;
+      })(),
     }).catch(() => {});
   } catch { /* telemetry unavailable */ }
 }
@@ -665,11 +707,14 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
   let text = "";
   const toolCalls = [];
   let usage = null;
+  let finishReason = null;
   await readSSE(resp.body, (evt) => {
     if (evt === "[DONE]") return;
     let chunk;
     try { chunk = JSON.parse(evt); } catch { return; }
     if (chunk.usage) usage = chunk.usage;
+    // Arrives on the last content chunk, before the usage chunk.
+    if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) return;
     if (delta.content) {
@@ -694,7 +739,7 @@ async function callOpenAI(messages, o, stream, hooks = {}) {
   for (const tc of parsedCalls) hooks.onToolCall?.(tc);
   // `raw` is where normaliseUsage() looks, so shape it like the non-streaming
   // body and one extractor serves both paths.
-  return { text, toolCalls: parsedCalls, raw: usage ? { usage } : null };
+  return { text, toolCalls: parsedCalls, raw: (usage || finishReason) ? { usage, finish_reason: finishReason } : null };
 }
 
 // ===========================================================================
@@ -816,6 +861,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
   let text = "";
   const toolCalls = [];
   let usage = null;
+  let finishReason = null;
   await readSSE(resp.body, (evt) => {
     if (evt === "[DONE]") return;
     let chunk;
@@ -823,6 +869,8 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     // The usage chunk arrives with an EMPTY choices array, so it has to be
     // read before the `!delta` guard below discards it.
     if (chunk.usage) usage = chunk.usage;
+    // Arrives on the last content chunk, before the usage chunk.
+    if (chunk.choices?.[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
     const delta = chunk.choices?.[0]?.delta;
     if (!delta) return;
     if (delta.content) {
@@ -845,7 +893,7 @@ async function callAzureOpenAI(messages, o, stream, hooks = {}) {
     arguments: safeJSON(tc.arguments),
   }));
   for (const tc of parsedCalls) hooks.onToolCall?.(tc);
-  return { text, toolCalls: parsedCalls, raw: usage ? { usage } : null };
+  return { text, toolCalls: parsedCalls, raw: (usage || finishReason) ? { usage, finish_reason: finishReason } : null };
 }
 
 // ===========================================================================
@@ -924,11 +972,14 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
   // arrive on message_start, output_tokens on message_delta. Taking either one
   // alone would record half the call, so both are merged.
   const usage = {};
+  let stopReason = null;
   await readSSE(resp.body, (evt) => {
     let chunk;
     try { chunk = JSON.parse(evt); } catch { return; }
     if (chunk.type === "message_start" && chunk.message?.usage) Object.assign(usage, chunk.message.usage);
     if (chunk.type === "message_delta" && chunk.usage) Object.assign(usage, chunk.usage);
+    // Anthropic reports why it stopped on the same message_delta event.
+    if (chunk.type === "message_delta" && chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
     if (chunk.type === "content_block_start" && chunk.content_block?.type === "tool_use") {
       currentTool = { id: chunk.content_block.id, name: chunk.content_block.name, arguments: null };
       currentToolJson = "";
@@ -949,7 +1000,10 @@ async function callAnthropic(messages, o, stream, hooks = {}) {
       currentTool = null;
     }
   });
-  return { text, toolCalls, raw: Object.keys(usage).length ? { usage } : null };
+  return {
+    text, toolCalls,
+    raw: (Object.keys(usage).length || stopReason) ? { usage, stop_reason: stopReason } : null,
+  };
 }
 
 // ===========================================================================
@@ -1003,7 +1057,9 @@ async function callOllama(messages, o, stream, hooks = {}) {
   // Ollama reports counts on its final chunk under its own names. Mapped to
   // the OpenAI shape here so normaliseUsage() needs no third branch.
   let usage = null;
+  let doneReason = null;
   await readNDJSON(resp.body, (chunk) => {
+    if (chunk.done && chunk.done_reason) doneReason = chunk.done_reason;
     if (chunk.done && (chunk.prompt_eval_count != null || chunk.eval_count != null)) {
       const p = chunk.prompt_eval_count ?? null, c = chunk.eval_count ?? null;
       usage = { prompt_tokens: p, completion_tokens: c, total_tokens: p != null && c != null ? p + c : null };
@@ -1023,7 +1079,8 @@ async function callOllama(messages, o, stream, hooks = {}) {
       }
     }
   });
-  return { text, toolCalls, raw: usage ? { usage } : null };
+  // Ollama says "length" as `done_reason: "length"` too, so it maps straight on.
+  return { text, toolCalls, raw: (usage || doneReason) ? { usage, finish_reason: doneReason } : null };
 }
 
 // ---------------------------------------------------------------------------
