@@ -27,10 +27,21 @@
  * Everything here is pure.
  */
 
-/** Physical cores are not what the cluster reports. Hyperthreading is 2 by default. */
-export const DEFAULT_THREADS_PER_CORE = 2;
-/** OpenShift Virtualization Engine is licensed per pair of physical cores. */
-export const CORES_PER_SUBSCRIPTION = 2;
+/**
+ * OpenShift Virtualization Engine is licensed per BARE-METAL WORKER NODE.
+ *
+ * Not per core, not per socket. Red Hat's self-managed subscription guide:
+ * "One bare-metal node subscription is required per physical server... A
+ * physical node is 1 server regardless of the number of CPU sockets in the
+ * server, or cores in the CPUs." Control plane nodes are included and are not
+ * counted.
+ *
+ * This has a consequence the panel has to state, because it inverts the usual
+ * intuition: the subscription cost does NOT scale with the wave. Migrating
+ * twice as many machines onto the same nodes costs the same. It is a property
+ * of the cluster, not of what is running on it.
+ */
+export const OPENSHIFT_LICENSE_UNIT = "bare-metal worker node";
 
 /**
  * The rate card, as configuration. Same shape and the same discipline as
@@ -38,7 +49,7 @@ export const CORES_PER_SUBSCRIPTION = 2;
  * there is no figure at all.
  *
  *   INFRA_PRICING = {"vspherePerSocketYear":3450,"vcenterPerInstanceYear":6000,
- *                    "openshiftPerCorePairYear":2100,"socketsPerHost":2,
+ *                    "openshiftPerNodeYear":12000,"socketsPerHost":2,
  *                    "currency":"USD","basis":"configured"}
  */
 export function infraPricing(env = process.env) {
@@ -61,9 +72,8 @@ export function infraPricing(env = process.env) {
     rates: {
       vspherePerSocketYear: num(parsed.vspherePerSocketYear),
       vcenterPerInstanceYear: num(parsed.vcenterPerInstanceYear),
-      openshiftPerCorePairYear: num(parsed.openshiftPerCorePairYear),
+      openshiftPerNodeYear: num(parsed.openshiftPerNodeYear),
       socketsPerHost: num(parsed.socketsPerHost),
-      threadsPerCore: num(parsed.threadsPerCore) || DEFAULT_THREADS_PER_CORE,
       vcenterInstances: num(parsed.vcenterInstances) ?? 1,
     },
     reason: null,
@@ -117,11 +127,9 @@ export function footprint(vms = [], capacity = null, rightsizing = null) {
       nodesUsed: nodes,
       nodesTotal: capacity?.virtNodeCount ?? null,
       vcpu, vcpuAfter,
-      // Sum of what the cluster reports as CPU capacity on the nodes this wave
-      // would use — threads, not cores, which is why it is converted below.
-      nodeThreads: nodeList.length
-        ? nodeList.filter((n) => n.vmCount > 0).reduce((n, x) => n + Math.round((x.cpuMillis || 0) / 1000), 0)
-        : null,
+      // Every virtualization-capable worker, because that is the licensing
+      // unit — not the subset this wave lands on.
+      virtNodes: capacity?.virtNodeCount ?? null,
     },
     rightsized: rightsizing
       ? { measured: rightsizing.coverage.measured, total: rightsizing.coverage.total, vcpuFreed: freedVcpu }
@@ -174,21 +182,23 @@ export function tcoComparison(vms = [], capacity = null, opts = {}) {
     { k: "Allocated vCPU", v: fp.target.vcpuAfter == null ? String(fp.target.vcpu) : `${fp.target.vcpuAfter} (from ${fp.target.vcpu})` },
   ];
 
-  let corePairs = null;
-  if (fp.target.nodeThreads != null && rates?.threadsPerCore) {
-    const cores = Math.ceil(fp.target.nodeThreads / rates.threadsPerCore);
-    corePairs = Math.ceil(cores / CORES_PER_SUBSCRIPTION);
-    targetRows.push({ k: "Physical core pairs", v: String(corePairs) });
-    lines.push(`Cores: ${fp.target.nodeThreads} reported threads ÷ ${rates.threadsPerCore} per core = ${cores} cores → ${corePairs} pairs`);
-    notes.push(`Core count is derived from what the nodes report as CPU capacity, divided by ${rates.threadsPerCore} threads per core. Set threadsPerCore in the rate card if this hardware differs, or the subscription figure will be out by that factor.`);
+  // Licensed nodes are every virtualization-capable WORKER in the cluster, not
+  // the subset this wave happens to land on. You subscribe the node; what runs
+  // on it is not the unit. Counting only the wave's nodes would under-quote the
+  // subscription, which is the direction that embarrasses someone in front of
+  // procurement.
+  const licensedNodes = fp.target.virtNodes;
+  if (licensedNodes != null) {
+    targetRows.push({ k: "Worker nodes to license", v: String(licensedNodes) });
   }
 
-  if (corePairs != null && rates?.openshiftPerCorePairYear != null) {
-    targetAnnual = corePairs * rates.openshiftPerCorePairYear;
+  if (licensedNodes != null && rates?.openshiftPerNodeYear != null) {
+    targetAnnual = licensedNodes * rates.openshiftPerNodeYear;
     targetRows.push({ k: "OpenShift Virtualization", v: `${money(targetAnnual, currency)} / yr` });
-    lines.push(`OpenShift: ${corePairs} core pairs × ${money(rates.openshiftPerCorePairYear, currency)} = ${money(targetAnnual, currency)}/yr`);
-  } else if (pricing.configured && rates?.openshiftPerCorePairYear == null) {
-    notes.push("OpenShift Virtualization is not priced: no openshiftPerCorePairYear rate was supplied.");
+    lines.push(`OpenShift: ${licensedNodes} bare-metal worker nodes × ${money(rates.openshiftPerNodeYear, currency)} = ${money(targetAnnual, currency)}/yr`);
+    notes.push("OpenShift Virtualization Engine is licensed per bare-metal worker node — sockets and cores do not change the count, and control plane nodes are included rather than charged. So this figure does not scale with the wave: migrating twice as many machines onto these same nodes costs the same, and the cost per VM falls as you consolidate.");
+  } else if (pricing.configured && rates?.openshiftPerNodeYear == null) {
+    notes.push("OpenShift Virtualization is not priced: no openshiftPerNodeYear rate was supplied. It is licensed per bare-metal worker node, not per core or socket.");
   }
 
   // ── The comparison, only when both sides are real ────────────────────────
