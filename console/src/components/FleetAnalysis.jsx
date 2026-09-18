@@ -236,69 +236,344 @@ const POWER = {
    machine must fit on ONE node. A 64 GiB guest does not run on 32 GiB workers,
    however much RAM the cluster has in total. */
 const CAP_STYLE = {
-  fits:    { token: "--st-good",    bg: "--st-good-bg",    icon: "✓" },
-  tight:   { token: "--st-warn",    bg: "--st-warn-bg",    icon: "⚠" },
-  exceeds: { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖" },
-  blocked: { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖" },
-  unknown: { token: "--st-unknown", bg: "--st-unknown-bg", icon: "?" },
+  fits:       { token: "--st-good",    bg: "--st-good-bg",    icon: "✓", word: "will land" },
+  tight:      { token: "--st-warn",    bg: "--st-warn-bg",    icon: "⚠", word: "lands, no margin" },
+  fragmented: { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖", word: "room exists, cannot be reached" },
+  exceeds:    { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖", word: "too big for this cluster" },
+  blocked:    { token: "--st-crit",    bg: "--st-crit-bg",    icon: "✖", word: "blocked" },
+  unknown:    { token: "--st-unknown", bg: "--st-unknown-bg", icon: "?", word: "not known" },
 };
 
-function CapacityPanel({ capacity }) {
+/* Three reasons a machine does not land, three different fixes. Pooling them
+   into "won't fit" is how someone buys nodes to solve a wave-ordering problem. */
+const BLOCK_KIND = {
+  hardware: { icon: "✖", token: "--st-crit", title: (n) => `${n} — will never schedule on this cluster`,
+    fix: "Add a machine set with bigger nodes, or leave it out of this wave." },
+  cluster: { icon: "✖", token: "--st-crit", title: (n) => `${n} — fits the hardware, but the cluster has no room today`,
+    fix: "Scale the cluster or free reserved capacity before cutover." },
+  wave: { icon: "✖", token: "--st-warn", title: (n) => `${n} — fits the hardware, but nothing is left by the time it is placed`,
+    fix: "Move it to the next wave, or place it first and re-run. The cluster does not need to change." },
+};
+
+/* A node's memory after this wave lands. One meter per node, direct-labelled —
+   the number is read, never estimated from a bar. */
+function NodeMeter({ n }) {
+  const pct = n.pctMem ?? 0;
+  const token = pct >= 95 ? "--st-crit" : pct >= 85 ? "--st-warn" : "--st-good";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(110px,150px) 1fr minmax(150px,auto)", gap: 11, alignItems: "center", padding: "6px 0" }}>
+      <div>
+        <div style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.77rem", fontWeight: 700 }}>{n.name}</div>
+        <div style={{ fontSize: "0.72rem", color: "var(--text2)" }}>{n.memGiB} GiB node</div>
+      </div>
+      <div style={{ height: 9, borderRadius: 5, background: "rgba(127,127,127,.15)", overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", borderRadius: 5, background: `var(${token})` }} />
+      </div>
+      <div style={{ fontSize: "0.76rem", color: "var(--text2)", textAlign: "right", whiteSpace: "nowrap" }}>
+        <b style={{ color: "var(--text)" }}>{n.vmCount} VM{n.vmCount === 1 ? "" : "s"}</b>
+        {" · "}{n.usedMemGiB}/{n.memGiB} GiB
+      </div>
+    </div>
+  );
+}
+
+/* ── Will it land? ────────────────────────────────────────────────────────────
+   Blockers first, inventory second. Every other tool in this space opens on the
+   estate and leaves the operator to find the three rows that matter; the three
+   rows that matter are the whole point of the step.
+
+   The placement underneath is packed as a SET. Checking each machine against
+   the emptiest node one at a time never accounts for the machine placed there a
+   moment earlier, and summing the wave against total headroom ignores that the
+   headroom is fragmented. Both are wrong in the optimistic direction. */
+function LandingPanel({ capacity }) {
+  const [showAll, setShowAll] = useState(false);
   if (!capacity) return null;
   const st = CAP_STYLE[capacity.verdict] || CAP_STYLE.unknown;
-  const bad = (capacity.perVm || []).filter((p) => p.fits === false);
-  // Memory is the binding constraint — it is not overcommitted, CPU is.
-  const ratio = capacity.free?.memGiB > 0 ? capacity.demand.memGiB / capacity.free.memGiB : null;
-  const pct = ratio == null ? null : Math.min(100, Math.round(ratio * 100));
-  // A bar pinned at 100% cannot say "four times over", and the difference
-  // between 105% and 400% is the difference between freeing a node and buying
-  // three — so when it overflows, the multiple is stated in words.
-  const over = ratio > 1 ? `${ratio.toFixed(1)}× over` : null;
+  const p = capacity.placement;
+
+  // Placement is the truth when it could be simulated. When the cluster could
+  // not be read, the per-VM fit check is all there is — and it is labelled as
+  // the weaker answer rather than dressed up as the same one.
+  const blockers = p?.available
+    ? (p.unplaced || [])
+    : (capacity.perVm || []).filter((x) => x.fits === false)
+        .map((x) => ({ name: x.name, reason: x.reason, blockedBy: x.permanent ? "hardware" : "cluster" }));
+  const order = { hardware: 0, cluster: 1, wave: 2 };
+  const sorted = blockers.slice().sort((a, b) => (order[a.blockedBy] ?? 3) - (order[b.blockedBy] ?? 3));
+  const placed = p?.placed || [];
+  const shown = showAll ? placed : placed.slice(0, 6);
 
   return (
-    <div style={{ border: `1px solid var(${st.token})`, borderRadius: 10, padding: "12px 14px", background: `var(${st.bg})` }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
-        <span aria-hidden style={{ color: `var(${st.token}-ink)`, fontWeight: 800 }}>{st.icon}</span>
-        <span style={{ fontWeight: 800, fontSize: "0.86rem" }}>Will it fit?</span>
-        <span style={{ fontSize: "0.76rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${st.token}-ink)` }}>
-          {capacity.verdict}
-        </span>
-        <span style={{ fontSize: "0.79rem", color: "var(--text)" }}>{capacity.headline}</span>
+    <div style={{ border: `1px solid var(${st.token})`, borderRadius: 10, background: "var(--card)", overflow: "hidden" }}>
+      <div style={{ padding: "12px 14px", background: `var(${st.bg})`, borderBottom: "1px solid var(--border)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
+          <span aria-hidden style={{ color: `var(${st.token}-ink)`, fontWeight: 800 }}>{st.icon}</span>
+          <span style={{ fontWeight: 800, fontSize: "0.86rem" }}>Will it land?</span>
+          <span style={{ fontSize: "0.76rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: `var(${st.token}-ink)` }}>
+            {st.word}
+          </span>
+          <span style={{ marginLeft: "auto", fontSize: "0.73rem", color: "var(--text2)" }}>
+            read live from the target cluster
+          </span>
+        </div>
+        <div style={{ fontSize: "0.79rem", color: "var(--text)", marginTop: 4 }}>{capacity.headline}</div>
       </div>
 
-      {pct != null && (
-        <div style={{ marginTop: 9 }}>
-          <div style={{ height: 8, borderRadius: 999, background: "rgba(127,127,127,.18)", overflow: "hidden" }}>
-            <div style={{ width: `${pct}%`, height: "100%", background: `var(${st.token})` }} />
+      {/* ── The blockers, before anything else ── */}
+      {sorted.length > 0 && (
+        <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: "0.79rem", fontWeight: 800, marginBottom: 5 }}>
+            {sorted.length} machine{sorted.length === 1 ? "" : "s"} will stop this wave
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: "0.76rem", color: "var(--text2)", marginTop: 3 }}>
-            <span>
-              {capacity.demand.memGiB} GiB required by this wave
-              {over && <b style={{ color: `var(${st.token}-ink)`, marginLeft: 6 }}>{over}</b>}
-            </span>
-            <span>{capacity.free.memGiB} GiB unreserved on {capacity.virtNodeCount} virtualization node(s)</span>
-          </div>
+          {sorted.map((b) => {
+            const k = BLOCK_KIND[b.blockedBy] || BLOCK_KIND.cluster;
+            return (
+              <div key={b.name} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+                <span aria-hidden style={{ color: `var(${k.token}-ink)`, fontWeight: 800 }}>{k.icon}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{k.title(b.name)}</div>
+                  <div style={{ fontSize: "0.77rem", color: "var(--text2)", marginTop: 1 }}>{b.reason}</div>
+                  <div style={{ fontSize: "0.77rem", marginTop: 2 }}>→ {k.fix}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {bad.length > 0 && (
-        <div style={{ marginTop: 9 }}>
-          {bad.map((p) => (
-            <div key={p.name} style={{ display: "flex", gap: 8, fontSize: "0.78rem", marginTop: 4 }}>
-              <span aria-hidden style={{ color: `var(${p.permanent ? "--st-crit" : "--st-warn"}-ink)`, fontWeight: 800 }}>
-                {p.permanent ? "✖" : "⚠"}
-              </span>
-              <div><b>{p.name}</b> — {p.reason}</div>
+      {/* ── Where everything else lands ── */}
+      {p?.available && (
+        <div style={{ padding: "11px 14px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap", marginBottom: 4 }}>
+            <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>
+              Placement — {p.placedCount} of {p.placedCount + p.unplacedCount} machine
+              {p.placedCount + p.unplacedCount === 1 ? "" : "s"} onto {p.nodesUsed} node{p.nodesUsed === 1 ? "" : "s"}
+            </span>
+            <span style={{ fontSize: "0.74rem", color: "var(--text2)" }}>simulated as a set, not one machine at a time — a placement exists, which is not the same as predicting the scheduler's choice</span>
+          </div>
+
+          {p.nodes.map((n) => <NodeMeter key={n.name} n={n} />)}
+
+          {/* A node the cluster can use and a VM cannot is not headroom. */}
+          {(p.excluded || []).map((e) => (
+            <div key={e.name} style={{ display: "flex", gap: 9, fontSize: "0.75rem", color: "var(--st-unknown-ink)", padding: "4px 0" }}>
+              <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", minWidth: 110 }}>{e.name}</span>
+              <span>Excluded — {e.reason}</span>
             </div>
           ))}
+
+          {placed.length > 0 && (
+            <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.76rem" }}>
+                <thead>
+                  <tr>
+                    {["Machine", "Requests", "Can land on", "Spare after"].map((h, i) => (
+                      <th key={h} style={{ textAlign: i > 2 ? "right" : "left", padding: "4px 8px", fontWeight: 800,
+                        fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)",
+                        borderBottom: "1px solid var(--border)" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((x) => (
+                    <tr key={x.name}>
+                      <td style={{ padding: "5px 8px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace" }}>{x.name}</td>
+                      {/* The request a KubeVirt VM makes, not the guest's spec —
+                          they are different numbers and only one reaches the
+                          scheduler. */}
+                      <td style={{ padding: "5px 8px", color: "var(--text2)" }}>
+                        {x.need.cpuMillis}m · {x.need.memGiB.toFixed(1)} GiB
+                      </td>
+                      <td style={{ padding: "5px 8px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace" }}>{x.node}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        {x.spareMemGiB.toFixed(1)} GiB
+                        {x.tight && (
+                          <span title="Nothing else this size fits on that node afterwards"
+                            style={{ marginLeft: 6, color: "var(--st-warn-ink)", fontWeight: 700 }}>⚠ last fit</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {placed.length > shown.length && (
+                <button onClick={() => setShowAll(true)} style={{ background: "none", border: "none", padding: "6px 8px",
+                  font: "inherit", fontSize: "0.75rem", fontWeight: 700, color: "var(--text2)", cursor: "pointer" }}>
+                  {placed.length - shown.length} more machine{placed.length - shown.length === 1 ? "" : "s"} placed · show all
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* The assumptions, stated. A capacity number without them is a guess
           wearing a suit. */}
-      <ul data-prose style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: "0.75rem", color: "var(--text2)" }}>
-        {(capacity.notes || []).map((n, i) => <li key={i}>{n}</li>)}
+      <ul data-prose style={{ margin: 0, padding: "0 14px 11px 32px", fontSize: "0.75rem", color: "var(--text2)" }}>
+        {(capacity.notes || []).map((n, i) => <li key={i} style={{ marginTop: 2 }}>{n}</li>)}
       </ul>
+    </div>
+  );
+}
+
+/* ── Node loss ────────────────────────────────────────────────────────────────
+   The same pack, re-run with each node removed. No assessment product answers
+   this, because none of them are operating the target — and "the wave fits" and
+   "the wave fits as long as nothing happens for four hours" are different
+   promises. */
+function RehearsalPanel({ rehearsal }) {
+  if (!rehearsal?.available || !rehearsal.nodes?.length) return null;
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", padding: "11px 13px 7px" }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>If a node is lost mid-wave</span>
+        <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
+          patching, a drain, a hardware failure — the whole wave is re-packed without it, so the machines left over are not only the ones it was carrying
+        </span>
+        <span style={{ marginLeft: "auto", fontSize: "0.77rem", color: rehearsal.worst ? "var(--st-warn-ink)" : "var(--st-good-ink)", fontWeight: 700 }}>
+          {rehearsal.headline}
+        </span>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.77rem" }}>
+        <thead>
+          <tr>
+            {["If this node goes", "It carries", "Wave still places", "No longer place", "What it means"].map((h, i) => (
+              <th key={h} style={{ textAlign: i >= 1 && i <= 3 ? "right" : "left", padding: "5px 9px", fontWeight: 800,
+                fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)",
+                borderBottom: "1px solid var(--border)" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rehearsal.nodes.map((n) => (
+            <tr key={n.node} style={{ borderBottom: "1px solid var(--border)" }}>
+              <td style={{ padding: "5px 9px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace" }}>{n.node}</td>
+              <td style={{ padding: "5px 9px", textAlign: "right" }}>{n.hosted}</td>
+              <td style={{ padding: "5px 9px", textAlign: "right" }}>{n.stillPlaces}</td>
+              <td style={{ padding: "5px 9px", textAlign: "right", fontWeight: n.stranded ? 800 : 400,
+                color: n.stranded ? "var(--st-crit-ink)" : "var(--text2)" }}>{n.stranded}</td>
+              <td style={{ padding: "5px 9px" }}>
+                {n.stranded ? (
+                  <>
+                    <b style={{ color: "var(--st-crit-ink)" }}>✖ {n.stranded} stranded</b>
+                    <span style={{ color: "var(--text2)" }}>
+                      {" "}— do not drain this node while the wave runs
+                      {n.strandedNames.length ? `: ${n.strandedNames.join(", ")}` : ""}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <b style={{ color: "var(--st-good-ink)" }}>✓ absorbs</b>
+                    {n.tightNodesAfter > 0 && (
+                      <span style={{ color: "var(--text2)" }}> — {n.tightNodesAfter} node{n.tightNodesAfter === 1 ? " goes" : "s go"} above 90%</span>
+                    )}
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rehearsal.singleNode && (
+        <div style={{ padding: "8px 13px", fontSize: "0.76rem", color: "var(--st-warn-ink)" }}>{rehearsal.note}</div>
+      )}
+    </div>
+  );
+}
+
+/* ── Staleness ────────────────────────────────────────────────────────────────
+   Every product in this space hands over a report, and a report cannot know it
+   went out of date. This agent lives in the destination, so it can say that two
+   workers were replaced at 14:00 and which verdicts moved because of it. */
+function StalenessBand({ analysis, onRecheck, busy }) {
+  const at = analysis.assessedAt ? new Date(analysis.assessedAt) : null;
+  const cap = analysis.drift?.capacity;
+  const nodes = analysis.capacity?.virtNodeCount;
+  if (!at && !cap) return null;
+  const ageMins = at ? Math.round((Date.now() - at.getTime()) / 60000) : null;
+  const age = ageMins == null ? null
+    : ageMins < 2 ? "just now"
+    : ageMins < 90 ? `${ageMins} minutes old`
+    : ageMins < 60 * 48 ? `${Math.round(ageMins / 60)} hours old`
+    : `${Math.round(ageMins / 1440)} days old`;
+  const moved = cap ? cap.counts.improved + cap.counts.regressed : 0;
+
+  return (
+    <div style={{ display: "flex", gap: 11, alignItems: "flex-start", flexWrap: "wrap",
+      border: "1px solid var(--border)", borderLeft: `3px solid var(${moved ? "--st-warn" : "--st-unknown"})`,
+      borderRadius: 10, padding: "10px 13px", background: "var(--card)", fontSize: "0.78rem", lineHeight: 1.55 }}>
+      <span aria-hidden style={{ color: `var(${moved ? "--st-warn" : "--st-unknown"}-ink)`, fontWeight: 800 }}>⟳</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        Assessed <b>{at ? at.toLocaleString() : "—"}</b>
+        {nodes != null && <> against <b>{nodes}</b> virtualization node{nodes === 1 ? "" : "s"}</>}
+        {age && <span style={{ color: "var(--text2)" }}> · this assessment is {age}</span>}
+        {cap && cap.material > 0 && (
+          <div style={{ marginTop: 3 }}>
+            <span style={{ color: "var(--st-warn-ink)", fontWeight: 800 }}>The target has changed since then</span>
+            <span style={{ color: "var(--text2)" }}> — {cap.headline}.</span>
+            {[...cap.resized, ...cap.removed, ...cap.added].slice(0, 4).map((n) => (
+              <div key={n.name} style={{ color: "var(--text2)" }}>
+                <b style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", color: "var(--text)" }}>{n.name}</b> {n.note}
+              </div>
+            ))}
+            {cap.regressed.slice(0, 4).map((v) => (
+              <div key={v.name} style={{ color: "var(--text2)" }}>
+                <b style={{ color: "var(--st-crit-ink)" }}>✖ {v.name}</b> {v.note}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {onRecheck && (
+        <button onClick={onRecheck} disabled={busy} style={{ flex: "none", padding: "4px 11px", borderRadius: 7,
+          fontSize: "0.75rem", fontWeight: 700, fontFamily: "inherit", cursor: busy ? "default" : "pointer",
+          background: "transparent", color: "var(--text2)", border: "1px solid var(--border)", opacity: busy ? .6 : 1 }}>
+          {busy ? "re-checking…" : "↻ Re-check now"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ── Evidence ─────────────────────────────────────────────────────────────────
+   Device42 hands over data; Zerto hands over replication. Neither hands an
+   auditor a line from "assessed on this evidence" through "the model advised,
+   policy overruled it" to "a named human approved it under this change record".
+   The steps that have not happened yet are shown as not having happened —
+   a chain with an invented link is worse than a short one. */
+function EvidenceChain({ analysis }) {
+  const ai = analysis.ai;
+  const steps = [
+    { k: "Assessed", v: analysis.assessedAt ? new Date(analysis.assessedAt).toLocaleString() : "—",
+      d: `Live node state and pod requests from ${analysis.cluster || "the target cluster"}`, done: true },
+    { k: "Model recommended", v: ai?.consulted ? `${ai.calls} call${ai.calls === 1 ? "" : "s"} · ${ai.model || "model"}` : "not consulted — rules only",
+      d: ai?.consulted && ai.totalTokens != null ? `${ai.totalTokens.toLocaleString()} tokens` : "every verdict above is computed from rules", done: true },
+    { k: "Policy overruled", v: ai?.corrections ? `${ai.corrections} recommendation${ai.corrections === 1 ? "" : "s"}` : "none",
+      d: ai?.corrections ? "downgraded before they reached this screen" : "nothing the model proposed needed overriding", done: true },
+    { k: "Approved", v: "not yet", d: "a named human signs off at the plan step", done: false },
+    { k: "Change request", v: "not yet raised", d: "raised against the wave once VMs are selected", done: false },
+  ];
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", padding: "11px 13px 8px" }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>What this verdict rests on</span>
+        <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>the same chain an auditor reads, a year later</span>
+        {analysis.reportId && (
+          <span style={{ marginLeft: "auto", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace",
+            fontSize: "0.73rem", color: "var(--text2)" }}>{analysis.reportId}</span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", borderTop: "1px solid var(--border)" }}>
+        {steps.map((s) => (
+          <div key={s.k} style={{ flex: "1 1 175px", minWidth: 0, padding: "9px 12px",
+            borderRight: "1px solid var(--border)", opacity: s.done ? 1 : .62 }}>
+            <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)" }}>{s.k}</div>
+            <div style={{ fontSize: "0.79rem", fontWeight: 700, marginTop: 2 }}>{s.v}</div>
+            <div style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 1, lineHeight: 1.4 }}>{s.d}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -315,12 +590,18 @@ function DriftPanel({ drift }) {
     ["removed", "Gone", "--st-unknown", "−"],
     ["changed", "Otherwise changed", "--st-warn", "⚠"],
   ].filter(([k]) => drift[k]?.length);
+  // What changed on the TARGET is the staleness band's job, and it is stated
+  // there in full. Repeating it here — under a heading about the source estate,
+  // with no rows beneath it — is the kind of duplication that makes a reader
+  // stop trusting both panels.
+  if (!groups.length) return null;
+  const headline = groups.map(([k, label]) => `${drift[k].length} ${label.toLowerCase()}`).join(" · ");
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "11px 13px", background: "var(--card)" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 9, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Since the last assessment</span>
-        <span style={{ fontSize: "0.78rem", color: "var(--text2)" }}>{drift.headline}</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text2)" }}>in the source estate — {headline}</span>
         <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--text2)" }}>
           baseline {drift.sinceReportId} · {new Date(drift.since).toLocaleString()}
         </span>
@@ -426,7 +707,7 @@ function FidelityPanel({ fidelity }) {
 
 export default function FleetAnalysis({
   analysis, suggestions = [], suggestionSource, note, busy,
-  advice = [], adviceSource, adviceNote, onBack, onProceed, onExport,
+  advice = [], adviceSource, adviceNote, onBack, onProceed, onExport, onRecheck,
 }) {
   const [hover, setHover] = useState(null);
   const [expanded, setExpanded] = useState(null);
@@ -455,6 +736,7 @@ export default function FleetAnalysis({
     }))
     .filter((g) => g.rows.length);
   const blocked = (byLevel?.unsupported || 0) + (byLevel?.unknown || 0);
+  const wontLand = analysis.capacity?.placement?.available ? analysis.capacity.placement.unplacedCount : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -527,8 +809,17 @@ export default function FleetAnalysis({
         )}
       </div>
 
-      {/* ── Will it fit? ─────────────────────────────────────────────────── */}
-      <CapacityPanel capacity={analysis.capacity} />
+      {/* ── How old this answer is, and what moved under it ──────────────── */}
+      <StalenessBand analysis={analysis} onRecheck={onRecheck} busy={busy} />
+
+      {/* ── Will it land? Blockers first, then where everything goes ─────── */}
+      <LandingPanel capacity={analysis.capacity} />
+
+      {/* ── And if a node is lost while it runs ──────────────────────────── */}
+      <RehearsalPanel rehearsal={analysis.capacity?.rehearsal} />
+
+      {/* ── The chain from evidence to sign-off ──────────────────────────── */}
+      <EvidenceChain analysis={analysis} />
 
       {/* ── What the workload is promised, before and after ──────────────── */}
       <FidelityPanel fidelity={analysis.fidelity} />
@@ -877,8 +1168,17 @@ export default function FleetAnalysis({
           cursor: total ? "pointer" : "not-allowed", opacity: total ? 1 : .5,
           background: "#3d5afe", color: "#fff", fontFamily: "inherit",
         }}>Choose VMs to migrate →</button>
+        {/* Guest support and landing are different gates, and a machine that
+            clears the first still does not move if it cannot be placed. Quoting
+            only the first here read as "21 of 21 can go" beside a panel saying
+            one of them will never schedule. */}
         <span style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
-          {ready} of {total} can go in a wave today{blocked ? `; ${blocked} need work first` : ""}.
+          {ready} of {total} are supported{blocked ? `; ${blocked} need work first` : ""}.
+          {wontLand > 0 && (
+            <b style={{ color: "var(--st-crit-ink)" }}>
+              {" "}{wontLand} of them will not land on this cluster as it stands.
+            </b>
+          )}
         </span>
       </div>
     </div>

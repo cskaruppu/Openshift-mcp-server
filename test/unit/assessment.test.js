@@ -164,3 +164,103 @@ test("with no model consulted the pack says so rather than omitting the section"
   const csv = toCsv(analysis([vm("a")]), { reportId: "ASM-1", ai });
   assert.match(csv, /"AI consulted","no"/);
 });
+
+// ── Target drift ───────────────────────────────────────────────────────────
+
+const withCapacity = (rows, nodes, placed = [], unplaced = []) => ({
+  ...analysis(rows),
+  capacity: {
+    verdict: unplaced.length ? "fragmented" : "fits", virtNodeCount: nodes.length,
+    placement: { nodes, placed, unplaced, placedCount: placed.length, unplacedCount: unplaced.length },
+  },
+});
+
+test("a verdict records the cluster it was made against, not just the estate", () => {
+  const s = snapshotOf(withCapacity(
+    [vm("web01")],
+    [{ name: "w1", memGiB: 64, cpuMillis: 32000 }],
+    [{ name: "web01", node: "w1" }],
+  ), { id: "ASM-1" });
+  assert.equal(s.capacity.virtNodeCount, 1);
+  assert.deepEqual(s.capacity.nodes, [{ name: "w1", memGiB: 64, cpuMillis: 32000 }]);
+  assert.equal(s.vms.web01.landsOn, "w1");
+  assert.equal(s.vms.web01.placement, "placed");
+});
+
+test("replacing a worker with a smaller one changes verdicts nobody touched", () => {
+  const prev = snapshotOf(withCapacity(
+    [vm("web01")],
+    [{ name: "w1", memGiB: 256, cpuMillis: 32000 }],
+    [{ name: "web01", node: "w1" }],
+  ), { id: "ASM-1" });
+  const next = snapshotOf(withCapacity(
+    [vm("web01")],
+    [{ name: "w1", memGiB: 32, cpuMillis: 32000 }],
+    [],
+    [{ name: "web01", blockedBy: "hardware" }],
+  ), { id: "ASM-2" });
+
+  const d = diffAssessments(prev, next);
+  assert.equal(d.capacity.resized.length, 1);
+  assert.match(d.capacity.resized[0].note, /Shrank from 256 to 32 GiB/);
+  assert.equal(d.capacity.regressed.length, 1);
+  assert.equal(d.capacity.regressed[0].name, "web01");
+  assert.match(d.capacity.regressed[0].note, /too large for any node/);
+  assert.match(d.capacity.headline, /1 verdict changed/);
+  // The estate itself did not move, so the source drift is silent — and the
+  // assessment is still out of date. Saying "nothing changed" here would be
+  // the exact failure this panel exists to prevent.
+  assert.equal(d.counts.improved + d.counts.regressed, 0);
+  assert.ok(d.material > 0);
+  assert.match(d.headline, /1 verdict changed/);
+});
+
+test("a machine that lands somewhere new is reported, but not as a regression", () => {
+  const nodes = [{ name: "w1", memGiB: 64, cpuMillis: 32000 }, { name: "w2", memGiB: 64, cpuMillis: 32000 }];
+  const prev = snapshotOf(withCapacity([vm("a")], nodes, [{ name: "a", node: "w1" }]), { id: "ASM-1" });
+  const next = snapshotOf(withCapacity([vm("a")], nodes, [{ name: "a", node: "w2" }]), { id: "ASM-2" });
+  const d = diffAssessments(prev, next);
+  assert.equal(d.capacity.moved.length, 1);
+  assert.equal(d.capacity.regressed.length, 0);
+  assert.equal(d.capacity.material, 0, "a reshuffle is news, not a change of outcome");
+  assert.match(d.headline, /Nothing has changed/);
+});
+
+test("an assessment with no capacity reading does not invent target drift", () => {
+  const a = snapshotOf(analysis([vm("a")]), { id: "ASM-1" });
+  const b = snapshotOf(analysis([vm("a")]), { id: "ASM-2" });
+  assert.equal(a.capacity, null);
+  assert.equal(diffAssessments(a, b).capacity, null);
+  assert.equal(diffAssessments(a, b).material, 0);
+});
+
+test("the evidence pack carries the placement and the node-loss rehearsal", () => {
+  const html = toHtml(analysis([vm("a")]), {
+    reportId: "ASM-1",
+    capacity: {
+      verdict: "fragmented", headline: "Room exists but cannot be reached.",
+      demand: { memGiB: 100, cpuMillis: 400, diskGiB: 10 }, free: { memGiB: 120, cpuMillis: 800 },
+      virtNodeCount: 2, perVm: [], notes: [],
+      placement: {
+        available: true, placedCount: 1, unplacedCount: 1, nodesUsed: 1,
+        nodes: [{ name: "w1", vmCount: 1, usedMemGiB: 60, memGiB: 64 }],
+        unplaced: [{ name: "late", blockedBy: "wave", reason: "The wave blocks this machine, not the cluster." }],
+      },
+      rehearsal: { available: true, headline: "Losing w1 would strand 1 machine.", nodes: [{ node: "w1", hosted: 1, stillPlaces: 0, stranded: 1 }] },
+    },
+  });
+  assert.match(html, /packed as a set/);
+  assert.match(html, /blocked by the wave itself, not by the cluster/i);
+  assert.match(html, /If a node is lost mid-wave/);
+  assert.match(html, /1 no longer do/);
+});
+
+test("a pack with no placement reading omits the section rather than printing zeros", () => {
+  const html = toHtml(analysis([vm("a")]), {
+    reportId: "ASM-1",
+    capacity: { verdict: "fits", headline: "Fits.", demand: { memGiB: 1, cpuMillis: 1, diskGiB: 1 },
+      free: { memGiB: 9, cpuMillis: 9 }, virtNodeCount: 1, perVm: [], notes: [] },
+  });
+  assert.ok(!html.includes("Placement"));
+  assert.ok(!html.includes("If a node is lost mid-wave"));
+});

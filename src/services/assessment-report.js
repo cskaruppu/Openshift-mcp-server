@@ -160,6 +160,24 @@ export function toHtml(analysis, meta = {}) {
     ${(cap.perVm || []).some((p) => p.fits === false && !p.permanent) ? `
       <p><b>Machines that fit the hardware but have no room today:</b></p>
       <ul>${cap.perVm.filter((p) => p.fits === false && !p.permanent).map((p) => `<li><b>${esc(p.name)}</b> — ${esc(p.reason)}</li>`).join("")}</ul>` : ""}
+    ${cap.placement?.available ? `
+      <h3>Placement</h3>
+      <p>${esc(cap.placement.placedCount)} of ${esc(cap.placement.placedCount + cap.placement.unplacedCount)} machine(s)
+         can be placed at once, across ${esc(cap.placement.nodesUsed)} node(s). The wave was packed as a set:
+         checking each machine on its own never accounts for the machine placed a moment earlier, and comparing the
+         wave against total headroom ignores that the headroom is split across nodes.</p>
+      <table class="kv">
+        ${cap.placement.nodes.map((n) => `<tr><th>${esc(n.name)}</th><td>${esc(n.vmCount)} VM(s) — ${esc(n.usedMemGiB)} of ${esc(n.memGiB)} GiB committed after this wave</td></tr>`).join("")}
+      </table>
+      ${(cap.placement.unplaced || []).filter((u) => u.blockedBy === "wave").length ? `
+        <p><b>Machines blocked by the wave itself, not by the cluster:</b></p>
+        <ul>${cap.placement.unplaced.filter((u) => u.blockedBy === "wave").map((u) => `<li><b>${esc(u.name)}</b> — ${esc(u.reason)}</li>`).join("")}</ul>` : ""}` : ""}
+    ${cap.rehearsal?.available && cap.rehearsal.nodes?.length ? `
+      <h3>If a node is lost mid-wave</h3>
+      <p>${esc(cap.rehearsal.headline)}</p>
+      <table class="kv">
+        ${cap.rehearsal.nodes.map((n) => `<tr><th>${esc(n.node)}</th><td>carries ${esc(n.hosted)} — without it, ${esc(n.stillPlaces)} of the wave still place and ${esc(n.stranded)} no longer do</td></tr>`).join("")}
+      </table>` : ""}
     <ul class="muted small">${(cap.notes || []).map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : "";
 
   // The section a change board and an auditor both go looking for.

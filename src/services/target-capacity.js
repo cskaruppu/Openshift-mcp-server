@@ -173,6 +173,185 @@ export function summariseNodes(nodes = []) {
   };
 }
 
+// ── Placement ──────────────────────────────────────────────────────────────
+/** A node can host a VM only when it is Ready, uncordoned and virt-schedulable. */
+const usableNodes = (capacity) =>
+  (capacity?.nodes || []).filter((n) => n.ready && !n.cordoned && n.virtSchedulable);
+
+const r2 = (n) => Number(n.toFixed(2));
+
+/**
+ * Where each machine in the wave actually lands. Pure.
+ *
+ * Summing a wave's memory against a cluster's total headroom answers a question
+ * nobody asked. 336 GiB free across six nodes does not place forty-two 8 GiB
+ * machines if the free memory is fragmented — and checking each VM against the
+ * emptiest node one at a time is worse, because it never accounts for the VM
+ * placed there a moment earlier. Both give an answer that is wrong in the
+ * optimistic direction, which is the direction that costs an outage.
+ *
+ * So the wave is packed as a SET. Largest memory first (first-fit-decreasing):
+ * it is the standard bin-packing heuristic, it is deterministic, and it is
+ * stated in the output — a packer that will not explain its rule gets overruled
+ * by the first engineer who disagrees with it.
+ *
+ * Three ways a machine fails to land, and they need three different actions:
+ *   hardware — bigger than any node. Buy nodes, or drop it.
+ *   cluster  — no node had that much free even before the wave started. Scale.
+ *   wave     — a node did have room, and the machines ahead of it took it.
+ *              Re-order the wave, or split it. The cluster is not the problem.
+ */
+export function packWave(vms = [], capacity = null, opts = {}) {
+  const usable = usableNodes(capacity);
+  if (capacity?.available !== true || !usable.length) {
+    return {
+      available: false, placed: [], unplaced: [], nodes: [], fits: null,
+      placedCount: 0, unplacedCount: 0,
+      reason: capacity?.available === false
+        ? "Target capacity could not be read, so placement was not simulated."
+        : "No virtualization-capable node was found, so nothing can be placed.",
+    };
+  }
+
+  // Remaining room starts at what the scheduler has NOT already reserved.
+  const bins = usable.map((n) => ({
+    name: n.name, cpuMillis: n.cpuMillis, memGiB: n.memGiB,
+    freeCpuMillis: n.freeCpuMillis, freeMemGiB: n.freeMemGiB,
+    remCpuMillis: n.freeCpuMillis, remMemGiB: n.freeMemGiB,
+    vms: [],
+  }));
+  const biggestMem = Math.max(...bins.map((b) => b.memGiB));
+  const biggestCpu = Math.max(...bins.map((b) => b.cpuMillis));
+  const biggestNode = bins.find((b) => b.memGiB === biggestMem);
+
+  // Decreasing by memory, then CPU, then input order — so the same wave against
+  // the same cluster always produces the same plan.
+  const order = vms
+    .map((v, i) => ({ vm: v, i, need: vmDemand(v, opts) }))
+    .sort((a, b) => b.need.memGiB - a.need.memGiB || b.need.cpuMillis - a.need.cpuMillis || a.i - b.i);
+
+  const placed = [], unplaced = [];
+  for (const { vm, need } of order) {
+    if (need.memGiB > biggestMem || need.cpuMillis > biggestCpu) {
+      unplaced.push({
+        name: vm.name, need, permanent: true, blockedBy: "hardware",
+        reason: `Needs ${need.memGiB.toFixed(1)} GiB and ${need.cpuMillis}m, but the largest virtualization node (${biggestNode.name}) offers only ${biggestNode.memGiB} GiB and ${biggestNode.cpuMillis}m. A VM is a pod — it must fit on one node — so this machine would never schedule here, whatever the cluster's total capacity.`,
+      });
+      continue;
+    }
+    // Could it have landed anywhere before this wave started? The answer is
+    // what separates "the cluster is full" from "the wave filled it".
+    const everHadRoom = bins.some((b) => need.memGiB <= b.freeMemGiB && need.cpuMillis <= b.freeCpuMillis);
+    const bin = bins.find((b) => need.memGiB <= b.remMemGiB && need.cpuMillis <= b.remCpuMillis);
+
+    if (!bin) {
+      const ahead = placed.length;
+      const emptiest = bins.slice().sort((a, b) => b.remMemGiB - a.remMemGiB)[0];
+      unplaced.push({
+        name: vm.name, need, permanent: false,
+        blockedBy: everHadRoom ? "wave" : "cluster",
+        ahead: everHadRoom ? ahead : null,
+        reason: everHadRoom
+          ? `Needs ${need.memGiB.toFixed(1)} GiB, and a node had that free before the wave started — so on its own it would fit. After the ${ahead} machine${ahead === 1 ? "" : "s"} ahead of it in this wave are placed, the emptiest node has ${emptiest.remMemGiB.toFixed(1)} GiB left. The wave blocks this machine, not the cluster: re-order it, or move it to the next wave.`
+          : `Fits the hardware, but no node has room — the emptiest (${emptiest.name}) has ${emptiest.freeMemGiB.toFixed(1)} GiB and ${emptiest.freeCpuMillis}m unreserved. Scale the cluster or free capacity before cutover.`,
+      });
+      continue;
+    }
+
+    bin.remMemGiB = r2(bin.remMemGiB - need.memGiB);
+    bin.remCpuMillis -= need.cpuMillis;
+    bin.vms.push(vm.name);
+    placed.push({
+      name: vm.name, node: bin.name, need,
+      spareMemGiB: bin.remMemGiB, spareCpuMillis: bin.remCpuMillis,
+      // Nothing else this size fits here afterwards. Worth saying, because it
+      // is the row that turns into a blocker when one more VM joins the wave.
+      tight: bin.remMemGiB < need.memGiB,
+    });
+  }
+
+  const nodes = bins.map((b) => ({
+    name: b.name, memGiB: b.memGiB, cpuMillis: b.cpuMillis,
+    vmCount: b.vms.length, vms: b.vms,
+    // What this wave adds, and what the node carries in total afterwards.
+    assignedMemGiB: r2(b.freeMemGiB - b.remMemGiB),
+    usedMemGiB: r2(b.memGiB - b.remMemGiB),
+    freeAfterMemGiB: b.remMemGiB,
+    pctMem: b.memGiB > 0 ? Math.round(((b.memGiB - b.remMemGiB) / b.memGiB) * 100) : null,
+  }));
+
+  return {
+    available: true,
+    fits: unplaced.length === 0,
+    placed, unplaced, nodes,
+    placedCount: placed.length, unplacedCount: unplaced.length,
+    nodesUsed: nodes.filter((n) => n.vmCount > 0).length,
+    excluded: capacity.excluded || [],
+    // Named, because the order decides which machine is the one left over.
+    // The scheduler spreads by default rather than packing tight, so this
+    // answers "can every machine be placed at once" — it is a feasibility
+    // proof, not a prediction of the node each VM ends up on. Saying "lands on
+    // worker-03" as though it were a forecast would be a claim this cannot
+    // make, and the first person to check it would find it wrong.
+    heuristic: "Packed largest-memory-first (first-fit-decreasing) onto nodes that are Ready, uncordoned and virt-schedulable. This shows that a placement exists, not where the scheduler will choose: it spreads across nodes by default rather than filling them. A different wave order can move which machine is left over, but not how many fit.",
+  };
+}
+
+/**
+ * What happens if one node is lost mid-wave — patching, a drain, a failure.
+ * Pure: the same pack, re-run with each node removed in turn.
+ *
+ * No assessment tool answers this, because none of them are operating the
+ * target. It is the difference between "the wave fits" and "the wave fits as
+ * long as nothing happens for four hours".
+ */
+export function nodeLossRehearsal(vms = [], capacity = null, opts = {}) {
+  const base = packWave(vms, capacity, opts);
+  if (!base.available) return { available: false, reason: base.reason, nodes: [] };
+
+  const usable = usableNodes(capacity);
+  if (usable.length < 2) {
+    return {
+      available: true, nodes: [], singleNode: true,
+      note: "Only one node can host a VM, so there is nothing to fail over to — losing it strands the whole wave.",
+    };
+  }
+
+  const baseUnplaced = new Set(base.unplaced.map((u) => u.name));
+  const rows = usable.map((n) => {
+    const without = { ...capacity, nodes: (capacity.nodes || []).filter((x) => x.name !== n.name) };
+    const p = packWave(vms, without, opts);
+    // Machines that placed with this node and do not place without it. Repacking
+    // reshuffles, so this is counted from the outcome rather than assumed to be
+    // the ones that happened to land here.
+    const stranded = p.available ? p.unplaced.filter((u) => !baseUnplaced.has(u.name)) : [];
+    const hosted = base.nodes.find((b) => b.name === n.name)?.vmCount || 0;
+    const overCommitted = p.available ? p.nodes.filter((x) => x.pctMem != null && x.pctMem >= 90).length : 0;
+    return {
+      node: n.name, hosted,
+      // Losing a node re-packs the WHOLE wave, so the machines left over are
+      // not necessarily the ones that happened to be sitting on it. Reporting
+      // "4 to rehome, 4 rehomed" would be arithmetic about the wrong set: the
+      // number that matters is how much of the wave still places at all.
+      stillPlaces: p.available ? p.placedCount : 0,
+      stranded: p.available ? stranded.length : hosted,
+      strandedNames: stranded.slice(0, 6).map((s) => s.name),
+      tightNodesAfter: overCommitted,
+      absorbs: p.available && stranded.length === 0,
+    };
+  });
+
+  const worst = rows.slice().sort((a, b) => b.stranded - a.stranded)[0];
+  return {
+    available: true,
+    nodes: rows,
+    worst: worst?.stranded ? worst : null,
+    headline: worst?.stranded
+      ? `Losing ${worst.node} mid-wave would strand ${worst.stranded} machine${worst.stranded === 1 ? "" : "s"} — do not drain it while this wave runs.`
+      : "Any single node can be lost mid-wave and every machine still has somewhere to go.",
+  };
+}
+
 // ── The verdict ────────────────────────────────────────────────────────────
 /**
  * Whether ONE VM can schedule. Pure.
@@ -235,22 +414,35 @@ export function capacityVerdict(vms = [], capacity = null, opts = {}) {
   const never = perVm.filter((p) => p.fits === false && p.permanent);
   const notNow = perVm.filter((p) => p.fits === false && !p.permanent);
 
+  // Where each machine actually lands, packed as a set. The totals below say
+  // whether the room exists; only this says whether it can be reached.
+  const placement = packWave(vms, capacity, opts);
+  const rehearsal = nodeLossRehearsal(vms, capacity, opts);
+  const waveBlocked = (placement.unplaced || []).filter((u) => u.blockedBy === "wave");
+
   // Memory is the binding constraint: it is not overcommitted, CPU is.
   const memRatio = free.freeMemGiB > 0 ? demand.memGiB / free.freeMemGiB : Infinity;
   const verdict = never.length ? "blocked"
     : memRatio > 1 ? "exceeds"
+    // The room exists in total and still cannot be reached: free memory is
+    // spread across nodes in pieces too small for these machines. Aggregate
+    // arithmetic alone would call this a pass.
+    : waveBlocked.length ? "fragmented"
     : memRatio > 0.8 ? "tight"
     : "fits";
 
   const headline = {
     blocked: `${never.length} VM${never.length === 1 ? "" : "s"} cannot schedule on any node in this cluster, whatever the cluster's total capacity.`,
     exceeds: `This wave needs ${demand.memGiB} GiB but only ${free.freeMemGiB} GiB is unreserved across ${capacity.virtNodeCount} virtualization node(s).`,
+    fragmented: `The cluster has room — ${demand.memGiB} GiB of ${free.freeMemGiB} GiB unreserved — but ${waveBlocked.length} machine${waveBlocked.length === 1 ? "" : "s"} still cannot be placed, because the free memory is split across nodes in pieces too small to take them.`,
     tight: `This wave needs ${demand.memGiB} GiB of the ${free.freeMemGiB} GiB unreserved — it fits, with little margin left.`,
-    fits: `Fits: ${demand.memGiB} GiB of ${free.freeMemGiB} GiB unreserved across ${capacity.virtNodeCount} virtualization node(s).`,
+    fits: `All ${placement.placedCount} machine${placement.placedCount === 1 ? "" : "s"} place onto ${placement.nodesUsed} of ${capacity.virtNodeCount} virtualization node(s) — ${demand.memGiB} GiB of ${free.freeMemGiB} GiB unreserved.`,
   }[verdict];
 
   const notes = [];
   if (notNow.length) notes.push(`${notNow.length} VM(s) fit the hardware but no single node has room today — scale or free capacity before cutover.`);
+  if (placement.available) notes.push(placement.heuristic);
+  if (rehearsal.available && rehearsal.worst) notes.push(rehearsal.headline);
   if (capacity.excluded?.length) {
     notes.push(`${capacity.excluded.length} node(s) excluded from this calculation: ${capacity.excluded.map((e) => `${e.name} (${e.reason})`).join("; ")}`);
   }
@@ -260,6 +452,7 @@ export function capacityVerdict(vms = [], capacity = null, opts = {}) {
 
   return {
     verdict, demand, perVm, headline, notes,
+    placement, rehearsal,
     free: { cpuMillis: free.freeCpuMillis, memGiB: free.freeMemGiB },
     allocatable: { cpuMillis: free.cpuMillis, memGiB: free.memGiB },
     virtNodeCount: capacity.virtNodeCount,

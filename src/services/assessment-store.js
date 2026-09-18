@@ -62,6 +62,19 @@ export function reportId(at = new Date(), rand = null) {
  * thousand-VM estate still fits comfortably.
  */
 export function snapshotOf(analysis, { provider = null, cluster = "local", at = new Date(), id = null } = {}) {
+  // Where each machine landed last time, so a verdict that quietly changed
+  // because someone replaced a worker can be named rather than discovered.
+  const landing = new Map();
+  for (const p of analysis?.capacity?.placement?.placed || []) {
+    landing.set(p.name, { node: p.node, state: "placed" });
+  }
+  for (const u of analysis?.capacity?.placement?.unplaced || []) {
+    landing.set(u.name, {
+      node: null,
+      state: u.blockedBy === "hardware" ? "never" : u.blockedBy === "wave" ? "wave-blocked" : "no-room",
+    });
+  }
+
   return {
     reportId: id || reportId(at),
     at: at.toISOString(),
@@ -70,6 +83,19 @@ export function snapshotOf(analysis, { provider = null, cluster = "local", at = 
     total: analysis?.total || 0,
     byLevel: analysis?.byLevel || {},
     totalDiskGiB: analysis?.totalDiskGiB || 0,
+    // The target, not just the source. An assessment is a claim about a
+    // specific cluster on a specific day; when that cluster's nodes change, the
+    // claim changes with it — and every other tool in this space would still be
+    // showing last month's answer. A node list is a few dozen short entries, so
+    // this stays well inside the ConfigMap ceiling.
+    capacity: analysis?.capacity ? {
+      verdict: analysis.capacity.verdict || null,
+      virtNodeCount: analysis.capacity.virtNodeCount ?? null,
+      placedCount: analysis.capacity.placement?.placedCount ?? null,
+      unplacedCount: analysis.capacity.placement?.unplacedCount ?? null,
+      nodes: (analysis.capacity.placement?.nodes || [])
+        .map((n) => ({ name: n.name, memGiB: n.memGiB, cpuMillis: n.cpuMillis })),
+    } : null,
     vms: Object.fromEntries((analysis?.rows || []).map((r) => [r.name, {
       level: r.level,
       distro: r.os?.distro || null,
@@ -78,7 +104,80 @@ export function snapshotOf(analysis, { provider = null, cluster = "local", at = 
       diskGiB: r.diskGiB || 0,
       warmEligible: r.warmEligible === true,
       poweredOn: r.poweredOn === true,
+      landsOn: landing.get(r.name)?.node ?? null,
+      placement: landing.get(r.name)?.state ?? null,
     }])),
+  };
+}
+
+const PLACEMENT_LABEL = {
+  placed: "places",
+  never: "too large for any node",
+  "no-room": "no node has room",
+  "wave-blocked": "blocked by the machines ahead of it",
+};
+
+/**
+ * What changed about the TARGET since the last assessment. Pure.
+ *
+ * Every product in this space hands over a report, and a report cannot know it
+ * went stale. This agent lives in the destination, so it can say that two
+ * workers were replaced with smaller ones at 14:00 and which verdicts moved as
+ * a result — without anyone re-reading forty rows to find out.
+ */
+export function diffCapacity(prev, next) {
+  if (!prev?.capacity || !next?.capacity) return null;
+  const before = new Map((prev.capacity.nodes || []).map((n) => [n.name, n]));
+  const after = new Map((next.capacity.nodes || []).map((n) => [n.name, n]));
+
+  const added = [...after.keys()].filter((n) => !before.has(n))
+    .map((n) => ({ name: n, note: `New virtualization node — ${after.get(n).memGiB} GiB.` }));
+  const removed = [...before.keys()].filter((n) => !after.has(n))
+    .map((n) => ({ name: n, note: `No longer available to host VMs — it had ${before.get(n).memGiB} GiB.` }));
+  const resized = [];
+  for (const [name, b] of before) {
+    const a = after.get(name);
+    if (!a || a.memGiB === b.memGiB) continue;
+    resized.push({
+      name, fromGiB: b.memGiB, toGiB: a.memGiB,
+      note: `${a.memGiB > b.memGiB ? "Grew" : "Shrank"} from ${b.memGiB} to ${a.memGiB} GiB — every machine measured against this node has been re-checked.`,
+    });
+  }
+
+  // Verdict movements, which are what a person actually acts on.
+  const improved = [], regressed = [], moved = [];
+  for (const [name, b] of Object.entries(prev.vms || {})) {
+    const a = (next.vms || {})[name];
+    if (!a || !b.placement || !a.placement) continue;
+    if (a.placement !== b.placement) {
+      const entry = {
+        name, from: b.placement, to: a.placement,
+        note: `Now ${PLACEMENT_LABEL[a.placement] || a.placement} — it previously ${PLACEMENT_LABEL[b.placement] || b.placement}.`,
+      };
+      (a.placement === "placed" ? improved : regressed).push(entry);
+    } else if (a.placement === "placed" && a.landsOn && b.landsOn && a.landsOn !== b.landsOn) {
+      moved.push({ name, from: b.landsOn, to: a.landsOn, note: `Now lands on ${a.landsOn} rather than ${b.landsOn}.` });
+    }
+  }
+
+  const counts = {
+    nodesAdded: added.length, nodesRemoved: removed.length, nodesResized: resized.length,
+    improved: improved.length, regressed: regressed.length, moved: moved.length,
+  };
+  const material = added.length + removed.length + resized.length + improved.length + regressed.length;
+  const changedVerdicts = improved.length + regressed.length;
+  return {
+    added, removed, resized, improved, regressed, moved, counts, material,
+    nodeCountBefore: prev.capacity.virtNodeCount ?? null,
+    nodeCountAfter: next.capacity.virtNodeCount ?? null,
+    headline: material === 0
+      ? "The target cluster is unchanged since the last assessment."
+      : [
+          added.length && `${added.length} node${added.length === 1 ? "" : "s"} added`,
+          removed.length && `${removed.length} node${removed.length === 1 ? "" : "s"} gone`,
+          resized.length && `${resized.length} node${resized.length === 1 ? "" : "s"} resized`,
+          changedVerdicts && `${changedVerdicts} verdict${changedVerdicts === 1 ? "" : "s"} changed`,
+        ].filter(Boolean).join(" · "),
   };
 }
 
@@ -130,11 +229,15 @@ export function diffAssessments(prev, next) {
     }
   }
 
-  const counts = { added: added.length, removed: removed.length, improved: improved.length, regressed: regressed.length, changed: changed.length };
-  const material = counts.added + counts.removed + counts.improved + counts.regressed + counts.changed;
+  // The source is only half of an assessment. A cluster whose workers were
+  // replaced overnight invalidates verdicts nobody touched.
+  const capacity = diffCapacity(prev, next);
+
+  const counts = { added: added.length, removed: removed.length, improved: improved.length, regressed: regressed.length, changed: changed.length, capacity: capacity?.material || 0 };
+  const material = counts.added + counts.removed + counts.improved + counts.regressed + counts.changed + counts.capacity;
   return {
     since: prev.at, sinceReportId: prev.reportId,
-    added, removed, improved, regressed, changed, counts, material,
+    added, removed, improved, regressed, changed, counts, material, capacity,
     headline: material === 0
       ? `Nothing has changed since ${prev.reportId}.`
       : [
@@ -143,6 +246,7 @@ export function diffAssessments(prev, next) {
           counts.improved && `${counts.improved} improved`,
           counts.regressed && `${counts.regressed} regressed`,
           counts.changed && `${counts.changed} otherwise changed`,
+          counts.capacity && `target: ${capacity.headline}`,
         ].filter(Boolean).join(" · "),
   };
 }

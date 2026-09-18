@@ -2438,6 +2438,9 @@ function MigrationAgent({ clusters, activeCluster }) {
           onBack={() => setStep(1)}
           onProceed={toSelection}
           onExport={exportAssessment}
+          // A verdict about a live cluster goes stale while you read it, so the
+          // panel that says how old it is also offers the way to refresh it.
+          onRecheck={runAnalysis}
         />
       )}
 
