@@ -623,6 +623,298 @@ function DriftPanel({ drift }) {
 }
 
 
+/* ── Applications ─────────────────────────────────────────────────────────────
+   A migration is planned per application; MTV has no concept of one. What
+   matters here is the difference between what vCenter DECLARES — a tag, an
+   attribute, a resource pool — and what a heuristic infers. Affinity groups
+   live further down and are labelled as inference. These are facts somebody
+   typed on purpose, and machines that carry nothing are listed as ungroupable
+   rather than swept into a bucket: grouping decides what moves together, so a
+   confident wrong group splits a working system across two platforms. */
+const APP_SOURCE = {
+  cmdb: { label: "from the CMDB", token: "--st-good" },
+  tag: { label: "vCenter tag", token: "--st-good" },
+  attribute: { label: "custom attribute", token: "--st-good" },
+  resourcePool: { label: "resource pool", token: "--st-warn" },
+  folder: { label: "vCenter folder", token: "--st-warn" },
+};
+
+function ApplicationsPanel({ applications }) {
+  const [open, setOpen] = useState(null);
+  if (!applications) return null;
+  const { groups, ungrouped, coverage, headline, warnings } = applications;
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Grouped by application</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text)" }}>{headline}</span>
+      </div>
+
+      {/* Whether we cannot SEE the tags, or there are none, are different
+          answers and lead to completely different conversations. */}
+      {coverage?.note && (
+        <div style={{ fontSize: "0.76rem", color: "var(--text2)", border: "1px solid var(--border)", borderLeft: "3px solid var(--st-unknown)",
+          borderRadius: 8, padding: "7px 10px", marginBottom: 9 }}>{coverage.note}</div>
+      )}
+
+      {warnings?.map((w) => (
+        <div key={w.app} style={{ display: "flex", gap: 8, fontSize: "0.78rem", marginBottom: 6 }}>
+          <span aria-hidden style={{ color: "var(--st-warn-ink)", fontWeight: 800 }}>⚠</span>
+          <div><b>{w.app}</b> — {w.message}</div>
+        </div>
+      ))}
+
+      {groups.map((g) => {
+        const s = APP_SOURCE[g.source] || APP_SOURCE.folder;
+        const isOpen = open === g.app;
+        return (
+          <div key={g.app} style={{ border: "1px solid var(--border)", borderRadius: 9, marginBottom: 6, overflow: "hidden" }}>
+            <button onClick={() => setOpen(isOpen ? null : g.app)} style={{ width: "100%", textAlign: "left", background: "var(--bg2)",
+              border: "none", font: "inherit", color: "inherit", cursor: "pointer", padding: "8px 11px",
+              display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+              <span style={{ color: "var(--text2)" }}>{isOpen ? "▾" : "▸"}</span>
+              <b style={{ fontSize: "0.82rem" }}>{g.app}</b>
+              <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "1px 7px", borderRadius: 999,
+                background: `var(${s.token}-bg)`, color: `var(${s.token}-ink)` }}>{s.label}</span>
+              {g.strength === "weak" && (
+                <span title="A resource pool or folder is declared, but it is often not an application"
+                  style={{ fontSize: "0.7rem", color: "var(--st-warn-ink)", fontWeight: 700 }}>weak signal</span>
+              )}
+              <span style={{ fontSize: "0.77rem", color: "var(--text2)" }}>
+                {g.count} machine{g.count === 1 ? "" : "s"} · {gib(g.diskGiB)} · {g.cpuCount} vCPU
+                {g.owner ? ` · owner ${g.owner}` : ""}
+              </span>
+              {g.split && <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 800, color: "var(--st-warn-ink)" }}>⚠ this wave splits it</span>}
+            </button>
+            {isOpen && (
+              <div style={{ padding: "8px 11px", fontSize: "0.77rem" }}>
+                <div style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.75rem" }}>{g.members.join(", ")}</div>
+                <div style={{ color: "var(--text2)", marginTop: 4 }}>{g.evidence.join(" · ")}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {ungrouped?.length > 0 && (
+        <div style={{ border: "1px dashed var(--border2, var(--border))", borderRadius: 9, padding: "8px 11px", marginTop: 6 }}>
+          <div style={{ fontWeight: 800, fontSize: "0.8rem", color: "var(--st-unknown-ink)" }}>
+            No application tag · {ungrouped.length} machine{ungrouped.length === 1 ? "" : "s"}
+          </div>
+          <div data-prose style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 2 }}>
+            These carry no tag, attribute, resource pool or folder to group them by, so they are listed individually rather than guessed
+            into an application. <b>A wrong grouping is worse than none</b>, because it decides what moves together.
+          </div>
+          <div style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.74rem", marginTop: 4 }}>
+            {ungrouped.map((u) => u.name).join(", ")}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Right-sizing ─────────────────────────────────────────────────────────────
+   The blank column is the feature. This agent runs in the destination, so it
+   has no history for a machine still on VMware; where nothing was measured,
+   nothing is recommended and the panel says what would fix that. A saving
+   computed over the 40% of an estate that happened to have monitoring, and
+   presented as the estate's saving, is the fastest way to lose the room. */
+const RS_STYLE = {
+  oversized: { token: "--st-warn", icon: "⚠", label: "Oversized" },
+  undersized: { token: "--st-crit", icon: "✖", label: "Runs at its limit" },
+  correct: { token: "--st-good", icon: "✓", label: "Right-sized" },
+  pinned: { token: "--st-unknown", icon: "◆", label: "Pinned on purpose" },
+  unmeasured: { token: "--st-unknown", icon: "?", label: "Not measured" },
+};
+
+function RightSizingPanel({ rightsizing }) {
+  const [showAll, setShowAll] = useState(false);
+  if (!rightsizing) return null;
+  const { rows, counts, saving, coverage, headline, caveat, source, basis, sourceReason } = rightsizing;
+  // Findings first: undersized machines matter more than savings do.
+  const order = { undersized: 0, oversized: 1, pinned: 2, correct: 3, unmeasured: 4 };
+  const sorted = rows.slice().sort((a, b) => order[a.verdict] - order[b.verdict] || a.name.localeCompare(b.name));
+  const shown = showAll ? sorted : sorted.slice(0, 8);
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", padding: "12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>Size, measured rather than assumed</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text)" }}>{headline}</span>
+        <span style={{ marginLeft: "auto", fontSize: "0.72rem", color: "var(--text2)" }}>
+          {source === "none" ? "no source metrics connected" : source === "supplied" ? "from your own monitoring" : `from ${source}`}
+        </span>
+      </div>
+      {basis && <div style={{ fontSize: "0.74rem", color: "var(--text2)", marginBottom: 6 }}>{basis}</div>}
+
+      {/* What would make this panel work, stated where the blank appears. */}
+      {source === "none" && sourceReason && (
+        <div data-prose style={{ fontSize: "0.77rem", color: "var(--text2)", border: "1px solid var(--border)",
+          borderLeft: "3px solid var(--st-unknown)", borderRadius: 8, padding: "8px 11px", marginBottom: 9 }}>
+          {sourceReason}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(118px,1fr))", gap: 8, marginBottom: 9 }}>
+        {["undersized", "oversized", "correct", "pinned", "unmeasured"].map((k) => {
+          const st = RS_STYLE[k];
+          return (
+            <div key={k} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "8px 10px" }}>
+              <div style={{ fontSize: "1.25rem", fontWeight: 800, color: counts[k] ? `var(${st.token}-ink)` : "var(--text2)" }}>{counts[k]}</div>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text2)" }}>{st.icon} {st.label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {saving && (
+        <div style={{ border: "1px solid var(--st-good)", background: "var(--st-good-bg)", borderRadius: 9, padding: "9px 11px", marginBottom: 9 }}>
+          <div style={{ fontSize: "0.82rem", fontWeight: 800 }}>
+            {saving.vcpuBefore} → {saving.vcpuAfter} vCPU
+            <span style={{ color: "var(--st-good-ink)" }}> ({saving.pctVcpu}% less)</span>
+            {" · "}{saving.memGiBBefore} → {saving.memGiBAfter} GiB
+          </div>
+          <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 2 }}>
+            Across the {counts.oversized} machine{counts.oversized === 1 ? "" : "s"} that are measurably oversized. On KubeVirt this is
+            not only cost: a VM is a pod that must fit on one node, so the unused size is a placement constraint too.
+          </div>
+        </div>
+      )}
+      {caveat && <div style={{ fontSize: "0.76rem", color: "var(--st-warn-ink)", marginBottom: 8 }}>⚠ {caveat}</div>}
+
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.76rem" }}>
+        <thead>
+          <tr>
+            {["Machine", "Today", "p95 observed", "Recommended", "Why"].map((h) => (
+              <th key={h} style={{ textAlign: "left", padding: "5px 8px", fontWeight: 800, fontSize: "0.7rem",
+                textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)", borderBottom: "1px solid var(--border)" }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((r) => {
+            const st = RS_STYLE[r.verdict];
+            return (
+              <tr key={r.name} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td style={{ padding: "5px 8px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace" }}>{r.name}</td>
+                <td style={{ padding: "5px 8px", whiteSpace: "nowrap",
+                  textDecoration: r.recommended ? "line-through" : "none", color: r.recommended ? "var(--text2)" : "var(--text)" }}>
+                  {r.current.cpuCount ?? "—"} vCPU / {r.current.memoryGiB ?? "—"} GiB
+                </td>
+                {/* A blank, not a zero. Nothing was measured here. */}
+                <td style={{ padding: "5px 8px", whiteSpace: "nowrap", color: "var(--text2)" }}>
+                  {r.p95 ? `${r.p95.cpuCores} vCPU / ${r.p95.memoryGiB} GiB` : "—"}
+                </td>
+                <td style={{ padding: "5px 8px", whiteSpace: "nowrap", fontWeight: r.recommended ? 800 : 400,
+                  color: r.recommended ? `var(${st.token}-ink)` : "var(--text2)" }}>
+                  {r.recommended
+                    ? `${r.recommended.cpuCount} vCPU / ${r.recommended.memoryGiB} GiB`
+                    : r.wouldBe ? `(${r.wouldBe.cpuCount} vCPU / ${r.wouldBe.memoryGiB} GiB, not applied)` : "—"}
+                </td>
+                <td style={{ padding: "5px 8px", color: "var(--text2)" }}>
+                  <span style={{ color: `var(${st.token}-ink)`, fontWeight: 700 }}>{st.icon}</span> {r.reason}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {sorted.length > shown.length && (
+        <button onClick={() => setShowAll(true)} style={{ background: "none", border: "none", padding: "6px 8px", font: "inherit",
+          fontSize: "0.75rem", fontWeight: 700, color: "var(--text2)", cursor: "pointer" }}>
+          {sorted.length - shown.length} more · show all
+        </button>
+      )}
+      <div data-prose style={{ fontSize: "0.74rem", color: "var(--text2)", borderTop: "1px solid var(--border)", paddingTop: 7, marginTop: 6 }}>
+        Sized from the 95th percentile with 25% headroom, never below 1 vCPU / 1 GiB, and never for a machine whose CPU, NUMA or memory was
+        deliberately pinned or reserved — a percentile does not outrank somebody's decision. Changes smaller than 2 vCPU or 4 GiB are not
+        offered at all: they cost a change request and a reboot and free nothing worth having. On OpenShift Virtualization a VM is a pod that
+        must fit on one node, so an oversized machine is a placement constraint as much as a cost. Coverage: {coverage.measured} of {coverage.total} machines.
+      </div>
+    </div>
+  );
+}
+
+/* ── Cost ─────────────────────────────────────────────────────────────────────
+   The countable half always renders; the money needs a rate card. No API
+   anywhere reports what a customer pays for vSphere — vCenter does not know —
+   so with no rates there is no figure, and an unpriced line is absent rather
+   than zero. */
+function TcoPanel({ tco }) {
+  const [open, setOpen] = useState(false);
+  if (!tco) return null;
+  const side = (title, rows, annual, annualLabel) => (
+    <div style={{ flex: "1 1 260px", minWidth: 0, padding: "10px 12px" }}>
+      <div style={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--text2)", marginBottom: 5 }}>{title}</div>
+      {rows.map((r) => (
+        <div key={r.k} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "3px 0", fontSize: "0.79rem" }}>
+          <span style={{ color: "var(--text2)" }}>{r.k}</span>
+          {r.v != null
+            ? <b style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{r.v}</b>
+            : <span title={r.why || ""} style={{ color: "var(--text2)" }}>—</span>}
+        </div>
+      ))}
+      {annual != null && (
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, borderTop: "1px solid var(--border)",
+          marginTop: 5, paddingTop: 5, fontSize: "0.84rem", fontWeight: 800 }}>
+          <span>Annual</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{annualLabel ?? annual.toLocaleString()}</span>
+        </div>
+      )}
+      {rows.filter((r) => r.v == null && r.why).map((r) => (
+        <div key={`${r.k}-why`} style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 3 }}>{r.why}</div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", padding: "11px 13px 6px" }}>
+        <span style={{ fontWeight: 800, fontSize: "0.84rem" }}>What this wave costs, before and after</span>
+        <span style={{ fontSize: "0.78rem", color: "var(--text)" }}>{tco.headline}</span>
+        {tco.basis?.source === "list-price" && (
+          <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "1px 7px", borderRadius: 999,
+            background: "var(--st-warn-bg)", color: "var(--st-warn-ink)" }}>list price</span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", borderTop: "1px solid var(--border)" }}>
+        {side("On VMware today", tco.source.rows, tco.source.annual, tco.source.annualLabel)}
+        <div style={{ width: 1, background: "var(--border)" }} />
+        {side("On OpenShift Virtualization", tco.target.rows, tco.target.annual, tco.target.annualLabel)}
+      </div>
+      {tco.saving != null && (
+        <div style={{ padding: "9px 13px", borderTop: "1px solid var(--border)" }}>
+          <span style={{ fontSize: "1.15rem", fontWeight: 800, color: tco.saving > 0 ? "var(--st-good-ink)" : "var(--st-crit-ink)" }}>
+            {tco.savingLabel}
+          </span>
+          <span style={{ fontSize: "0.77rem", color: "var(--text2)", marginLeft: 8 }}>
+            {tco.savingDirection}{tco.saving < 0 ? " — the panel reports it either way" : ""}
+          </span>
+          {tco.basis?.lines?.length > 0 && (
+            <button onClick={() => setOpen((v) => !v)} style={{ background: "none", border: "none", font: "inherit",
+              fontSize: "0.75rem", fontWeight: 700, color: "var(--text2)", cursor: "pointer", marginLeft: 8 }}>
+              show the arithmetic ▾
+            </button>
+          )}
+          {open && (
+            <div style={{ marginTop: 5, padding: "7px 9px", borderRadius: 7, background: "var(--bg2)", border: "1px solid var(--border)" }}>
+              {tco.basis.lines.map((l) => (
+                <div key={l} style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem" }}>{l}</div>
+              ))}
+              {tco.basis.asOf && <div style={{ fontSize: "0.72rem", color: "var(--text2)", marginTop: 3 }}>Rates as of {tco.basis.asOf}.</div>}
+            </div>
+          )}
+        </div>
+      )}
+      <ul data-prose style={{ margin: 0, padding: "0 13px 11px 30px", fontSize: "0.74rem", color: "var(--text2)" }}>
+        {(tco.notes || []).map((n, i) => <li key={i} style={{ marginTop: 2 }}>{n}</li>)}
+        {tco.basis?.reason && <li style={{ marginTop: 2 }}>{tco.basis.reason}</li>}
+      </ul>
+    </div>
+  );
+}
+
 /* ── Resource guarantees ──────────────────────────────────────────────────────
    The difference nobody assesses for, and the one that produces a performance
    ticket three weeks after a migration everyone called a success. VMware
@@ -817,6 +1109,15 @@ export default function FleetAnalysis({
 
       {/* ── And if a node is lost while it runs ──────────────────────────── */}
       <RehearsalPanel rehearsal={analysis.capacity?.rehearsal} />
+
+      {/* ── Which machines are one system, as the source declares it ─────── */}
+      <ApplicationsPanel applications={analysis.applications} />
+
+      {/* ── What they actually use, where that could be measured ─────────── */}
+      <RightSizingPanel rightsizing={analysis.rightsizing} />
+
+      {/* ── And what the whole thing costs ───────────────────────────────── */}
+      <TcoPanel tco={analysis.tco} />
 
       {/* ── The chain from evidence to sign-off ──────────────────────────── */}
       <EvidenceChain analysis={analysis} />

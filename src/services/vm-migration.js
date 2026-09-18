@@ -350,6 +350,44 @@ function bool(v) {
   return null;
 }
 
+/**
+ * vCenter tags, flattened to `category:name` pairs. Providers report them as
+ * strings, as {category,name} objects or not at all, and null means "the
+ * inventory does not carry tags" — which is a different statement from "this
+ * machine has none", and the two must not be shown the same way.
+ */
+export function normaliseTags(raw) {
+  if (raw === undefined || raw === null) return null;
+  const list = Array.isArray(raw) ? raw : [raw];
+  const out = [];
+  for (const t of list) {
+    if (!t) continue;
+    if (typeof t === "string") {
+      const [a, b] = t.split(/[:=]/, 2);
+      out.push(b ? { category: a.trim(), name: b.trim() } : { category: null, name: a.trim() });
+      continue;
+    }
+    const category = t.category?.name ?? t.category ?? t.Category ?? t.key ?? null;
+    const name = t.name ?? t.Name ?? t.value ?? t.Value ?? null;
+    if (name) out.push({ category: category ? String(category).trim() : null, name: String(name).trim() });
+  }
+  return out;
+}
+
+/** vCenter custom attributes / custom values, as a plain key→value map. */
+export function normaliseAttrs(raw) {
+  if (raw === undefined || raw === null) return null;
+  const out = {};
+  const list = Array.isArray(raw) ? raw : Object.entries(raw).map(([key, value]) => ({ key, value }));
+  for (const a of list) {
+    if (!a) continue;
+    const k = a.key ?? a.Key ?? a.name ?? a.Name ?? null;
+    const v = a.value ?? a.Value ?? null;
+    if (k != null && v != null && String(v).trim()) out[String(k).trim()] = String(v).trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function normaliseInventoryVM(v = {}) {
   const disks = v.disks || v.Disks || [];
   const totalBytes = disks.reduce((n, d) => n + (d.capacity || d.Capacity || 0), 0);
@@ -379,6 +417,19 @@ export function normaliseInventoryVM(v = {}) {
     name: v.name || v.Name || "(unnamed)",
     path: v.path || null,
     host: v.host?.name || v.host || null,
+
+    // ── What the source says this machine IS ───────────────────────────────
+    // A migration is planned per application, not per VM, and vCenter is where
+    // that fact already lives — in tags, custom attributes, resource pools and
+    // folders. Forklift mirrors the SOAP inventory, and vCenter tags live in
+    // vAPI, so a provider that does not carry them leaves these null. That is
+    // reported as "the inventory does not carry tags" rather than filled in by
+    // guessing, because a confident wrong grouping decides what moves together.
+    tags: normaliseTags(v.tags ?? v.Tags),
+    customAttributes: normaliseAttrs(v.customAttributes ?? v.customValues ?? v.CustomAttributes),
+    annotation: v.annotation ?? v.Annotation ?? v.notes ?? null,
+    resourcePool: v.resourcePool?.name ?? v.resourcePool ?? v.ResourcePool ?? null,
+    folder: v.folder?.name ?? v.folder ?? null,
     powerState: v.powerState || v.status || "unknown",
     poweredOn: powered,
 

@@ -3,6 +3,7 @@ import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 import FleetAnalysis from "./FleetAnalysis";
 import MigrationSelect from "./MigrationSelect";
+import TestMigration from "./TestMigration";
 
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
@@ -2549,6 +2550,18 @@ function MigrationAgent({ clusters, activeCluster }) {
               </button>
             </div>
           </div>
+
+          {/* ── Prove it boots, before committing to a cutover ──────────────
+              Placed here rather than at the analysis step because a test needs
+              the same provider, maps and target the real plan uses — and those
+              are only chosen once the wave is. */}
+          <TestMigration
+            vms={selection.map((s2) => s2.vm)}
+            target={{ ...target, targetProvider: target.targetProvider || ready?.targets?.[0]?.name }}
+            provider={(ready?.sources || []).find((p) => p.uid === provider)?.name || ""}
+            wave={target.targetNamespace || "wave-1"}
+            onRun={(body) => post("/api/migration/test-migration", body)}
+          />
 
           {/* ── Grouping preview: what MTV will actually accept ───────────── */}
           {preview && (

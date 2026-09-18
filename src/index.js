@@ -3109,6 +3109,31 @@ async function startSSE() {
           // nothing.
           const affinity = await import("./services/affinity.js");
           analysis.affinity = affinity.affinityGroups(vms);
+          // Applications as the SOURCE declares them — vCenter tags, custom
+          // attributes, resource pools, folders, or a CMDB when one is wired
+          // in. Kept strictly apart from affinity above, which is inference:
+          // grouping decides what moves together, and a confident wrong group
+          // splits a working system across two platforms for a month.
+          const appGroups = await import("./services/application-groups.js");
+          analysis.applications = appGroups.applicationGroups(vms, {
+            cmdb: body.cmdb || null,
+            placement: analysis.capacity?.placement || null,
+          });
+          // What these machines actually use. The agent runs in the
+          // destination, so it has no history for a VM still on VMware —
+          // whatever cannot be measured gets no recommendation and says so.
+          const rs = await import("./services/rightsizing.js");
+          const util = await withClusterContext(url, async () =>
+            rs.readUtilisation(vms, { supplied: body.utilisation || null, windowDays: body.utilisationDays || 30 }),
+          ).catch(() => ({ source: "none", samples: {}, reason: "Utilisation could not be read." }));
+          analysis.rightsizing = {
+            ...rs.fleetRightSizing(vms, util.samples || {}),
+            source: util.source, basis: util.basis || null, sourceReason: util.reason || null,
+          };
+          // The business case. Countable figures always; money only when a rate
+          // card exists, because nothing reports what a customer pays VMware.
+          const tco = await import("./services/tco.js");
+          analysis.tco = tco.tcoComparison(vms, analysis.capacity, { rightsizing: analysis.rightsizing });
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.
@@ -3186,6 +3211,30 @@ async function startSSE() {
             "Cache-Control": "no-store",
           });
           return res.end(csv ? report.toCsv(analysis, meta) : report.toHtml(analysis, meta));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // A test migration into an isolated namespace: the answer to "can you
+      // prove it boots before we commit?". This PROPOSES — it returns
+      // refusals, manifests and a teardown, and a human applies them. The two
+      // ways a test migration causes an outage are both about the source (a
+      // cold copy powers it off; a test VM boots with its IP and MAC), so both
+      // are refusals here rather than warnings in a document nobody reads.
+      if (url.pathname === "/api/migration/test-migration" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const tm = await import("./services/test-migration.js");
+          const namespace = body.namespace || tm.sandboxNamespace(body.wave || "wave-1");
+          // Teardown deletes the whole namespace, so what is already in it
+          // decides whether this may be proposed at all.
+          const pre = await withClusterContext(url, async () => tm.preflight(namespace))
+            .catch(() => ({ exists: false, inUse: false, reason: null }));
+          const out = tm.proposeTestMigration(body.vms || [], {
+            ...body, namespace,
+            namespaceInUse: pre.inUse === true || pre.hasWorkloads === true,
+            actor: req.user?.name || "operator",
+          });
+          return sendJson(res, 200, { ...out, preflight: pre });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
