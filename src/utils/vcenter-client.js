@@ -25,40 +25,67 @@
  */
 import { Agent, fetch as undiciFetch } from "undici";
 
-/** vCenter appliances are routinely fronted by their own self-signed cert. */
-let _agent = null;
-function agent() {
-  if (_agent) return _agent;
-  _agent = new Agent({
-    connect: {
-      timeout: 15_000,
-      // Opt-in only, and named for what it is. Default stays secure.
-      rejectUnauthorized: String(process.env.VCENTER_INSECURE || "") !== "true",
-    },
+/**
+ * vCenter appliances are routinely fronted by their own self-signed cert, and
+ * in an estate with several of them that is a per-appliance fact — one may
+ * present a proper chain and the next may not. So there are two dispatchers,
+ * and a credential picks the one it asked for. A single global agent would let
+ * one lax appliance silently disable verification for every other.
+ */
+const _agents = new Map();
+function agent(insecure = false) {
+  const key = insecure ? "insecure" : "verified";
+  if (_agents.has(key)) return _agents.get(key);
+  const a = new Agent({
+    connect: { timeout: 15_000, rejectUnauthorized: !insecure },
     keepAliveTimeout: 30_000,
     connections: 8,
   });
-  return _agent;
+  _agents.set(key, a);
+  return a;
 }
 
 /**
- * Read on every call rather than at module load, so a credential added from
- * the settings panel takes effect without a restart — same as ServiceNow.
+ * MTV stores a vSphere provider's URL as the SDK endpoint —
+ * https://vcenter.example.com/sdk. The REST surface lives at the root, and the
+ * SOAP client appends /sdk itself, so the suffix has to come off exactly once.
+ * Getting this wrong produces /sdk/sdk, which 404s in a way that reads like a
+ * wrong password.
  */
-export function vcenterConfig(env = process.env) {
-  const url = String(env.VCENTER_URL || "").replace(/\/+$/, "");
-  const user = env.VCENTER_USERNAME || "";
-  const pass = env.VCENTER_PASSWORD || "";
-  if (!url || !user || !pass) {
+export function normaliseVcenterUrl(url) {
+  return String(url || "").trim().replace(/\/+$/, "").replace(/\/sdk$/i, "");
+}
+
+/** One credential, in the shape every call here expects. Pure. */
+export function vcenterCredential({ url, username, password, insecure = false, source = "unknown" } = {}) {
+  const u = normaliseVcenterUrl(url);
+  if (!u || !username || !password) {
     return {
-      configured: false, url, user,
-      reason: "No vCenter credential is configured. Set VCENTER_URL, VCENTER_USERNAME and VCENTER_PASSWORD to let the agent read tags and performance history directly — Forklift's inventory carries neither.",
+      configured: false, url: u, user: username || "", source,
+      reason: "No vCenter credential is configured for this source provider. Settings → Integrations → vCenter — the agent needs its own read-only account to read tags and performance history, neither of which is in Forklift's inventory.",
     };
   }
-  if (!/^https:\/\//i.test(url)) {
-    return { configured: false, url, user, reason: "VCENTER_URL must be an https:// address." };
+  if (!/^https:\/\//i.test(u)) {
+    return { configured: false, url: u, user: username, source, reason: "The vCenter URL must be an https:// address." };
   }
-  return { configured: true, url, user, pass, insecure: String(env.VCENTER_INSECURE || "") === "true", reason: null };
+  return { configured: true, url: u, user: username, pass: password, insecure: insecure === true, source, reason: null };
+}
+
+/**
+ * The global credential, from environment variables. Read on every call rather
+ * than at module load, so a value written by the settings API takes effect
+ * without a restart — same as ServiceNow.
+ *
+ * This is the FALLBACK. An estate with more than one vCenter configures each
+ * source provider separately, because one global credential cannot be right
+ * for two different vCenters at once.
+ */
+export function vcenterConfig(env = process.env) {
+  return vcenterCredential({
+    url: env.VCENTER_URL, username: env.VCENTER_USERNAME, password: env.VCENTER_PASSWORD,
+    insecure: String(env.VCENTER_INSECURE || "") === "true",
+    source: "environment",
+  });
 }
 
 // ── Session ────────────────────────────────────────────────────────────────
@@ -67,14 +94,21 @@ export function vcenterConfig(env = process.env) {
  * so one is reused until it expires. Cached against the URL and user, so a
  * changed credential is never silently used with the old session.
  */
-let _session = null;
+const _sessions = new Map();            // "url|user" → { token, expires }
 const SESSION_TTL_MS = 9 * 60_000;      // vCenter idles sessions out at ~10 min
 
-export function _resetSession() { _session = null; }   // tests only
+/** Clear one vCenter's session, or all of them. */
+export function _resetSession(key = null) {
+  if (key) _sessions.delete(key); else _sessions.clear();
+}
 
 async function sessionToken(cfg) {
+  // Keyed per vCenter AND per user: an estate with three vCenters holds three
+  // live sessions, and a single slot would thrash between them — logging in
+  // again on every call and eventually tripping vCenter's session cap.
   const key = `${cfg.url}|${cfg.user}`;
-  if (_session && _session.key === key && Date.now() < _session.expires) return _session.token;
+  const held = _sessions.get(key);
+  if (held && Date.now() < held.expires) return held.token;
 
   const auth = Buffer.from(`${cfg.user}:${cfg.pass}`).toString("base64");
   // 7.0u2+ serves /api; older appliances only /rest. Try the modern path first
@@ -85,7 +119,7 @@ async function sessionToken(cfg) {
       resp = await undiciFetch(`${cfg.url}${path}`, {
         method: "POST",
         headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-        dispatcher: agent(),
+        dispatcher: agent(cfg.insecure),
         signal: AbortSignal.timeout(20_000),
       });
     } catch (e) {
@@ -98,15 +132,15 @@ async function sessionToken(cfg) {
     // /api returns the token as a bare JSON string; /rest wraps it in {value}.
     const token = typeof body === "string" ? body : body?.value;
     if (!token) throw new Error("vCenter returned no session token.");
-    _session = { key, token, expires: Date.now() + SESSION_TTL_MS, rest: path.startsWith("/rest") };
+    _sessions.set(key, { token, expires: Date.now() + SESSION_TTL_MS, rest: path.startsWith("/rest") });
     return token;
   }
   throw new Error("vCenter has no recognisable session endpoint — is this a vCenter, or an ESXi host?");
 }
 
 /** One authenticated call. Returns parsed JSON, or throws with a usable reason. */
-export async function vcFetch(path, { method = "GET", body = null, timeoutMs = 30_000 } = {}) {
-  const cfg = vcenterConfig();
+export async function vcFetch(path, { cfg = null, method = "GET", body = null, timeoutMs = 30_000 } = {}) {
+  cfg = cfg || vcenterConfig();
   if (!cfg.configured) throw new Error(cfg.reason);
   const token = await sessionToken(cfg);
   const resp = await undiciFetch(`${cfg.url}${path}`, {
@@ -119,10 +153,10 @@ export async function vcFetch(path, { method = "GET", body = null, timeoutMs = 3
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
-    dispatcher: agent(),
+    dispatcher: agent(cfg.insecure),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (resp.status === 401) { _session = null; throw new Error("vCenter session expired or was rejected."); }
+  if (resp.status === 401) { _resetSession(`${cfg.url}|${cfg.user}`); throw new Error("vCenter session expired or was rejected."); }
   if (!resp.ok) throw new Error(`vCenter ${method} ${path} failed (${resp.status}).`);
   const json = await resp.json().catch(() => null);
   // /rest wraps every payload in {value}; /api returns it bare.
@@ -136,10 +170,13 @@ export async function vcFetch(path, { method = "GET", body = null, timeoutMs = 3
  * bolted onto the REST session, because conflating them is the kind of bug
  * that only appears once the first session expires in production.
  */
-let _soap = null;
+const _soaps = new Map();               // "url|user" → { cookie, perfManager, expires }
 const SOAP_TTL_MS = 25 * 60_000;
 
-export function _resetSoap() { _soap = null; }   // tests only
+/** Clear one vCenter's SOAP session, or all of them. */
+export function _resetSoap(key = null) {
+  if (key) _soaps.delete(key); else _soaps.clear();
+}
 
 /** Escape a value going into an XML element. VM names come from vCenter. */
 export const xmlEscape = (s) => String(s ?? "")
@@ -164,7 +201,7 @@ async function soapPost(cfg, envelope, cookie, timeoutMs) {
       ...(cookie ? { Cookie: cookie } : {}),
     },
     body: envelope,
-    dispatcher: agent(),
+    dispatcher: agent(cfg.insecure),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await resp.text();
@@ -178,7 +215,8 @@ async function soapPost(cfg, envelope, cookie, timeoutMs) {
 /** Log in to the Web Services API and keep the cookie. */
 async function soapSession(cfg) {
   const key = `${cfg.url}|${cfg.user}`;
-  if (_soap && _soap.key === key && Date.now() < _soap.expires) return _soap;
+  const held = _soaps.get(key);
+  if (held && Date.now() < held.expires) return held;
 
   // The service content names the managers by MoRef; they are fixed in
   // practice but reading them is one call and survives an appliance that
@@ -197,16 +235,17 @@ async function soapSession(cfg) {
   const raw = login.setCookie || "";
   const cookie = /vmware_soap_session=[^;]+/.exec(raw)?.[0];
   if (!cookie) throw new Error("vCenter accepted the SOAP login but returned no session cookie.");
-  _soap = { key, cookie, perfManager, expires: Date.now() + SOAP_TTL_MS };
-  return _soap;
+  const made = { key, cookie, perfManager, expires: Date.now() + SOAP_TTL_MS };
+  _soaps.set(key, made);
+  return made;
 }
 
 /**
  * One authenticated SOAP call. `body` is built by the caller; the PerfManager
  * MoRef is handed back so the caller does not have to guess it.
  */
-export async function vcSoap(buildBody, { timeoutMs = 60_000 } = {}) {
-  const cfg = vcenterConfig();
+export async function vcSoap(buildBody, { cfg = null, timeoutMs = 60_000 } = {}) {
+  cfg = cfg || vcenterConfig();
   if (!cfg.configured) throw new Error(cfg.reason);
   const s = await soapSession(cfg);
   try {
@@ -215,7 +254,7 @@ export async function vcSoap(buildBody, { timeoutMs = 60_000 } = {}) {
   } catch (e) {
     // An expired cookie reads as a fault, not a 401 — retry once from clean.
     if (/NotAuthenticated|session is not authenticated/i.test(e.message)) {
-      _soap = null;
+      _resetSoap(`${cfg.url}|${cfg.user}`);
       const again = await soapSession(cfg);
       const { text } = await soapPost(cfg, soapEnvelope(buildBody(again)), again.cookie, timeoutMs);
       return text;

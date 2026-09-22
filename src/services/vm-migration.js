@@ -129,6 +129,13 @@ export async function checkMtvReadiness() {
     uid: p.metadata.uid,
     type: (p.spec?.type || "").toLowerCase(),
     url: p.spec?.url || null,
+    // The Secret MTV already holds this provider's vCenter credentials in.
+    // Reading it means the agent needs nothing configured to see tags and
+    // performance history — and cannot drift out of step with the credential
+    // MTV is actually migrating with.
+    secret: p.spec?.secret?.name
+      ? { name: p.spec.secret.name, namespace: p.spec.secret.namespace || p.metadata.namespace }
+      : null,
     isSource: SOURCE_TYPES.has((p.spec?.type || "").toLowerCase()),
     ready: isTrue(p, "Ready"),
     connected: isTrue(p, "ConnectionTested") || isTrue(p, "Ready"),

@@ -235,7 +235,7 @@ export async function readUtilisation(vms = [], opts = {}) {
   //    history is already there, behind QueryPerf, and has been all along.
   try {
     const { readVcenterUtilisation } = await import("./vcenter-perf.js");
-    const vc = await readVcenterUtilisation(vms, { days });
+    const vc = await readVcenterUtilisation(vms, { days, cfg: opts.vcenterCfg || null });
     if (vc.source === "vcenter" && Object.keys(vc.samples).length) {
       return { source: "vcenter", samples: vc.samples, reason: null, basis: vc.basis };
     }

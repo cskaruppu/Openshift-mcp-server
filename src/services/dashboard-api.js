@@ -2204,13 +2204,13 @@ async function loadVcSettings() {
       if (result?.rows?.length) {
         let val = result.rows[0].value;
         if (typeof val === "string") { try { val = JSON.parse(val); } catch { val = null; } }
-        if (val && val.url && val.username && val.password) return { ...val, _storage: "database" };
+        if (val && (val.providers || val.hosts || (val.url && val.username && val.password))) return { ...val, _storage: "database" };
       }
     }
   } catch { /* fall through */ }
   try {
     const parsed = JSON.parse(await readFile(VC_SETTINGS_PATH, "utf8"));
-    if (parsed && parsed.url && parsed.username && parsed.password) return { ...parsed, _storage: "file" };
+    if (parsed && (parsed.providers || parsed.hosts || (parsed.url && parsed.username && parsed.password))) return { ...parsed, _storage: "file" };
   } catch { /* fall through */ }
   const url = process.env.VCENTER_URL || "";
   const username = process.env.VCENTER_USERNAME || "";
@@ -2221,61 +2221,100 @@ async function loadVcSettings() {
   return null;
 }
 
-/** Put the stored credential back into process.env at boot. */
+/**
+ * The whole credential store, for the per-provider resolver.
+ *
+ * Shape: { providers: { [uid]: {...} }, hosts: { [host]: {...} }, global: {...},
+ * useMtvSecret: boolean }. The single-credential form saved by an earlier
+ * version still reads as `global`, so an existing deployment keeps working.
+ */
+export async function vcSettingsStore() {
+  const s = await loadVcSettings();
+  if (!s) return {};
+  if (s.providers || s.hosts) {
+    return { providers: s.providers || {}, hosts: s.hosts || {}, useMtvSecret: s.useMtvSecret !== false };
+  }
+  // Legacy single credential — keep honouring it as the global fallback.
+  return { providers: {}, hosts: {}, useMtvSecret: s.useMtvSecret !== false };
+}
+
+/**
+ * Put a legacy single credential back into process.env at boot.
+ *
+ * Per-provider credentials are NOT copied into the environment — they are
+ * resolved per request against the source provider, because an estate with
+ * several vCenters has no single correct value to put there.
+ */
 export async function restoreVcenterSettings() {
   const s = await loadVcSettings();
   if (!s) return false;
+  const n = Object.keys(s.providers || {}).length + Object.keys(s.hosts || {}).length;
+  if (n) {
+    console.log(`[vcenter-settings] ${n} per-provider credential(s) loaded from ${s._storage}; MTV secret reuse ${s.useMtvSecret === false ? "off" : "on"}`);
+    return true;
+  }
+  if (!s.url || !s.username || !s.password) return false;
   process.env.VCENTER_URL = s.url;
   process.env.VCENTER_USERNAME = s.username;
   process.env.VCENTER_PASSWORD = s.password;
   if (s.insecure) process.env.VCENTER_INSECURE = "true";
-  console.log(`[vcenter-settings] restored from ${s._storage} — url=${s.url}, user=${s.username}`);
+  console.log(`[vcenter-settings] restored a single credential from ${s._storage} — url=${s.url}, user=${s.username}`);
   return true;
 }
 
 export async function handleVcenterSettingsGet(req, res) {
   const s = await loadVcSettings();
-  if (!s) return json(res, 200, { url: "", username: "", password: "", insecure: false, enabled: false, _storage: "none" });
+  const providers = s?.providers || {};
   return json(res, 200, {
-    url: s.url || "",
-    username: s.username || "",
-    // Never returned, only ever indicated. A settings page that echoes a
-    // password back is one screenshot away from leaking it.
-    password: s.password ? "••••••••" : "",
-    insecure: s.insecure === true,
-    enabled: Boolean(s.url && s.username && s.password),
-    _storage: s._storage || "unknown",
+    // Never the passwords, only which uids have one. A settings page that
+    // echoes credentials back is one screenshot away from leaking them.
+    providers: Object.fromEntries(Object.entries(providers).map(([uid, e]) => [uid, {
+      username: e.username || "", insecure: e.insecure === true, hasPassword: Boolean(e.password),
+    }])),
+    hosts: Object.fromEntries(Object.entries(s?.hosts || {}).map(([h, e]) => [h, {
+      username: e.username || "", insecure: e.insecure === true, hasPassword: Boolean(e.password),
+    }])),
+    // Reusing MTV's own provider credential is the default: it is already
+    // correct, already per provider, and rotates with MTV.
+    useMtvSecret: s?.useMtvSecret !== false,
+    _storage: s?._storage || "none",
   });
 }
 
 export async function handleVcenterSettingsPost(req, res) {
   try {
     const body = await readJsonBody(req);
-    const url = String(body.url || "").trim().replace(/\/+$/, "");
-    const username = String(body.username || "").trim();
-    let password = body.password || "";
-    if (!url || !username) return json(res, 400, { error: "vCenter URL and username are required." });
-    if (!/^https:\/\//i.test(url)) {
-      return json(res, 400, { error: "The vCenter URL must start with https:// — plain http would put the credential on the wire in clear." });
-    }
-    // The GET masks the password, so a save that only changed the URL posts
-    // the mask back. Treating that as the new password would lock the agent
-    // out of vCenter with no way to tell why.
-    if (/^•+$/.test(password)) {
-      const existing = await loadVcSettings();
-      if (!existing?.password) return json(res, 400, { error: "A password is required." });
-      password = existing.password;
-    }
-    if (!password) return json(res, 400, { error: "A password is required." });
+    const existing = (await loadVcSettings()) || {};
+    const settings = {
+      providers: { ...(existing.providers || {}) },
+      hosts: { ...(existing.hosts || {}) },
+      useMtvSecret: existing.useMtvSecret !== false,
+    };
 
-    const settings = { url, username, password, insecure: body.insecure === true, enabled: true };
-    process.env.VCENTER_URL = url;
-    process.env.VCENTER_USERNAME = username;
-    process.env.VCENTER_PASSWORD = password;
-    process.env.VCENTER_INSECURE = settings.insecure ? "true" : "";
-    // A changed credential must not keep using the old session.
-    try { (await import("../utils/vcenter-client.js"))._resetSession(); } catch { /* not loaded yet */ }
-    try { (await import("../utils/vcenter-client.js"))._resetSoap(); } catch { /* not loaded yet */ }
+    // Toggling MTV reuse on its own, with no credential attached.
+    if (typeof body.useMtvSecret === "boolean") settings.useMtvSecret = body.useMtvSecret;
+
+    if (body.uid || body.host) {
+      const key = body.uid || String(body.host).toLowerCase();
+      const bucket = body.uid ? settings.providers : settings.hosts;
+      if (body.remove === true) {
+        delete bucket[key];
+      } else {
+        const username = String(body.username || "").trim();
+        let password = body.password || "";
+        if (!username) return json(res, 400, { error: "A username is required." });
+        // The GET never returns a password, so a save that only changed the
+        // username posts the mask back. Treating that as the new password
+        // would lock the agent out with no way to tell why.
+        if (!password || /^•+$/.test(password)) {
+          password = bucket[key]?.password || "";
+          if (!password) return json(res, 400, { error: "A password is required." });
+        }
+        // The URL is NOT stored: it comes from the MTV provider's spec.url, so
+        // it can never drift away from the vCenter MTV actually migrates from.
+        bucket[key] = { username, password, insecure: body.insecure === true };
+      }
+    }
 
     let savedToDB = false;
     try {
@@ -2295,8 +2334,14 @@ export async function handleVcenterSettingsPost(req, res) {
       savedToFile = true;
     } catch { /* file write optional */ }
 
-    console.log(`[vcenter-settings] saved — url=${url}, user=${username}, db=${savedToDB}, file=${savedToFile}`);
-    return json(res, 200, { success: true, enabled: true, storage: savedToDB ? "database" : savedToFile ? "file" : "process" });
+    // A changed credential must never be used with a session opened by the old one.
+    try {
+      const c = await import("../utils/vcenter-client.js");
+      c._resetSession(); c._resetSoap();
+    } catch { /* not loaded yet */ }
+
+    console.log(`[vcenter-settings] saved — ${Object.keys(settings.providers).length} provider(s), ${Object.keys(settings.hosts).length} host(s), mtvSecret=${settings.useMtvSecret}, db=${savedToDB}, file=${savedToFile}`);
+    return json(res, 200, { success: true, storage: savedToDB ? "database" : savedToFile ? "file" : "process" });
   } catch (err) {
     return json(res, 500, { error: err.message });
   }
@@ -2310,51 +2355,51 @@ export async function handleVcenterSettingsPost(req, res) {
 export async function handleVcenterSettingsTest(req, res) {
   try {
     const body = await readJsonBody(req).catch(() => ({}));
-    const saved = await loadVcSettings();
-    const url = String(body.url || saved?.url || "").trim().replace(/\/+$/, "");
-    const username = String(body.username || saved?.username || "").trim();
-    const password = /^•+$/.test(body.password || "") || !body.password ? saved?.password : body.password;
-    if (!url || !username || !password) {
-      return json(res, 200, { success: false, error: "vCenter URL, username and password are required." });
-    }
+    const { vcSettingsStore } = await import("./dashboard-api.js");
+    const store = await vcSettingsStore();
+    const registry = await import("./vcenter-registry.js");
+    const { ocpGet } = await import("../utils/openshift-client.js");
 
-    // Test against what was typed, without persisting it.
-    const prev = { u: process.env.VCENTER_URL, n: process.env.VCENTER_USERNAME, p: process.env.VCENTER_PASSWORD, i: process.env.VCENTER_INSECURE };
-    process.env.VCENTER_URL = url;
-    process.env.VCENTER_USERNAME = username;
-    process.env.VCENTER_PASSWORD = password;
-    process.env.VCENTER_INSECURE = body.insecure === true || saved?.insecure ? "true" : "";
+    // Test against the provider the operator is configuring, exactly as the
+    // assessment will resolve it — including MTV's own secret. A test that
+    // used a different resolution path would prove nothing.
+    const provider = body.provider || null;
+    if (!provider?.uid) return json(res, 200, { success: false, error: "No source provider was given to test." });
+
+    // An unsaved username/password typed into the form is tried without
+    // persisting it, so "Test" works before "Save".
+    const draft = body.username
+      ? { providers: { [provider.uid]: { username: body.username, password: body.password, insecure: body.insecure === true } } }
+      : store;
+    const merged = { ...store, providers: { ...(store.providers || {}), ...(draft.providers || {}) } };
+
+    const cfg = await registry.resolveForProvider(provider, merged,
+      async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`));
+    if (!cfg.configured) return json(res, 200, { success: false, error: cfg.reason, credential: cfg.source });
+
     const started = Date.now();
-    try {
-      const { vcFetch, _resetSession, _resetSoap } = await import("../utils/vcenter-client.js");
-      _resetSession(); _resetSoap();
-      // Two checks, because the credential can authenticate and still be
-      // useless: tags need the tagging service, sizing needs the SOAP API.
-      const tags = await vcFetch("/api/cis/tagging/tag").then((t) => (Array.isArray(t) ? t.length : 0)).catch((e) => e);
-      const { readVcenterUtilisation } = await import("./vcenter-perf.js");
-      const perf = await readVcenterUtilisation([], { days: 1 }).catch((e) => ({ source: "error", reason: e.message }));
-
-      if (tags instanceof Error) {
-        return json(res, 200, { success: false, error: tags.message, ms: Date.now() - started });
-      }
-      return json(res, 200, {
-        success: true,
-        ms: Date.now() - started,
-        tagsDefined: tags,
-        // readVcenterUtilisation with no VMs cannot measure anything; what it
-        // proves is whether the SOAP login and counter lookup worked.
-        soap: perf.source !== "error",
-        soapReason: perf.source === "error" ? perf.reason : null,
-        detail: `Connected. ${tags} tag${tags === 1 ? "" : "s"} defined in this vCenter.`,
-      });
-    } finally {
-      process.env.VCENTER_URL = prev.u || "";
-      process.env.VCENTER_USERNAME = prev.n || "";
-      process.env.VCENTER_PASSWORD = prev.p || "";
-      process.env.VCENTER_INSECURE = prev.i || "";
-      try { (await import("../utils/vcenter-client.js"))._resetSession(); } catch { /* ignore */ }
-      try { (await import("../utils/vcenter-client.js"))._resetSoap(); } catch { /* ignore */ }
+    const { vcFetch, _resetSession, _resetSoap } = await import("../utils/vcenter-client.js");
+    _resetSession(`${cfg.url}|${cfg.user}`); _resetSoap(`${cfg.url}|${cfg.user}`);
+    const tags = await vcFetch("/api/cis/tagging/tag", { cfg }).then((t) => (Array.isArray(t) ? t.length : 0)).catch((e) => e);
+    if (tags instanceof Error) {
+      return json(res, 200, { success: false, error: tags.message, credential: cfg.source, vcenter: cfg.url, ms: Date.now() - started });
     }
+    // Two surfaces, because this credential can authenticate and still be
+    // useless: tags come from vAPI and sizing comes from the SOAP API.
+    const { readVcenterUtilisation } = await import("./vcenter-perf.js");
+    const perf = await readVcenterUtilisation([], { days: 1, cfg }).catch((e) => ({ source: "error", reason: e.message }));
+
+    return json(res, 200, {
+      success: true,
+      ms: Date.now() - started,
+      vcenter: cfg.url,
+      credential: cfg.source,
+      user: cfg.user,
+      tagsDefined: tags,
+      soap: perf.source !== "error",
+      soapReason: perf.source === "error" ? perf.reason : null,
+      detail: `Connected to ${cfg.url} as ${cfg.user}${cfg.source === "mtv-secret" ? " (MTV's own provider credential)" : ""}. ${tags} tag${tags === 1 ? "" : "s"} defined.`,
+    });
   } catch (err) {
     return json(res, 200, { success: false, error: err.message });
   }

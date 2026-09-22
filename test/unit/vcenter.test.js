@@ -12,7 +12,7 @@ import { rightSize } from "../../src/services/rightsizing.js";
 
 test("a missing or half-filled vCenter credential is refused with a usable reason", () => {
   assert.equal(vcenterConfig({}).configured, false);
-  assert.match(vcenterConfig({}).reason, /VCENTER_URL, VCENTER_USERNAME and VCENTER_PASSWORD/);
+  assert.match(vcenterConfig({}).reason, /Settings → Integrations → vCenter/);
   assert.equal(vcenterConfig({ VCENTER_URL: "https://vc", VCENTER_USERNAME: "u" }).configured, false);
   // Plain http would put the credential on the wire in clear.
   assert.match(vcenterConfig({ VCENTER_URL: "http://vc", VCENTER_USERNAME: "u", VCENTER_PASSWORD: "p" }).reason, /must be an https/);
@@ -165,4 +165,116 @@ test("vCenter samples feed straight into a right-sizing verdict", () => {
   assert.equal(r.verdict, "oversized");
   assert.deepEqual(r.recommended, { cpuCount: 4, memoryGiB: 14 });
   assert.ok(r.evidence.some((e) => /over 30 days \(200 samples\)/.test(e)));
+});
+
+// ── Which vCenter, for which provider ──────────────────────────────────────
+import {
+  resolveVcenter, resolveForProvider, credentialFromMtvSecret, registryStatus, hostOf,
+} from "../../src/services/vcenter-registry.js";
+import { normaliseVcenterUrl } from "../../src/utils/vcenter-client.js";
+
+const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
+const prodVc = { uid: "uid-prod", name: "vcenter-prod", type: "vsphere", url: "https://vc-prod.corp/sdk", isSource: true,
+  secret: { name: "vcenter-prod-secret", namespace: "openshift-mtv" } };
+const drVc = { uid: "uid-dr", name: "vcenter-dr", type: "vsphere", url: "https://vc-dr.corp/sdk", isSource: true,
+  secret: { name: "vcenter-dr-secret", namespace: "openshift-mtv" } };
+
+test("MTV's /sdk suffix comes off exactly once, or every REST call 404s", () => {
+  assert.equal(normaliseVcenterUrl("https://vc.corp/sdk"), "https://vc.corp");
+  assert.equal(normaliseVcenterUrl("https://vc.corp/sdk/"), "https://vc.corp");
+  assert.equal(normaliseVcenterUrl("https://vc.corp"), "https://vc.corp");
+  assert.equal(hostOf("https://VC-Prod.corp/sdk"), "vc-prod.corp");
+});
+
+test("each source provider resolves to its own vCenter", () => {
+  const store = { providers: {
+    "uid-prod": { username: "ro@vsphere.local", password: "p1" },
+    "uid-dr": { username: "ro-dr@vsphere.local", password: "p2", insecure: true },
+  } };
+  const a = resolveVcenter(prodVc, store, {});
+  const b = resolveVcenter(drVc, store, {});
+  assert.equal(a.url, "https://vc-prod.corp");
+  assert.equal(a.user, "ro@vsphere.local");
+  assert.equal(b.url, "https://vc-dr.corp");
+  assert.equal(b.user, "ro-dr@vsphere.local");
+  assert.equal(b.insecure, true, "certificate posture is per appliance, not global");
+});
+
+test("two clusters pointing at the same appliance are configured once, by host", () => {
+  const otherCluster = { uid: "uid-other", name: "vcenter-prod-from-dc2", url: "https://vc-prod.corp/sdk", isSource: true };
+  const store = { hosts: { "vc-prod.corp": { username: "ro@vsphere.local", password: "p1" } } };
+  const r = resolveVcenter(otherCluster, store, {});
+  assert.equal(r.configured, true);
+  assert.equal(r.source, "host");
+  assert.equal(r.url, "https://vc-prod.corp");
+});
+
+test("a global credential is REFUSED against a provider whose vCenter it does not match", () => {
+  // The dangerous case: it would authenticate happily and return the wrong
+  // estate's tags, which is worse than returning nothing.
+  const env = { VCENTER_URL: "https://vc-prod.corp", VCENTER_USERNAME: "u", VCENTER_PASSWORD: "p" };
+  const r = resolveVcenter(drVc, {}, env);
+  assert.equal(r.configured, false);
+  assert.equal(r.source, "global-mismatch");
+  assert.match(r.reason, /would authenticate and return the wrong estate's tags/);
+
+  // Against the matching provider it is used.
+  assert.equal(resolveVcenter(prodVc, {}, env).configured, true);
+});
+
+test("MTV's own provider secret is decoded, including its certificate posture", () => {
+  const secret = { data: { user: b64("administrator@vsphere.local"), password: b64("s3cr3t"), insecureSkipVerify: b64("true") } };
+  const c = credentialFromMtvSecret(secret, "https://vc-prod.corp/sdk");
+  assert.equal(c.configured, true);
+  assert.equal(c.user, "administrator@vsphere.local");
+  assert.equal(c.pass, "s3cr3t");
+  assert.equal(c.url, "https://vc-prod.corp");
+  assert.equal(c.insecure, true, "a provider trusting a self-signed appliance must not become a verified connection here");
+  assert.equal(c.source, "mtv-secret");
+
+  assert.equal(credentialFromMtvSecret({ data: { user: b64("u") } }), null, "a secret without a password is not a credential");
+  assert.equal(credentialFromMtvSecret(null), null);
+});
+
+test("MTV's credential is used when nothing is registered — zero configuration", async () => {
+  const read = async (name, ns) => {
+    assert.equal(name, "vcenter-prod-secret");
+    assert.equal(ns, "openshift-mtv");
+    return { data: { user: b64("mtv@vsphere.local"), password: b64("pw") } };
+  };
+  const r = await resolveForProvider(prodVc, {}, read, {});
+  assert.equal(r.configured, true);
+  assert.equal(r.source, "mtv-secret");
+  assert.equal(r.user, "mtv@vsphere.local");
+  assert.equal(r.url, "https://vc-prod.corp");
+});
+
+test("a registered read-only credential outranks MTV's more privileged one", async () => {
+  const read = async () => ({ data: { user: b64("mtv@vsphere.local"), password: b64("pw") } });
+  const store = { providers: { "uid-prod": { username: "readonly@vsphere.local", password: "ro" } } };
+  const r = await resolveForProvider(prodVc, store, read, {});
+  assert.equal(r.source, "provider");
+  assert.equal(r.user, "readonly@vsphere.local", "registering a credential is how you avoid using MTV's account");
+});
+
+test("MTV reuse can be turned off, and then says what to grant instead", async () => {
+  const read = async () => ({ data: { user: b64("mtv@vsphere.local"), password: b64("pw") } });
+  const off = await resolveForProvider(prodVc, { useMtvSecret: false }, read, {});
+  assert.equal(off.configured, false);
+
+  // And when the secret simply cannot be read, the reason names it.
+  const denied = await resolveForProvider(prodVc, {}, async () => { throw new Error("forbidden"); }, {});
+  assert.equal(denied.configured, false);
+  assert.match(denied.reason, /openshift-mtv\/vcenter-prod-secret/);
+  assert.match(denied.reason, /grant get on that secret/);
+});
+
+test("the settings list shows every source provider, configured or not", () => {
+  const store = { providers: { "uid-prod": { username: "ro@vsphere.local", password: "p1" } } };
+  const rows = registryStatus([prodVc, drVc, { uid: "t", name: "host", type: "openshift", isSource: false }], store, {});
+  assert.equal(rows.length, 2, "the OpenShift target is not a vCenter");
+  assert.equal(rows[0].configured, true);
+  assert.equal(rows[0].host, "vc-prod.corp");
+  assert.equal(rows[1].configured, false, "an unconfigured provider is listed, not hidden");
+  assert.match(rows[1].reason, /No vCenter credential is registered/);
 });

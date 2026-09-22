@@ -82,7 +82,7 @@ import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentA
 import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVersion as deployKindApiVersion, applyRank as deployApplyRank } from "./services/deploy-verifier.js";
 import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./services/doc-deploy-store.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, vcSettingsStore, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
@@ -3127,18 +3127,40 @@ async function startSSE() {
           // asks vCenter itself. Never fatal: a tagging service that will not
           // answer leaves the machines exactly as discovery reported them.
           const tagging = await import("./services/vcenter-tags.js");
-          const tagged = await tagging.enrichWithTags(vms).catch(() => ({ vms, source: "error", tagged: 0, reason: null }));
+          // WHICH vCenter — resolved from the source provider the operator
+          // chose at Discover, not from one global setting. An estate with
+          // several vCenters would otherwise authenticate against the wrong
+          // one and return somebody else's tags.
+          const registry = await import("./services/vcenter-registry.js");
+          const vcStore = await vcSettingsStore().catch(() => ({}));
+          // The provider the operator picked at Discover, with the vCenter URL
+          // and credential secret MTV already holds for it.
+          const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
+          const sourceProvider = (mtv?.sources || []).find((sp) => sp.uid === body.provider || sp.name === body.provider) || null;
+          const vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
+            sourceProvider, vcStore,
+            // MTV already holds this provider's credentials; reusing them means
+            // nothing has to be configured, and they cannot drift out of step
+            // with the ones MTV migrates with.
+            async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
+          )).catch(() => ({ configured: false, source: "error", reason: null }));
+
+          const tagged = await withClusterContext(url, async () => tagging.enrichWithTags(vms, { cfg: vcCfg }))
+            .catch(() => ({ vms, source: "error", tagged: 0, reason: null }));
           analysis.applications = appGroups.applicationGroups(tagged.vms, {
             cmdb: body.cmdb || null,
             placement: analysis.capacity?.placement || null,
           });
-          analysis.applications.tagSource = { source: tagged.source, tagged: tagged.tagged, reason: tagged.reason };
+          analysis.applications.tagSource = {
+            source: tagged.source, tagged: tagged.tagged, reason: tagged.reason || vcCfg.reason,
+            credential: vcCfg.source || null, vcenter: vcCfg.url || null, provider: sourceProvider?.name || null,
+          };
           // What these machines actually use. The agent runs in the
           // destination, so it has no history for a VM still on VMware —
           // whatever cannot be measured gets no recommendation and says so.
           const rs = await import("./services/rightsizing.js");
           const util = await withClusterContext(url, async () =>
-            rs.readUtilisation(vms, { supplied: body.utilisation || null, windowDays: body.utilisationDays || 30 }),
+            rs.readUtilisation(vms, { supplied: body.utilisation || null, windowDays: body.utilisationDays || 30, vcenterCfg: vcCfg }),
           ).catch(() => ({ source: "none", samples: {}, reason: "Utilisation could not be read." }));
           analysis.rightsizing = {
             ...rs.fleetRightSizing(vms, util.samples || {}),
@@ -5326,6 +5348,31 @@ spec:
     if (url.pathname === "/api/settings/vcenter" && req.method === "POST") {
       await handleVcenterSettingsPost(req, res);
       return;
+    }
+    // Which source providers exist on the active cluster, and what credential
+    // each one resolves to. The settings screen lists providers rather than
+    // asking for a URL, because the URL is MTV's to know.
+    if (url.pathname === "/api/settings/vcenter/providers" && req.method === "GET") {
+      try {
+        const registry = await import("./services/vcenter-registry.js");
+        const store = await vcSettingsStore().catch(() => ({}));
+        const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
+        const rows = registry.registryStatus(mtv?.sources || [], store);
+        // Resolve each one for real, so a provider covered by MTV's own secret
+        // shows as configured rather than as a gap the operator must fill.
+        const resolved = [];
+        for (const r of rows) {
+          const p = (mtv?.sources || []).find((sp) => sp.uid === r.uid) || null;
+          const cred = await withClusterContext(url, async () => registry.resolveForProvider(
+            p, store, async (n, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${n}`),
+          )).catch(() => null);
+          resolved.push({ ...r, secret: p?.secret || null,
+            configured: cred?.configured ?? r.configured,
+            source: cred?.source ?? r.source,
+            reason: cred?.configured ? null : (cred?.reason || r.reason) });
+        }
+        return sendJson(res, 200, { providers: resolved, useMtvSecret: store.useMtvSecret !== false });
+      } catch (err) { return sendJson(res, 500, { error: err.message }); }
     }
     if (url.pathname === "/api/settings/vcenter/test" && req.method === "POST") {
       await handleVcenterSettingsTest(req, res);

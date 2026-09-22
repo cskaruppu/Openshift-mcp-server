@@ -507,61 +507,141 @@ function ServiceNowSection() {
   );
 }
 
-/* vCenter — the agent's OWN read-only credential, which is not the same thing
-   as the MTV migration provider. Forklift mirrors vCenter's SOAP object model,
-   and two things a migration needs badly are not in that mirror: tags live in
-   vAPI, and performance history lives behind QueryPerf. Without this, every
-   machine groups by folder and every right-sizing row stays blank. */
-function VCenterSection() {
-  const [vc, setVc] = useState({ url: "", username: "", password: "", insecure: false });
-  const [connected, setConnected] = useState(null);
-  const [detail, setDetail] = useState("");
-  const [testing, setTesting] = useState(false);
-  const [saving, setSaving] = useState(false);
+/* vCenter — one credential PER SOURCE PROVIDER, not one for the product.
+   An estate with several vCenters, or a fleet where each cluster's MTV points
+   somewhere different, has no single correct answer: a global credential would
+   authenticate happily against the wrong appliance and return somebody else's
+   tags. So the list is the providers MTV already knows about, and each one
+   resolves its own.
 
-  useEffect(() => {
-    fetch("/api/settings/vcenter")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d) return;
-        setVc({ url: d.url || "", username: d.username || "", password: d.password || "", insecure: d.insecure === true });
-        setConnected(d.enabled ? null : false);
-      })
-      .catch(() => {});
-  }, []);
+   The default needs no configuration at all. MTV already holds a credential
+   for every provider it migrates from, and the agent reuses it — which is also
+   the only version that cannot drift out of step with reality. */
+const CRED_LABEL = {
+  "mtv-secret": { text: "MTV's credential", tone: "#16a34a" },
+  provider: { text: "registered here", tone: "#16a34a" },
+  host: { text: "shared by host", tone: "#16a34a" },
+  global: { text: "global fallback", tone: "#b45309" },
+  "global-mismatch": { text: "wrong vCenter", tone: "#dc2626" },
+  none: { text: "not configured", tone: "#94a3b8" },
+};
 
-  const testConnection = async () => {
-    setTesting(true); setDetail("");
-    try {
-      const res = await fetch("/api/settings/vcenter/test", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vc),
-      });
-      const d = await res.json().catch(() => ({}));
-      setConnected(d.success === true);
-      // A tick that only means "the password is right" is not worth much when
-      // the point of the connection is tags and performance history, so the
-      // test says which of the two surfaces actually answered.
-      setDetail(d.success
-        ? `${d.detail || "Connected."}${d.soap ? " Performance history is readable." : ` Performance history is NOT readable${d.soapReason ? ` — ${d.soapReason}` : "."}`}`
-        : d.error || "Connection error");
-      showToast(d.success ? "vCenter connected" : `Failed: ${d.error || "Connection error"}`, d.success ? "ok" : "err");
-    } catch {
-      setConnected(false); setDetail("Connection failed");
-      showToast("Connection failed", "err");
-    } finally { setTesting(false); }
+function VCenterProviderRow({ p, onSaved }) {
+  const [form, setForm] = useState({ username: p.username || "", password: "", insecure: p.insecure === true });
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [result, setResult] = useState(null);
+
+  const post = async (body) => {
+    const r = await fetch("/api/settings/vcenter", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "Save failed");
+    return d;
   };
 
-  const saveSettings = async () => {
-    setSaving(true);
+  const test = async () => {
+    setBusy("test"); setResult(null);
     try {
-      const res = await fetch("/api/settings/vcenter", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vc),
+      const r = await fetch("/api/settings/vcenter/test", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: { uid: p.uid, name: p.name, url: p.url, secret: p.secret }, ...form }),
       });
-      const d = await res.json().catch(() => ({}));
-      showToast(res.ok ? "vCenter settings saved" : `Save failed: ${d.error || ""}`, res.ok ? "ok" : "err");
-    } catch {
-      showToast("Save failed", "err");
-    } finally { setSaving(false); }
+      const d = await r.json().catch(() => ({}));
+      setResult(d);
+      showToast(d.success ? `${p.name} connected` : `Failed: ${d.error || "Connection error"}`, d.success ? "ok" : "err");
+    } catch (e) { setResult({ success: false, error: e.message }); }
+    finally { setBusy(""); }
+  };
+
+  const save = async () => {
+    setBusy("save");
+    try {
+      await post({ uid: p.uid, ...form });
+      showToast(`${p.name} credential saved`, "ok");
+      onSaved?.();
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(""); }
+  };
+
+  const label = CRED_LABEL[p.source] || CRED_LABEL.none;
+  return (
+    <div style={{ border: "1px solid var(--border,#28304a)", borderRadius: 8, padding: "9px 11px", marginBottom: 7 }}>
+      <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+        <b style={{ fontSize: "0.82rem" }}>{p.name}</b>
+        <span style={{ ...S.muted, fontFamily: "'SF Mono',ui-monospace,monospace", fontSize: "0.72rem" }}>{p.host || p.url}</span>
+        <span style={{ marginLeft: "auto", fontSize: "0.72rem", fontWeight: 700, color: label.tone }}>
+          {p.configured ? "✓" : "○"} {label.text}
+        </span>
+        <button style={{ ...S.btnOutline, padding: "3px 10px", fontSize: "0.72rem" }} onClick={() => setOpen((v) => !v)}>
+          {open ? "Close" : p.configured ? "Override" : "Configure"}
+        </button>
+      </div>
+      {!p.configured && p.reason && (
+        <div style={{ ...S.muted, marginTop: 5, fontSize: "0.74rem" }}>{p.reason}</div>
+      )}
+      {open && (
+        <div style={{ marginTop: 9 }}>
+          <div style={S.field}>
+            <label style={S.label}>Username</label>
+            <input type="text" style={S.input} placeholder="svc-migration-agent@vsphere.local"
+              value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
+          </div>
+          <div style={S.field}>
+            <label style={S.label}>Password</label>
+            <input type="password" style={S.input} placeholder="••••••••"
+              value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+          </div>
+          <label style={{ ...S.muted, display: "flex", gap: 7, alignItems: "center", margin: "2px 0 9px" }}>
+            <input type="checkbox" checked={form.insecure}
+              onChange={(e) => setForm((f) => ({ ...f, insecure: e.target.checked }))} />
+            Accept a self-signed certificate on this appliance
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...S.btnOutline, ...(busy ? { opacity: 0.6 } : {}) }} onClick={test} disabled={!!busy}>
+              {busy === "test" ? "Testing..." : "Test"}
+            </button>
+            <button style={{ ...S.btnPrimary, ...(busy ? { opacity: 0.6 } : {}) }} onClick={save} disabled={!!busy}>
+              {busy === "save" ? "Saving..." : "Save"}
+            </button>
+          </div>
+          <div style={{ ...S.muted, marginTop: 7, fontSize: "0.73rem" }}>
+            The URL is not asked for — it comes from this provider in MTV, so it can never point somewhere
+            other than the vCenter the migration reads from.
+          </div>
+        </div>
+      )}
+      {result && (
+        <div style={{ ...S.muted, marginTop: 7, fontSize: "0.74rem", color: result.success ? "#16a34a" : "#dc2626" }}>
+          {result.success
+            ? `${result.detail}${result.soap ? " Performance history is readable." : ` Performance history is NOT readable${result.soapReason ? ` — ${result.soapReason}` : "."}`}`
+            : result.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VCenterSection() {
+  const [rows, setRows] = useState(null);
+  const [useMtv, setUseMtv] = useState(true);
+  const [err, setErr] = useState(null);
+
+  const load = () => {
+    fetch("/api/settings/vcenter/providers")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not read the source providers from MTV."))))
+      .then((d) => { setRows(d.providers || []); setUseMtv(d.useMtvSecret !== false); setErr(null); })
+      .catch((e) => { setRows([]); setErr(e.message); });
+  };
+  useEffect(load, []);
+
+  const toggleMtv = async (on) => {
+    setUseMtv(on);
+    await fetch("/api/settings/vcenter", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ useMtvSecret: on }),
+    }).catch(() => {});
+    load();
   };
 
   return (
@@ -571,46 +651,31 @@ function VCenterSection() {
           <div style={S.badge("#1d4ed8")}>VC</div>
           <span>vCenter (read-only)</span>
         </div>
-        <span style={connected ? S.pillOn : connected === false ? S.pillOff : { ...S.pillOff, background: "#64748b22", color: "#94a3b8" }}>
-          {connected ? "Connected" : connected === false ? "Not Connected" : "Unknown"}
+        <span style={{ ...S.muted, fontSize: "0.73rem" }}>
+          {rows ? `${rows.filter((r) => r.configured).length} of ${rows.length} source provider(s) resolved` : "loading…"}
         </span>
       </div>
-      <div style={S.field}>
-        <label style={S.label}>vCenter URL</label>
-        <input type="text" style={S.input} placeholder="https://vcenter.example.local"
-          value={vc.url} onChange={(e) => setVc((s2) => ({ ...s2, url: e.target.value }))} />
-      </div>
-      <div style={S.field}>
-        <label style={S.label}>Username</label>
-        <input type="text" style={S.input} placeholder="svc-migration-agent@vsphere.local"
-          value={vc.username} onChange={(e) => setVc((s2) => ({ ...s2, username: e.target.value }))} />
-      </div>
-      <div style={S.field}>
-        <label style={S.label}>Password</label>
-        <input type="password" style={S.input} placeholder="••••••••"
-          value={vc.password} onChange={(e) => setVc((s2) => ({ ...s2, password: e.target.value }))} />
-      </div>
-      <label style={{ ...S.muted, display: "flex", gap: 7, alignItems: "center", margin: "2px 0 10px" }}>
-        <input type="checkbox" checked={vc.insecure}
-          onChange={(e) => setVc((s2) => ({ ...s2, insecure: e.target.checked }))} />
-        Accept a self-signed certificate
+
+      <label style={{ ...S.muted, display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+        <input type="checkbox" checked={useMtv} onChange={(e) => toggleMtv(e.target.checked)} style={{ marginTop: 3 }} />
+        <span>
+          <b style={{ color: "var(--text,#e6e8ee)" }}>Reuse MTV&apos;s own provider credentials</b> — nothing to configure, correct per
+          provider, and it rotates with MTV. The trade-off, stated plainly: that account belongs to MTV and MTV needs more than
+          read, because it powers machines off and takes snapshots. This agent only ever reads with it. To run the assessment
+          under a genuinely read-only account instead, register one against a provider below and it takes precedence.
+        </span>
       </label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button style={{ ...S.btnOutline, ...(testing ? { opacity: 0.6 } : {}) }} onClick={testConnection} disabled={testing}>
-          {testing ? "Testing..." : "Test Connection"}
-        </button>
-        <button style={{ ...S.btnPrimary, ...(saving ? { opacity: 0.6 } : {}) }} onClick={saveSettings} disabled={saving}>
-          {saving ? "Saving..." : "Save"}
-        </button>
-      </div>
-      {detail && (
-        <div style={{ ...S.muted, marginTop: 8, color: connected ? "#16a34a" : "#dc2626" }}>{detail}</div>
+
+      {err && <div style={{ ...S.muted, color: "#dc2626", marginBottom: 8 }}>{err}</div>}
+      {rows?.length === 0 && !err && (
+        <div style={S.muted}>No vSphere source provider is configured in MTV on the active cluster.</div>
       )}
+      {rows?.map((p) => <VCenterProviderRow key={p.uid} p={p} onSaved={load} />)}
+
       <div style={{ ...S.muted, marginTop: 8 }}>
-        Read-only, and separate from the MTV migration provider — <b>System.Read</b> is enough. It reads what Forklift&apos;s
-        inventory cannot carry: vCenter tags, which live in vAPI and decide how machines group into applications, and
-        performance history from QueryPerf, which is what right-sizing measures. Without it, machines group by folder and
-        every size stays &quot;not measured&quot;.
+        Read-only is enough — <b>System.Read</b>. This reads what Forklift&apos;s inventory cannot carry: vCenter tags, which live
+        in vAPI and decide how machines group into applications, and performance history from QueryPerf, which is what
+        right-sizing measures. Providers are listed for the <b>active cluster</b>; switch cluster to configure another.
       </div>
     </div>
   );

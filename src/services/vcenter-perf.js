@@ -159,8 +159,8 @@ export function toSamples(raw = { cpu: [], memory: [] }, { mhzPerCore = DEFAULT_
  * Never throws. A vCenter that will not answer leaves every machine unmeasured
  * and says why — which is exactly what the panel is built to render.
  */
-export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore = null } = {}) {
-  const cfg = vcenterConfig();
+export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore = null, cfg = null } = {}) {
+  cfg = cfg || vcenterConfig();
   if (!cfg.configured) return { source: "none", samples: {}, reason: cfg.reason };
 
   const windowDays = Math.min(MAX_WINDOW_DAYS, Math.max(1, Number(days) || 30));
@@ -171,7 +171,7 @@ export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore =
 
   try {
     let counterIds = {};
-    const counterXml = await vcSoap((s) => buildCounterLookupBody(s.perfManager), { timeoutMs: 45_000 });
+    const counterXml = await vcSoap((s) => buildCounterLookupBody(s.perfManager), { cfg, timeoutMs: 45_000 });
     counterIds = parseCounterIds(counterXml);
     if (counterIds.cpu == null || counterIds.memory == null) {
       return {
@@ -190,7 +190,7 @@ export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore =
         entities: batch.map((v) => v.id),
         counterIds: [counterIds.cpu, counterIds.memory],
         days: windowDays,
-      }), { timeoutMs: 90_000 });
+      }), { cfg, timeoutMs: 90_000 });
       for (const [k, v] of parsePerfResponse(xml, counterIds)) raw.set(k, v);
     }
 
@@ -207,7 +207,7 @@ export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore =
       source: measured ? "vcenter" : "none",
       samples,
       basis: measured
-        ? `Read from vCenter over ${windowDays} days at the ${intervalForWindow(windowDays) / 60}-minute rollup — ${measured} of ${vms.length} machines returned history.`
+        ? `Read from vCenter over ${windowDays} days at the ${intervalForWindow(windowDays) / 60}-minute rollup — ${measured} of ${vms.length} machines returned history.${cfg.source === "mtv-secret" ? " Using MTV's own provider credential." : ""}`
         : null,
       reason: measured ? null
         : `vCenter returned no samples for any of these ${vms.length} machines over ${windowDays} days. Either the statistics level is too low to keep history that long, or these machines were powered off for the window.`,

@@ -74,8 +74,8 @@ export function applyTags(vms = [], byVmId = new Map()) {
  * says why. Losing grouping is a degraded report; failing the whole assessment
  * over it is not a trade anybody would choose.
  */
-export async function enrichWithTags(vms = []) {
-  const cfg = vcenterConfig();
+export async function enrichWithTags(vms = [], { cfg = null } = {}) {
+  cfg = cfg || vcenterConfig();
   if (!cfg.configured) return { vms, source: "none", tagged: 0, reason: cfg.reason };
 
   const ids = vms.map((v) => v.id).filter(Boolean);
@@ -85,7 +85,7 @@ export async function enrichWithTags(vms = []) {
 
   try {
     // 1. Every tag id, then each tag's name and category.
-    const tagIds = await vcFetch("/api/cis/tagging/tag");
+    const tagIds = await vcFetch("/api/cis/tagging/tag", { cfg });
     if (!Array.isArray(tagIds) || !tagIds.length) {
       return { vms, source: "vcenter", tagged: 0, reason: "This vCenter has no tags defined at all — the estate is genuinely untagged, rather than unreadable." };
     }
@@ -93,14 +93,14 @@ export async function enrichWithTags(vms = []) {
     // Sequential on purpose: a tagging service is not a data plane, and
     // hundreds of parallel requests is how a vCenter starts refusing them.
     for (const id of tagIds) {
-      const t = await vcFetch(`/api/cis/tagging/tag/${encodeURIComponent(id)}`).catch(() => null);
+      const t = await vcFetch(`/api/cis/tagging/tag/${encodeURIComponent(id)}`, { cfg }).catch(() => null);
       if (!t?.name) continue;
       tagIndex.set(id, { name: t.name, category_id: t.category_id });
       if (t.category_id) catIds.add(t.category_id);
     }
     const catIndex = new Map();
     for (const id of catIds) {
-      const c = await vcFetch(`/api/cis/tagging/category/${encodeURIComponent(id)}`).catch(() => null);
+      const c = await vcFetch(`/api/cis/tagging/category/${encodeURIComponent(id)}`, { cfg }).catch(() => null);
       if (c?.name) catIndex.set(id, c.name);
     }
 
@@ -110,7 +110,7 @@ export async function enrichWithTags(vms = []) {
       const object_ids = ids.slice(i, i + BATCH).map((id) => ({ id, type: "VirtualMachine" }));
       const part = await vcFetch(
         "/api/cis/tagging/tag-association?action=list-attached-tags-on-objects",
-        { method: "POST", body: { object_ids } },
+        { cfg, method: "POST", body: { object_ids } },
       );
       if (Array.isArray(part)) associations.push(...part);
     }
@@ -118,7 +118,7 @@ export async function enrichWithTags(vms = []) {
     const byVmId = shapeAssociations(associations, tagIndex, catIndex);
     const applied = applyTags(vms, byVmId);
     return {
-      vms: applied.vms, source: "vcenter", tagged: applied.tagged,
+      vms: applied.vms, source: "vcenter", tagged: applied.tagged, credential: cfg.source,
       categories: [...catIndex.values()],
       reason: applied.tagged === 0
         ? `vCenter has ${tagIndex.size} tag${tagIndex.size === 1 ? "" : "s"} defined, and none of them is on a machine in this wave.`
