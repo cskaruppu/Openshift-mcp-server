@@ -507,6 +507,115 @@ function ServiceNowSection() {
   );
 }
 
+/* vCenter — the agent's OWN read-only credential, which is not the same thing
+   as the MTV migration provider. Forklift mirrors vCenter's SOAP object model,
+   and two things a migration needs badly are not in that mirror: tags live in
+   vAPI, and performance history lives behind QueryPerf. Without this, every
+   machine groups by folder and every right-sizing row stays blank. */
+function VCenterSection() {
+  const [vc, setVc] = useState({ url: "", username: "", password: "", insecure: false });
+  const [connected, setConnected] = useState(null);
+  const [detail, setDetail] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/settings/vcenter")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setVc({ url: d.url || "", username: d.username || "", password: d.password || "", insecure: d.insecure === true });
+        setConnected(d.enabled ? null : false);
+      })
+      .catch(() => {});
+  }, []);
+
+  const testConnection = async () => {
+    setTesting(true); setDetail("");
+    try {
+      const res = await fetch("/api/settings/vcenter/test", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vc),
+      });
+      const d = await res.json().catch(() => ({}));
+      setConnected(d.success === true);
+      // A tick that only means "the password is right" is not worth much when
+      // the point of the connection is tags and performance history, so the
+      // test says which of the two surfaces actually answered.
+      setDetail(d.success
+        ? `${d.detail || "Connected."}${d.soap ? " Performance history is readable." : ` Performance history is NOT readable${d.soapReason ? ` — ${d.soapReason}` : "."}`}`
+        : d.error || "Connection error");
+      showToast(d.success ? "vCenter connected" : `Failed: ${d.error || "Connection error"}`, d.success ? "ok" : "err");
+    } catch {
+      setConnected(false); setDetail("Connection failed");
+      showToast("Connection failed", "err");
+    } finally { setTesting(false); }
+  };
+
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/vcenter", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vc),
+      });
+      const d = await res.json().catch(() => ({}));
+      showToast(res.ok ? "vCenter settings saved" : `Save failed: ${d.error || ""}`, res.ok ? "ok" : "err");
+    } catch {
+      showToast("Save failed", "err");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={S.card}>
+      <div style={S.cardHeader}>
+        <div style={S.cardTitle}>
+          <div style={S.badge("#1d4ed8")}>VC</div>
+          <span>vCenter (read-only)</span>
+        </div>
+        <span style={connected ? S.pillOn : connected === false ? S.pillOff : { ...S.pillOff, background: "#64748b22", color: "#94a3b8" }}>
+          {connected ? "Connected" : connected === false ? "Not Connected" : "Unknown"}
+        </span>
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>vCenter URL</label>
+        <input type="text" style={S.input} placeholder="https://vcenter.example.local"
+          value={vc.url} onChange={(e) => setVc((s2) => ({ ...s2, url: e.target.value }))} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Username</label>
+        <input type="text" style={S.input} placeholder="svc-migration-agent@vsphere.local"
+          value={vc.username} onChange={(e) => setVc((s2) => ({ ...s2, username: e.target.value }))} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Password</label>
+        <input type="password" style={S.input} placeholder="••••••••"
+          value={vc.password} onChange={(e) => setVc((s2) => ({ ...s2, password: e.target.value }))} />
+      </div>
+      <label style={{ ...S.muted, display: "flex", gap: 7, alignItems: "center", margin: "2px 0 10px" }}>
+        <input type="checkbox" checked={vc.insecure}
+          onChange={(e) => setVc((s2) => ({ ...s2, insecure: e.target.checked }))} />
+        Accept a self-signed certificate
+      </label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button style={{ ...S.btnOutline, ...(testing ? { opacity: 0.6 } : {}) }} onClick={testConnection} disabled={testing}>
+          {testing ? "Testing..." : "Test Connection"}
+        </button>
+        <button style={{ ...S.btnPrimary, ...(saving ? { opacity: 0.6 } : {}) }} onClick={saveSettings} disabled={saving}>
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+      {detail && (
+        <div style={{ ...S.muted, marginTop: 8, color: connected ? "#16a34a" : "#dc2626" }}>{detail}</div>
+      )}
+      <div style={{ ...S.muted, marginTop: 8 }}>
+        Read-only, and separate from the MTV migration provider — <b>System.Read</b> is enough. It reads what Forklift&apos;s
+        inventory cannot carry: vCenter tags, which live in vAPI and decide how machines group into applications, and
+        performance history from QueryPerf, which is what right-sizing measures. Without it, machines group by folder and
+        every size stays &quot;not measured&quot;.
+      </div>
+    </div>
+  );
+}
+
 function IntegrationsTab() {
   const [integrations, setIntegrations] = useState(() => {
     const init = {};
@@ -579,6 +688,9 @@ function IntegrationsTab() {
     <div>
       {/* ServiceNow — dedicated section with its own API */}
       <ServiceNowSection />
+
+      {/* vCenter — read-only, for tags and performance history */}
+      <VCenterSection />
 
       {INTEGRATION_DEFS.map((def) => {
         const integ = integrations[def.key];

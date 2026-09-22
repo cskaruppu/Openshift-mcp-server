@@ -2178,3 +2178,184 @@ export async function handleUpgradeOrchestrator(req, res, action) {
     return json(res, 500, { error: err.message });
   }
 }
+
+// ---------------------------------------------------------------------------
+// vCenter settings — /api/settings/vcenter
+// ---------------------------------------------------------------------------
+/**
+ * The agent's own read-only vCenter credential, stored the same way as
+ * ServiceNow's: database first, file as the fallback that survives a pod
+ * restart without one, and environment variables as a last resort for a
+ * deployment that sets them directly.
+ *
+ * This is NOT the migration provider credential — MTV keeps its own, and this
+ * one is deliberately separate and read-only. It buys two things Forklift's
+ * inventory cannot carry: vCenter tags, which live in vAPI, and performance
+ * history, which lives behind QueryPerf. Without it the grouping falls back to
+ * folders and every right-sizing row stays blank.
+ */
+const VC_SETTINGS_DB_KEY = "vcenter_settings";
+const VC_SETTINGS_PATH = process.env.VC_SETTINGS_PATH || "/data/mcp-vcenter-settings.json";
+
+async function loadVcSettings() {
+  try {
+    if (await dbEnabled()) {
+      const result = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [VC_SETTINGS_DB_KEY]);
+      if (result?.rows?.length) {
+        let val = result.rows[0].value;
+        if (typeof val === "string") { try { val = JSON.parse(val); } catch { val = null; } }
+        if (val && val.url && val.username && val.password) return { ...val, _storage: "database" };
+      }
+    }
+  } catch { /* fall through */ }
+  try {
+    const parsed = JSON.parse(await readFile(VC_SETTINGS_PATH, "utf8"));
+    if (parsed && parsed.url && parsed.username && parsed.password) return { ...parsed, _storage: "file" };
+  } catch { /* fall through */ }
+  const url = process.env.VCENTER_URL || "";
+  const username = process.env.VCENTER_USERNAME || "";
+  const password = process.env.VCENTER_PASSWORD || "";
+  if (url && username && password) {
+    return { url, username, password, insecure: process.env.VCENTER_INSECURE === "true", _storage: "environment" };
+  }
+  return null;
+}
+
+/** Put the stored credential back into process.env at boot. */
+export async function restoreVcenterSettings() {
+  const s = await loadVcSettings();
+  if (!s) return false;
+  process.env.VCENTER_URL = s.url;
+  process.env.VCENTER_USERNAME = s.username;
+  process.env.VCENTER_PASSWORD = s.password;
+  if (s.insecure) process.env.VCENTER_INSECURE = "true";
+  console.log(`[vcenter-settings] restored from ${s._storage} — url=${s.url}, user=${s.username}`);
+  return true;
+}
+
+export async function handleVcenterSettingsGet(req, res) {
+  const s = await loadVcSettings();
+  if (!s) return json(res, 200, { url: "", username: "", password: "", insecure: false, enabled: false, _storage: "none" });
+  return json(res, 200, {
+    url: s.url || "",
+    username: s.username || "",
+    // Never returned, only ever indicated. A settings page that echoes a
+    // password back is one screenshot away from leaking it.
+    password: s.password ? "••••••••" : "",
+    insecure: s.insecure === true,
+    enabled: Boolean(s.url && s.username && s.password),
+    _storage: s._storage || "unknown",
+  });
+}
+
+export async function handleVcenterSettingsPost(req, res) {
+  try {
+    const body = await readJsonBody(req);
+    const url = String(body.url || "").trim().replace(/\/+$/, "");
+    const username = String(body.username || "").trim();
+    let password = body.password || "";
+    if (!url || !username) return json(res, 400, { error: "vCenter URL and username are required." });
+    if (!/^https:\/\//i.test(url)) {
+      return json(res, 400, { error: "The vCenter URL must start with https:// — plain http would put the credential on the wire in clear." });
+    }
+    // The GET masks the password, so a save that only changed the URL posts
+    // the mask back. Treating that as the new password would lock the agent
+    // out of vCenter with no way to tell why.
+    if (/^•+$/.test(password)) {
+      const existing = await loadVcSettings();
+      if (!existing?.password) return json(res, 400, { error: "A password is required." });
+      password = existing.password;
+    }
+    if (!password) return json(res, 400, { error: "A password is required." });
+
+    const settings = { url, username, password, insecure: body.insecure === true, enabled: true };
+    process.env.VCENTER_URL = url;
+    process.env.VCENTER_USERNAME = username;
+    process.env.VCENTER_PASSWORD = password;
+    process.env.VCENTER_INSECURE = settings.insecure ? "true" : "";
+    // A changed credential must not keep using the old session.
+    try { (await import("../utils/vcenter-client.js"))._resetSession(); } catch { /* not loaded yet */ }
+    try { (await import("../utils/vcenter-client.js"))._resetSoap(); } catch { /* not loaded yet */ }
+
+    let savedToDB = false;
+    try {
+      if (await dbEnabled()) {
+        await dbQuery(
+          `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+          [VC_SETTINGS_DB_KEY, JSON.stringify(settings)],
+        );
+        savedToDB = true;
+      }
+    } catch { /* DB optional */ }
+    let savedToFile = false;
+    try {
+      await mkdir(dirname(VC_SETTINGS_PATH), { recursive: true }).catch(() => {});
+      await writeFile(VC_SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+      savedToFile = true;
+    } catch { /* file write optional */ }
+
+    console.log(`[vcenter-settings] saved — url=${url}, user=${username}, db=${savedToDB}, file=${savedToFile}`);
+    return json(res, 200, { success: true, enabled: true, storage: savedToDB ? "database" : savedToFile ? "file" : "process" });
+  } catch (err) {
+    return json(res, 500, { error: err.message });
+  }
+}
+
+/**
+ * Prove the credential works, and say what it actually bought — a green tick
+ * that only means "the password is right" is not worth much when the point of
+ * the connection is tags and performance history.
+ */
+export async function handleVcenterSettingsTest(req, res) {
+  try {
+    const body = await readJsonBody(req).catch(() => ({}));
+    const saved = await loadVcSettings();
+    const url = String(body.url || saved?.url || "").trim().replace(/\/+$/, "");
+    const username = String(body.username || saved?.username || "").trim();
+    const password = /^•+$/.test(body.password || "") || !body.password ? saved?.password : body.password;
+    if (!url || !username || !password) {
+      return json(res, 200, { success: false, error: "vCenter URL, username and password are required." });
+    }
+
+    // Test against what was typed, without persisting it.
+    const prev = { u: process.env.VCENTER_URL, n: process.env.VCENTER_USERNAME, p: process.env.VCENTER_PASSWORD, i: process.env.VCENTER_INSECURE };
+    process.env.VCENTER_URL = url;
+    process.env.VCENTER_USERNAME = username;
+    process.env.VCENTER_PASSWORD = password;
+    process.env.VCENTER_INSECURE = body.insecure === true || saved?.insecure ? "true" : "";
+    const started = Date.now();
+    try {
+      const { vcFetch, _resetSession, _resetSoap } = await import("../utils/vcenter-client.js");
+      _resetSession(); _resetSoap();
+      // Two checks, because the credential can authenticate and still be
+      // useless: tags need the tagging service, sizing needs the SOAP API.
+      const tags = await vcFetch("/api/cis/tagging/tag").then((t) => (Array.isArray(t) ? t.length : 0)).catch((e) => e);
+      const { readVcenterUtilisation } = await import("./vcenter-perf.js");
+      const perf = await readVcenterUtilisation([], { days: 1 }).catch((e) => ({ source: "error", reason: e.message }));
+
+      if (tags instanceof Error) {
+        return json(res, 200, { success: false, error: tags.message, ms: Date.now() - started });
+      }
+      return json(res, 200, {
+        success: true,
+        ms: Date.now() - started,
+        tagsDefined: tags,
+        // readVcenterUtilisation with no VMs cannot measure anything; what it
+        // proves is whether the SOAP login and counter lookup worked.
+        soap: perf.source !== "error",
+        soapReason: perf.source === "error" ? perf.reason : null,
+        detail: `Connected. ${tags} tag${tags === 1 ? "" : "s"} defined in this vCenter.`,
+      });
+    } finally {
+      process.env.VCENTER_URL = prev.u || "";
+      process.env.VCENTER_USERNAME = prev.n || "";
+      process.env.VCENTER_PASSWORD = prev.p || "";
+      process.env.VCENTER_INSECURE = prev.i || "";
+      try { (await import("../utils/vcenter-client.js"))._resetSession(); } catch { /* ignore */ }
+      try { (await import("../utils/vcenter-client.js"))._resetSoap(); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    return json(res, 200, { success: false, error: err.message });
+  }
+}

@@ -82,7 +82,7 @@ import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentA
 import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVersion as deployKindApiVersion, applyRank as deployApplyRank } from "./services/deploy-verifier.js";
 import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./services/doc-deploy-store.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
-import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
+import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
@@ -2076,6 +2076,13 @@ async function startSSE() {
   try {
     await restoreServiceNowSettings();
   } catch (e) { console.warn("[startup] ServiceNow settings restore:", e.message); }
+
+  // Same for the agent's own read-only vCenter credential. Without it, tags
+  // and performance history are unreadable and the assessment quietly loses
+  // its grouping and its right-sizing — so it has to survive a pod restart.
+  try {
+    await restoreVcenterSettings();
+  } catch (e) { console.warn("[startup] vCenter settings restore:", e.message); }
 
   // Restore incident-automation policy (autonomous on/off, ServiceNow queue,
   // chronic window, severity floor, rate limit) so operator changes made in the
@@ -5305,6 +5312,23 @@ spec:
     }
     if (url.pathname === "/api/settings/servicenow/test" && req.method === "POST") {
       await handleServiceNowSettingsTest(req, res);
+      return;
+    }
+
+    // vCenter settings — /api/settings/vcenter
+    // The agent's OWN read-only credential, separate from the MTV provider's.
+    // It buys the two things Forklift's inventory cannot carry: tags, which
+    // live in vAPI, and performance history, which lives behind QueryPerf.
+    if (url.pathname === "/api/settings/vcenter" && req.method === "GET") {
+      await handleVcenterSettingsGet(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/vcenter" && req.method === "POST") {
+      await handleVcenterSettingsPost(req, res);
+      return;
+    }
+    if (url.pathname === "/api/settings/vcenter/test" && req.method === "POST") {
+      await handleVcenterSettingsTest(req, res);
       return;
     }
 
