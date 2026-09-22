@@ -228,11 +228,26 @@ export async function readUtilisation(vms = [], opts = {}) {
       basis: "Utilisation supplied with the request — measured by your own tooling, not by this agent." };
   }
 
-  // 2. Prometheus, IF something is scraping the source hypervisor into it.
+  const days = opts.windowDays ?? 30;
+
+  // 2. vCenter itself, when the agent has a credential of its own. This is the
+  //    only source that works without the customer having built anything: the
+  //    history is already there, behind QueryPerf, and has been all along.
+  try {
+    const { readVcenterUtilisation } = await import("./vcenter-perf.js");
+    const vc = await readVcenterUtilisation(vms, { days });
+    if (vc.source === "vcenter" && Object.keys(vc.samples).length) {
+      return { source: "vcenter", samples: vc.samples, reason: null, basis: vc.basis };
+    }
+    // Remember why, so the panel can say something better than "no data" when
+    // a credential IS configured and still produced nothing.
+    if (vc.reason) opts._vcReason = vc.reason;
+  } catch { /* module or credential unavailable — fall through */ }
+
+  // 3. Prometheus, IF something is scraping the source hypervisor into it.
   //    vmware_exporter is the common case. This agent's Prometheus watches the
   //    DESTINATION, so this only works when the customer has wired the source
   //    in too — which is worth attempting and never worth assuming.
-  const days = opts.windowDays ?? 30;
   try {
     const cpuRows = await promQuery(
       `quantile_over_time(0.95, vmware_vm_cpu_usage_average[${days}d])`,
@@ -259,6 +274,9 @@ export async function readUtilisation(vms = [], opts = {}) {
 
   return {
     source: "none", samples: {},
-    reason: "No source-side utilisation is available. This agent runs inside the destination cluster, so its own metrics cover the target, not the VMs still on VMware. Point it at a Prometheus scraping vmware_exporter, or supply samples from your existing monitoring, and every machine below gets a measured recommendation instead of a blank.",
+    // When a vCenter credential IS configured and still produced nothing, that
+    // reason is far more useful than the generic one — it names what to fix.
+    reason: opts._vcReason
+      || "No source-side utilisation is available. This agent runs inside the destination cluster, so its own metrics cover the target, not the VMs still on VMware. Give it a read-only vCenter credential (VCENTER_URL, VCENTER_USERNAME, VCENTER_PASSWORD) and it reads the history vCenter has kept all along — or point it at a Prometheus scraping vmware_exporter, or supply samples from your existing monitoring.",
   };
 }

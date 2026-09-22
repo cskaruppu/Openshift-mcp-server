@@ -3115,10 +3115,17 @@ async function startSSE() {
           // grouping decides what moves together, and a confident wrong group
           // splits a working system across two platforms for a month.
           const appGroups = await import("./services/application-groups.js");
-          analysis.applications = appGroups.applicationGroups(vms, {
+          // Tags live in vAPI, not in the inventory Forklift mirrors, so an
+          // estate that is fully tagged reads as untagged unless the agent
+          // asks vCenter itself. Never fatal: a tagging service that will not
+          // answer leaves the machines exactly as discovery reported them.
+          const tagging = await import("./services/vcenter-tags.js");
+          const tagged = await tagging.enrichWithTags(vms).catch(() => ({ vms, source: "error", tagged: 0, reason: null }));
+          analysis.applications = appGroups.applicationGroups(tagged.vms, {
             cmdb: body.cmdb || null,
             placement: analysis.capacity?.placement || null,
           });
+          analysis.applications.tagSource = { source: tagged.source, tagged: tagged.tagged, reason: tagged.reason };
           // What these machines actually use. The agent runs in the
           // destination, so it has no history for a VM still on VMware —
           // whatever cannot be measured gets no recommendation and says so.

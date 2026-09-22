@@ -681,9 +681,28 @@ function ApplicationsPanel({ applications }) {
         <span style={{ fontSize: "0.78rem", color: "var(--text)" }}>{headline}</span>
       </div>
 
+      {/* Where the tags came from, when the agent has its own vCenter
+          credential. "Read 12 of 15 from vCenter" and "vCenter would not
+          answer" are different facts and only one of them is about the estate. */}
+      {applications.tagSource && applications.tagSource.source !== "none" && (
+        <div style={{ fontSize: "0.76rem", border: "1px solid var(--border)",
+          borderLeft: `3px solid var(${applications.tagSource.source === "error" ? "--st-warn" : "--st-good"})`,
+          borderRadius: 8, padding: "7px 10px", marginBottom: 9 }}>
+          {applications.tagSource.source === "vcenter" && applications.tagSource.tagged > 0 && (
+            <b style={{ color: "var(--st-good-ink)" }}>
+              Tags read directly from vCenter — {applications.tagSource.tagged} machine
+              {applications.tagSource.tagged === 1 ? "" : "s"} tagged.
+            </b>
+          )}
+          {applications.tagSource.reason && (
+            <span style={{ color: "var(--text2)" }}>{applications.tagSource.tagged > 0 ? " " : ""}{applications.tagSource.reason}</span>
+          )}
+        </div>
+      )}
+
       {/* Whether we cannot SEE the tags, or there are none, are different
           answers and lead to completely different conversations. */}
-      {coverage?.note && (
+      {coverage?.note && !applications.tagSource?.tagged && (
         <div style={{ fontSize: "0.76rem", color: "var(--text2)", border: "1px solid var(--border)", borderLeft: "3px solid var(--st-unknown)",
           borderRadius: 8, padding: "7px 10px", marginBottom: 9 }}>{coverage.note}</div>
       )}
