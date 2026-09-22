@@ -5355,8 +5355,12 @@ spec:
     if (url.pathname === "/api/settings/vcenter/providers" && req.method === "GET") {
       try {
         const registry = await import("./services/vcenter-registry.js");
+        // This route lives in a different handler from the migration routes,
+        // so vm-migration.js has to be imported here rather than borrowed from
+        // a `mig` that happens to be bound a few thousand lines away.
+        const mtvSvc = await import("./services/vm-migration.js");
         const store = await vcSettingsStore().catch(() => ({}));
-        const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch((e) => ({ __err: e.message }));
+        const mtv = await withClusterContext(url, async () => mtvSvc.checkMtvReadiness()).catch((e) => ({ __err: e.message }));
         if (mtv?.__err || !Array.isArray(mtv?.sources)) {
           // 200 with a reason, not a 500. The console renders the reason; a
           // 500 would render as nothing at all, and nothing reads as fine.

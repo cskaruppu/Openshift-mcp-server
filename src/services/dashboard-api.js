@@ -2355,7 +2355,6 @@ export async function handleVcenterSettingsPost(req, res) {
 export async function handleVcenterSettingsTest(req, res) {
   try {
     const body = await readJsonBody(req).catch(() => ({}));
-    const { vcSettingsStore } = await import("./dashboard-api.js");
     const store = await vcSettingsStore();
     const registry = await import("./vcenter-registry.js");
     const { ocpGet } = await import("../utils/openshift-client.js");
