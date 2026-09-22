@@ -4,6 +4,7 @@ import { showToast } from "../store/toastStore";
 import FleetAnalysis from "./FleetAnalysis";
 import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
+import VCenterConnect from "./VCenterConnect";
 
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
@@ -2355,6 +2356,12 @@ function MigrationAgent({ clusters, activeCluster }) {
             </button>
             {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found in this vCenter</span>}
           </div>
+
+          {/* What the agent can read from THIS provider's vCenter beyond the
+              MTV inventory. Placed here because the credential is keyed by the
+              source provider, and the source provider is chosen right above —
+              a settings page would have to ask which one you meant. */}
+          <VCenterConnect provider={provider} />
 
           {/* ── Inventory table ───────────────────────────────────────────── */}
           {vms?.length > 0 && (
