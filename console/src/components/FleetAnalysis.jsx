@@ -352,6 +352,16 @@ function LandingPanel({ capacity }) {
             </span>
             <span style={{ fontSize: "0.74rem", color: "var(--text2)" }}>simulated as a set, not one machine at a time — a placement exists, which is not the same as predicting the scheduler's choice</span>
           </div>
+          {/* The wave order is a decision, not a detail: on a tight cluster the
+              two directions place different NUMBERS of machines. Reporting one
+              of them as "the" answer hides the choice. */}
+          {p.alternative && (
+            <div data-prose style={{ fontSize: "0.77rem", color: "var(--text)", border: "1px solid var(--st-warn)",
+              borderLeft: "3px solid var(--st-warn)", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}>
+              <b style={{ color: "var(--st-warn-ink)" }}>{p.alternative.gain} more machine{p.alternative.gain === 1 ? "" : "s"} would fit in a different order.</b>{" "}
+              <span style={{ color: "var(--text2)" }}>{p.alternative.note}</span>
+            </div>
+          )}
 
           {p.nodes.map((n) => <NodeMeter key={n.name} n={n} />)}
 
@@ -423,7 +433,27 @@ function LandingPanel({ capacity }) {
    "the wave fits as long as nothing happens for four hours" are different
    promises. */
 function RehearsalPanel({ rehearsal }) {
-  if (!rehearsal?.available || !rehearsal.nodes?.length) return null;
+  if (!rehearsal?.available) return null;
+  // A cluster with ONE virtualization node has no rows to show and the most
+  // important sentence on the page: there is nothing to fail over to. Bailing
+  // on an empty row list hid exactly the case that most needed saying.
+  if (!rehearsal.nodes?.length) {
+    if (!rehearsal.singleNode) return null;
+    return (
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", border: "1px solid var(--st-warn)",
+        borderLeft: "3px solid var(--st-warn)", borderRadius: 10, padding: "11px 13px", background: "var(--st-warn-bg)" }}>
+        <span aria-hidden style={{ color: "var(--st-warn-ink)", fontWeight: 800 }}>⚠</span>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: "0.84rem" }}>If a node is lost mid-wave</div>
+          <div data-prose style={{ fontSize: "0.78rem", color: "var(--text)", marginTop: 2 }}>{rehearsal.note}</div>
+          <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2)", marginTop: 3 }}>
+            Patching, a drain or a hardware failure during the migration takes every machine in it. Add a second
+            virtualization-capable worker before running a wave you cannot afford to restart.
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--card)", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", padding: "11px 13px 7px" }}>

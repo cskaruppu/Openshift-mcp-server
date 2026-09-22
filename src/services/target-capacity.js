@@ -226,9 +226,18 @@ export function packWave(vms = [], capacity = null, opts = {}) {
 
   // Decreasing by memory, then CPU, then input order — so the same wave against
   // the same cluster always produces the same plan.
+  //
+  // The direction is a real choice, not a detail. Largest-first packs the most
+  // GiB and proves the big machines can land; smallest-first places the most
+  // MACHINES. On a cluster with one node and a tight fit those differ, and a
+  // panel that silently picks one and reports "8 of 15" as though it were the
+  // answer is hiding a decision the operator should be making.
+  const smallestFirst = opts.order === "smallest-first";
   const order = vms
     .map((v, i) => ({ vm: v, i, need: vmDemand(v, opts) }))
-    .sort((a, b) => b.need.memGiB - a.need.memGiB || b.need.cpuMillis - a.need.cpuMillis || a.i - b.i);
+    .sort((a, b) => (smallestFirst
+      ? a.need.memGiB - b.need.memGiB || a.need.cpuMillis - b.need.cpuMillis || a.i - b.i
+      : b.need.memGiB - a.need.memGiB || b.need.cpuMillis - a.need.cpuMillis || a.i - b.i));
 
   const placed = [], unplaced = [];
   for (const { vm, need } of order) {
@@ -280,6 +289,24 @@ export function packWave(vms = [], capacity = null, opts = {}) {
     pctMem: b.memGiB > 0 ? Math.round(((b.memGiB - b.remMemGiB) / b.memGiB) * 100) : null,
   }));
 
+  // Would the other direction place more machines? Only worth asking when
+  // something failed to land, and only one level deep.
+  let alternative = null;
+  if (unplaced.length && !opts._noAlternative) {
+    const other = packWave(vms, capacity, {
+      ...opts, _noAlternative: true,
+      order: smallestFirst ? "largest-first" : "smallest-first",
+    });
+    if (other.available && other.placedCount > placed.length) {
+      alternative = {
+        order: smallestFirst ? "largest-first" : "smallest-first",
+        placedCount: other.placedCount,
+        gain: other.placedCount - placed.length,
+        note: `Ordered ${smallestFirst ? "largest" : "smallest"}-first, ${other.placedCount} of ${vms.length} would place rather than ${placed.length} — the same cluster, a different wave order. Neither is more correct: ${smallestFirst ? "smallest" : "largest"}-first proves the biggest machines can land and moves the most data; the other moves the most machines per window. Choose by what the outage window is for.`,
+      };
+    }
+  }
+
   return {
     available: true,
     fits: unplaced.length === 0,
@@ -287,13 +314,15 @@ export function packWave(vms = [], capacity = null, opts = {}) {
     placedCount: placed.length, unplacedCount: unplaced.length,
     nodesUsed: nodes.filter((n) => n.vmCount > 0).length,
     excluded: capacity.excluded || [],
+    order: smallestFirst ? "smallest-first" : "largest-first",
+    alternative,
     // Named, because the order decides which machine is the one left over.
     // The scheduler spreads by default rather than packing tight, so this
     // answers "can every machine be placed at once" — it is a feasibility
     // proof, not a prediction of the node each VM ends up on. Saying "lands on
     // worker-03" as though it were a forecast would be a claim this cannot
     // make, and the first person to check it would find it wrong.
-    heuristic: "Packed largest-memory-first (first-fit-decreasing) onto nodes that are Ready, uncordoned and virt-schedulable. This shows that a placement exists, not where the scheduler will choose: it spreads across nodes by default rather than filling them. A different wave order can move which machine is left over, but not how many fit.",
+    heuristic: `Packed ${smallestFirst ? "smallest-memory-first (first-fit-increasing)" : "largest-memory-first (first-fit-decreasing)"} onto nodes that are Ready, uncordoned and virt-schedulable. This shows that a placement exists, not where the scheduler will choose: it spreads across nodes by default rather than filling them.`,
   };
 }
 

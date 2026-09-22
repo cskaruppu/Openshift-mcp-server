@@ -178,3 +178,39 @@ test("one node is not a failure domain, and pretending otherwise would be the li
   assert.equal(r.singleNode, true);
   assert.match(r.note, /nothing to fail over to/);
 });
+
+test("wave order changes how many machines land, and the panel is told so", () => {
+  // One node with 246 GiB free — the shape of a single-node cluster. Packed
+  // largest-first it takes the big machines; smallest-first it takes more of
+  // them. Both are valid answers to different questions.
+  const c = cap([node("only", 64000, 502.29, 0, 256.39)]);
+  const sizes = [64, 32, 32, 32, 32, 16, 16, 16, 12, 8, 4];
+  const vms = sizes.map((memoryGiB, i) => ({ name: `vm${i}`, cpuCount: 4, memoryGiB }));
+
+  const big = packWave(vms, c);
+  const small = packWave(vms, c, { order: "smallest-first" });
+  assert.equal(big.order, "largest-first");
+  assert.equal(big.placedCount, 8);
+  assert.equal(small.placedCount, 10, "smallest-first places more machines in the same space");
+
+  // And largest-first must say so rather than reporting 8 as the answer.
+  assert.ok(big.alternative, "the better order is surfaced, not buried");
+  assert.equal(big.alternative.order, "smallest-first");
+  assert.equal(big.alternative.gain, 2);
+  assert.match(big.alternative.note, /Neither is more correct/);
+});
+
+test("a wave that fully places is not offered an alternative order", () => {
+  const c = cap([node("w1", 32000, 64), node("w2", 32000, 64)]);
+  const p = packWave([{ name: "a", cpuCount: 2, memoryGiB: 8 }], c);
+  assert.equal(p.fits, true);
+  assert.equal(p.alternative, null, "there is nothing to improve on");
+});
+
+test("one virtualization node is reported as having nothing to fail over to", () => {
+  const r = nodeLossRehearsal([{ name: "a", cpuCount: 2, memoryGiB: 8 }], cap([node("only", 32000, 64)]));
+  assert.equal(r.available, true);
+  assert.equal(r.singleNode, true);
+  assert.deepEqual(r.nodes, [], "no rows — which is why the console must not key off row count");
+  assert.match(r.note, /nothing to fail over to/);
+});
