@@ -5356,13 +5356,21 @@ spec:
       try {
         const registry = await import("./services/vcenter-registry.js");
         const store = await vcSettingsStore().catch(() => ({}));
-        const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
-        const rows = registry.registryStatus(mtv?.sources || [], store);
+        const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch((e) => ({ __err: e.message }));
+        if (mtv?.__err || !Array.isArray(mtv?.sources)) {
+          // 200 with a reason, not a 500. The console renders the reason; a
+          // 500 would render as nothing at all, and nothing reads as fine.
+          return sendJson(res, 200, {
+            providers: [], useMtvSecret: store.useMtvSecret !== false,
+            error: `MTV providers could not be read on this cluster${mtv?.__err ? ` — ${mtv.__err}` : ""}.`,
+          });
+        }
+        const rows = registry.registryStatus(mtv.sources, store);
         // Resolve each one for real, so a provider covered by MTV's own secret
         // shows as configured rather than as a gap the operator must fill.
         const resolved = [];
         for (const r of rows) {
-          const p = (mtv?.sources || []).find((sp) => sp.uid === r.uid) || null;
+          const p = mtv.sources.find((sp) => sp.uid === r.uid) || null;
           const cred = await withClusterContext(url, async () => registry.resolveForProvider(
             p, store, async (n, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${n}`),
           )).catch(() => null);
