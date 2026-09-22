@@ -55,6 +55,7 @@ export function resolveVcenter(provider = null, store = {}, env = process.env) {
       username: entry.username,
       password: entry.password,
       insecure: entry.insecure,
+      ca: entry.ca || null,
       source: byUid[provider?.uid] ? "provider" : "host",
     });
     if (cred.configured) return { ...cred, provider: provider?.name || null, providerUid: provider?.uid || null };
@@ -153,9 +154,14 @@ export function credentialFromMtvSecret(secret = null, providerUrl = null) {
   // here, or every call fails with a certificate error that reads like a
   // network fault.
   const insecure = /^true$/i.test(dec("insecureSkipVerify") || "");
+  // MTV is routinely given a CA bundle for an appliance with its own authority,
+  // and connects happily on it. An agent that reads the username and password
+  // but ignores the cacert tries the system trust store, fails, and reports a
+  // network error for what is really a trust problem.
+  const ca = dec("cacert") || null;
   return vcenterCredential({
     url: providerUrl || dec("url"),
-    username, password, insecure,
+    username, password, insecure, ca,
     source: "mtv-secret",
   });
 }

@@ -26,23 +26,60 @@
 import { Agent, fetch as undiciFetch } from "undici";
 
 /**
- * vCenter appliances are routinely fronted by their own self-signed cert, and
- * in an estate with several of them that is a per-appliance fact — one may
- * present a proper chain and the next may not. So there are two dispatchers,
- * and a credential picks the one it asked for. A single global agent would let
- * one lax appliance silently disable verification for every other.
+ * vCenter appliances are routinely fronted by their own certificate authority,
+ * and in an estate with several of them that is a per-appliance fact. So there
+ * is a dispatcher per TLS posture — verified against the system store,
+ * verified against a supplied CA bundle, or not verified at all — and a
+ * credential picks the one it asked for. A single global agent would let one
+ * lax appliance silently disable verification for every other.
+ *
+ * The CA bundle matters more than it looks. MTV is given one in its provider
+ * secret and connects happily; an agent that ignores it tries the system store,
+ * fails, and reports a network error for what is really a trust problem.
  */
 const _agents = new Map();
-function agent(insecure = false) {
-  const key = insecure ? "insecure" : "verified";
+function agent({ insecure = false, ca = null } = {}) {
+  const key = insecure ? "insecure" : ca ? `ca:${ca.length}:${ca.slice(-48)}` : "verified";
   if (_agents.has(key)) return _agents.get(key);
   const a = new Agent({
-    connect: { timeout: 15_000, rejectUnauthorized: !insecure },
+    connect: { timeout: 15_000, rejectUnauthorized: !insecure, ...(ca && !insecure ? { ca } : {}) },
     keepAliveTimeout: 30_000,
     connections: 8,
   });
   _agents.set(key, a);
   return a;
+}
+
+/**
+ * What actually went wrong, rather than "fetch failed".
+ *
+ * undici collapses every transport failure into that one string and hides the
+ * real reason in `cause`. DNS, a refused port, a firewall and an untrusted
+ * certificate each need a completely different fix, and a message that cannot
+ * tell them apart sends someone to check the wrong thing for an afternoon.
+ */
+export function describeNetworkError(err, url) {
+  const cause = err?.cause || err;
+  const code = cause?.code || "";
+  const at = url ? ` at ${url}` : "";
+  const map = {
+    ENOTFOUND: `DNS cannot resolve the vCenter hostname${at}. The cluster's DNS has to be able to resolve it from inside the pod — a hostname that works from your laptop is not enough.`,
+    EAI_AGAIN: `DNS lookup for the vCenter hostname${at} timed out. The cluster's resolver reached no answer.`,
+    ECONNREFUSED: `Nothing accepted a connection${at}. The address resolves but the port is closed.`,
+    ETIMEDOUT: `The connection${at} timed out — usually a firewall or a missing route between the cluster and vCenter, rather than vCenter itself.`,
+    UND_ERR_CONNECT_TIMEOUT: `The connection${at} timed out — usually a firewall or a missing route between the cluster and vCenter.`,
+    EHOSTUNREACH: `No route to the vCenter host${at}.`,
+    ENETUNREACH: `No route to the vCenter network${at}.`,
+    DEPTH_ZERO_SELF_SIGNED_CERT: `vCenter${at} presents a self-signed certificate that this agent does not trust. MTV was given a CA bundle for it, or told to skip verification — the same has to be true here.`,
+    SELF_SIGNED_CERT_IN_CHAIN: `vCenter's certificate chain${at} is signed by a CA this agent does not trust. Supply that CA, or accept a self-signed certificate for this provider.`,
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: `vCenter's certificate${at} cannot be verified against the CAs this agent has.`,
+    CERT_HAS_EXPIRED: `vCenter's certificate${at} has expired.`,
+    ERR_TLS_CERT_ALTNAME_INVALID: `vCenter's certificate${at} is issued for a different hostname. MTV may be reaching it by a name this certificate covers and the agent by one it does not.`,
+  };
+  const known = map[code];
+  if (known) return known;
+  const detail = cause?.message && cause.message !== err?.message ? `${err.message}: ${cause.message}` : (err?.message || String(err));
+  return `vCenter is not reachable${at} — ${detail}${code ? ` (${code})` : ""}`;
 }
 
 /**
@@ -57,7 +94,7 @@ export function normaliseVcenterUrl(url) {
 }
 
 /** One credential, in the shape every call here expects. Pure. */
-export function vcenterCredential({ url, username, password, insecure = false, source = "unknown" } = {}) {
+export function vcenterCredential({ url, username, password, insecure = false, ca = null, source = "unknown" } = {}) {
   const u = normaliseVcenterUrl(url);
   if (!u || !username || !password) {
     return {
@@ -68,7 +105,7 @@ export function vcenterCredential({ url, username, password, insecure = false, s
   if (!/^https:\/\//i.test(u)) {
     return { configured: false, url: u, user: username, source, reason: "The vCenter URL must be an https:// address." };
   }
-  return { configured: true, url: u, user: username, pass: password, insecure: insecure === true, source, reason: null };
+  return { configured: true, url: u, user: username, pass: password, insecure: insecure === true, ca: ca || null, source, reason: null };
 }
 
 /**
@@ -119,11 +156,11 @@ async function sessionToken(cfg) {
       resp = await undiciFetch(`${cfg.url}${path}`, {
         method: "POST",
         headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
-        dispatcher: agent(cfg.insecure),
+        dispatcher: agent(cfg),
         signal: AbortSignal.timeout(20_000),
       });
     } catch (e) {
-      throw new Error(`vCenter is not reachable at ${cfg.url}: ${e.message}`);
+      throw new Error(describeNetworkError(e, cfg.url));
     }
     if (resp.status === 404) continue;
     if (resp.status === 401) throw new Error("vCenter rejected the credential (401). The account needs System.Read.");
@@ -153,7 +190,7 @@ export async function vcFetch(path, { cfg = null, method = "GET", body = null, t
       ...(body ? { "Content-Type": "application/json" } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
-    dispatcher: agent(cfg.insecure),
+    dispatcher: agent(cfg),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (resp.status === 401) { _resetSession(`${cfg.url}|${cfg.user}`); throw new Error("vCenter session expired or was rejected."); }
@@ -193,17 +230,22 @@ export function soapEnvelope(inner) {
 }
 
 async function soapPost(cfg, envelope, cookie, timeoutMs) {
-  const resp = await undiciFetch(`${cfg.url}/sdk`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      SOAPAction: '"urn:vim25/7.0"',
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-    body: envelope,
-    dispatcher: agent(cfg.insecure),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  let resp;
+  try {
+    resp = await undiciFetch(`${cfg.url}/sdk`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        SOAPAction: '"urn:vim25/7.0"',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body: envelope,
+      dispatcher: agent(cfg),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    throw new Error(describeNetworkError(e, cfg.url));
+  }
   const text = await resp.text();
   if (!resp.ok) {
     const fault = /<faultstring>([\s\S]*?)<\/faultstring>/.exec(text)?.[1];

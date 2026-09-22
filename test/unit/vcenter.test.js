@@ -278,3 +278,31 @@ test("the settings list shows every source provider, configured or not", () => {
   assert.equal(rows[1].configured, false, "an unconfigured provider is listed, not hidden");
   assert.match(rows[1].reason, /No vCenter credential is registered/);
 });
+
+test("MTV's CA bundle travels with the credential, because that is why MTV connects and we did not", () => {
+  const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+  const c = credentialFromMtvSecret({ data: {
+    user: b64("administrator@vsphere.local"), password: b64("pw"), cacert: b64(pem),
+  } }, "https://vc.corp/sdk");
+  assert.equal(c.configured, true);
+  assert.equal(c.ca, pem, "the bundle is carried, not dropped");
+  assert.equal(c.insecure, false, "a CA bundle is how you verify, not how you skip verifying");
+});
+
+test("a transport failure says what actually failed, not 'fetch failed'", async () => {
+  const { describeNetworkError } = await import("../../src/utils/vcenter-client.js");
+  const wrap = (code) => Object.assign(new Error("fetch failed"), { cause: Object.assign(new Error("x"), { code }) });
+
+  assert.match(describeNetworkError(wrap("ENOTFOUND"), "https://vc.corp"), /DNS cannot resolve/);
+  assert.match(describeNetworkError(wrap("ENOTFOUND"), "https://vc.corp"), /from inside the pod/);
+  assert.match(describeNetworkError(wrap("ECONNREFUSED"), "https://vc.corp"), /the port is closed/);
+  assert.match(describeNetworkError(wrap("ETIMEDOUT"), "https://vc.corp"), /firewall or a missing route/);
+  assert.match(describeNetworkError(wrap("DEPTH_ZERO_SELF_SIGNED_CERT"), "https://vc.corp"), /self-signed certificate/);
+  assert.match(describeNetworkError(wrap("SELF_SIGNED_CERT_IN_CHAIN"), "https://vc.corp"), /Supply that CA/);
+  assert.match(describeNetworkError(wrap("ERR_TLS_CERT_ALTNAME_INVALID"), "https://vc.corp"), /issued for a different hostname/);
+
+  // An unrecognised failure keeps both messages rather than swallowing one.
+  const odd = describeNetworkError(wrap("EWEIRD"), "https://vc.corp");
+  assert.match(odd, /EWEIRD/);
+  assert.ok(!/^fetch failed$/.test(odd), "never just 'fetch failed'");
+});
