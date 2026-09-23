@@ -56,7 +56,13 @@ export function IconMigrate({ size = 17 }) {
 }
 
 /**
- * The product mark.
+ * The product mark — EXPORTED BUT NOT MOUNTED.
+ *
+ * The header runs wordmark-only: "TCS" at the darkest ink in the heaviest
+ * weight is the brand presence, and a generic glyph beside a real company name
+ * reads as a logo nobody got round to replacing. This is kept for a surface
+ * that needs a square mark — a favicon, a tile, an avatar — where a wordmark
+ * will not fit.
  *
  * Deliberately NOT an attempt at the TCS logo. Reproducing a corporate mark
  * from memory gets it subtly wrong — proportion, weight, the exact curve — and

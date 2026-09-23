@@ -6,7 +6,7 @@ import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
 import MigrationRecord from "./MigrationRecord";
-import { IconDeploy, IconTicket, IconMigrate, ProductMark } from "./icons";
+import { IconDeploy, IconTicket, IconMigrate } from "./icons";
 
 /**
  * A live plan and an archived run are the same case at two points in its life,
@@ -183,19 +183,23 @@ export function AutomationHub({ open, onClose }) {
         animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
-          {/* Drop the real TCS asset at console/public/brand-mark.svg and it is
-              used instead of the neutral mark — no code change. Until then the
-              geometric one stands in, because a nearly-right corporate logo in
-              front of the company that owns it is worse than an honest neutral
-              one. No gradient and no emoji: a gradient-filled rounded square
-              with an emoji inside is the visual signature of an internal tool. */}
-          <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
-            border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)",
-            color: "var(--text-strong, var(--text))", flex: "none" }}>
-            {BRAND_MARK
-              ? <img src={BRAND_MARK} alt="" style={{ width: 21, height: 21, objectFit: "contain" }} />
-              : <ProductMark size={20} />}
-          </span>
+          {/* No placeholder mark.
+              The lockup already carries the brand: TCS sits at the darkest ink
+              in the heaviest weight, which IS the brand presence. A stand-in
+              glyph beside it was a second, weaker claim to the same job — and
+              a generic mark next to a real company name reads as a logo nobody
+              got round to replacing.
+
+              Wordmark-only is a deliberate and common enterprise pattern for
+              exactly this reason. When the official asset exists, set
+              BRAND_MARK and it appears; until then there is nothing to explain
+              away in front of a customer. */}
+          {BRAND_MARK && (
+            <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
+              border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", flex: "none" }}>
+              <img src={BRAND_MARK} alt="" style={{ width: 21, height: 21, objectFit: "contain" }} />
+            </span>
+          )}
           <div style={{ flex: 1 }}>
             {/* Product lockup, then the module — the pattern the app header
                 already sets, so the two agree rather than each inventing a
