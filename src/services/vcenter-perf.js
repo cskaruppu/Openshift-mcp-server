@@ -203,15 +203,36 @@ export async function readVcenterUtilisation(vms = [], { days = 30, mhzPerCore =
       measured++;
     }
 
-    return {
-      source: measured ? "vcenter" : "none",
-      samples,
-      basis: measured
-        ? `Read from vCenter over ${windowDays} days at the ${intervalForWindow(windowDays) / 60}-minute rollup — ${measured} of ${vms.length} machines returned history.${cfg.source === "mtv-secret" ? " Using MTV's own provider credential." : ""}`
-        : null,
-      reason: measured ? null
-        : `vCenter returned no samples for any of these ${vms.length} machines over ${windowDays} days. Either the statistics level is too low to keep history that long, or these machines were powered off for the window.`,
-    };
+    if (measured) {
+      return {
+        source: "vcenter", samples,
+        basis: `Read from vCenter over ${windowDays} days at the ${intervalForWindow(windowDays) / 60}-minute rollup — ${measured} of ${vms.length} machines returned history.${cfg.source === "mtv-secret" ? " Using MTV's own provider credential." : ""}`,
+        reason: null,
+      };
+    }
+
+    // Nothing came back. "No samples" is three completely different problems
+    // and they need three different fixes, so they are told apart rather than
+    // pooled into one unhelpful sentence.
+    //
+    // QueryPerf identifies a VM by its managed object reference — vm-1234.
+    // Forklift usually reports that as the VM's id, but not always: some
+    // provider versions report the instance UUID instead, and vCenter then
+    // answers about nothing at all. That is the first thing to rule out,
+    // because it looks identical to an idle estate.
+    const looksLikeMoRef = (id) => /^vm-\d+$/i.test(String(id || ""));
+    const morefs = withIds.filter((v) => looksLikeMoRef(v.id)).length;
+    const returnedButUnmatched = raw.size > 0;
+
+    let reason;
+    if (!morefs) {
+      reason = `vCenter was reachable but returned nothing, and none of these ${withIds.length} machines carries a managed object reference — the inventory reports ids like "${withIds[0].id}" where QueryPerf expects "vm-1234". This provider reports a different identifier, so the history cannot be matched to a machine.`;
+    } else if (returnedButUnmatched) {
+      reason = `vCenter returned history for ${raw.size} object(s), none of which matched the ${withIds.length} machines in this wave. The ids the inventory reports and the ones vCenter answered about do not line up.`;
+    } else {
+      reason = `vCenter answered, and has no samples for any of these ${vms.length} machines over ${windowDays} days at the ${intervalForWindow(windowDays) / 60}-minute rollup. The usual cause is the statistics level: level 1 keeps that rollup for a month, and below that there is nothing to read. Check Administration → vCenter Server Settings → Statistics, or ask for a shorter window.`;
+    }
+    return { source: "none", samples: {}, basis: null, reason, diagnosis: { morefs, entitiesReturned: raw.size, machines: withIds.length } };
   } catch (e) {
     return { source: "error", samples: {}, reason: `vCenter performance history could not be read (${e.message}). Every machine stays unmeasured rather than being sized from a guess.` };
   }

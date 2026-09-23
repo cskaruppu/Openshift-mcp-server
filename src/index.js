@@ -5386,6 +5386,48 @@ spec:
         return sendJson(res, 200, { providers: resolved, useMtvSecret: store.useMtvSecret !== false });
       } catch (err) { return sendJson(res, 500, { error: err.message }); }
     }
+    // Does this provider's vCenter actually ANSWER? Separate from /providers,
+    // which only resolves a credential — and a resolved credential is a
+    // promise, not an observation. Claiming "reading vCenter" on the strength
+    // of having a password is exactly the overclaim this exists to remove.
+    if (url.pathname === "/api/settings/vcenter/probe" && req.method === "GET") {
+      try {
+        const registry = await import("./services/vcenter-registry.js");
+        const mtvSvc = await import("./services/vm-migration.js");
+        const wanted = url.searchParams.get("provider") || "";
+        const store = await vcSettingsStore().catch(() => ({}));
+        const mtv = await withClusterContext(url, async () => mtvSvc.checkMtvReadiness()).catch(() => null);
+        const p = (mtv?.sources || []).find((sp) => sp.uid === wanted || sp.name === wanted) || null;
+        if (!p) return sendJson(res, 200, { reachable: false, error: "That source provider is not reported by MTV on this cluster." });
+
+        const cfg = await withClusterContext(url, async () => registry.resolveForProvider(
+          p, store, async (n, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${n}`),
+        )).catch(() => null);
+        if (!cfg?.configured) {
+          return sendJson(res, 200, { reachable: false, credential: cfg?.source || "none", error: cfg?.reason || "No credential resolved." });
+        }
+
+        const started = Date.now();
+        const { vcFetch } = await import("./utils/vcenter-client.js");
+        // Two surfaces, because either can be unavailable on its own: tags are
+        // vAPI and sizing is the Web Services API. A single tick would say
+        // nothing about which half of the report will be blank.
+        const tags = await vcFetch("/api/cis/tagging/tag", { cfg }).then((t) => (Array.isArray(t) ? t.length : 0)).catch((e) => e);
+        const perfSvc = await import("./services/vcenter-perf.js");
+        const perf = await perfSvc.readVcenterUtilisation([], { days: 1, cfg }).catch((e) => ({ source: "error", reason: e.message }));
+
+        return sendJson(res, 200, {
+          reachable: !(tags instanceof Error),
+          credential: cfg.source, vcenter: cfg.url, user: cfg.user,
+          ms: Date.now() - started,
+          tagsDefined: tags instanceof Error ? null : tags,
+          tagsError: tags instanceof Error ? tags.message : null,
+          perfReadable: perf.source !== "error",
+          perfError: perf.source === "error" ? perf.reason : null,
+        });
+      } catch (err) { return sendJson(res, 200, { reachable: false, error: err.message }); }
+    }
+
     if (url.pathname === "/api/settings/vcenter/test" && req.method === "POST") {
       await handleVcenterSettingsTest(req, res);
       return;

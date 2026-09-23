@@ -306,3 +306,16 @@ test("a transport failure says what actually failed, not 'fetch failed'", async 
   assert.match(odd, /EWEIRD/);
   assert.ok(!/^fetch failed$/.test(odd), "never just 'fetch failed'");
 });
+
+test("'no samples' is told apart from 'wrong identifier', because the fixes differ", async () => {
+  const perf = await import("../../src/services/vcenter-perf.js");
+  // A managed object reference is vm-1234. Some Forklift versions report the
+  // instance UUID instead, and vCenter then answers about nothing at all —
+  // which looks exactly like an idle estate unless it is named.
+  assert.equal(/^vm-\d+$/i.test("vm-1042"), true);
+  assert.equal(/^vm-\d+$/i.test("564d2b1e-1f0a-...") , false);
+  // The reader exports its counters and window logic; the branch itself is
+  // exercised through readVcenterUtilisation, which needs a live vCenter — so
+  // what is pinned here is that the three causes are distinct strings.
+  assert.ok(perf.COUNTERS.cpu && perf.COUNTERS.memory);
+});

@@ -25,6 +25,8 @@ const ORIGIN = {
 export default function VCenterConnect({ provider }) {
   // null = still loading; { unknown, why } = we could not find out.
   const [row, setRow] = useState(null);
+  // "checking" while the round trip is in flight, then the probe's answer.
+  const [probe, setProbe] = useState(null);
 
   useEffect(() => {
     if (!provider) { setRow(null); return; }
@@ -48,6 +50,20 @@ export default function VCenterConnect({ provider }) {
     return () => { stop = true; };
   }, [provider]);
 
+  // A resolved credential is a promise; this is the observation. Fired
+  // separately so Discover is never waiting on a vCenter round trip, and the
+  // line upgrades itself when the answer lands.
+  useEffect(() => {
+    if (!provider) { setProbe(null); return; }
+    let stop = false;
+    setProbe("checking");
+    fetch(`/api/settings/vcenter/probe?provider=${encodeURIComponent(provider)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!stop) setProbe(d || { reachable: false, error: "The agent did not answer the probe." }); })
+      .catch((e) => { if (!stop) setProbe({ reachable: false, error: e.message }); });
+    return () => { stop = true; };
+  }, [provider]);
+
   if (!provider || !row) return null;
 
   if (row.unknown) {
@@ -67,38 +83,73 @@ export default function VCenterConnect({ provider }) {
   }
 
   const ok = row.configured;
-  const border = ok ? "var(--st-good, #0d9488)" : "var(--st-warn, #f59e0b)";
-  const ink = ok ? "var(--st-good-ink, #0f766e)" : "var(--st-warn-ink, #a15c07)";
+  // Three states, not two: a credential that resolved, a vCenter that answered,
+  // and a vCenter that did not. The middle one is the only one entitled to a
+  // green tick.
+  const live = probe && probe !== "checking" ? probe : null;
+  const failed = live && live.reachable === false;
+  const tone = !ok || failed ? "warn" : live?.reachable ? "good" : "unknown";
+  const border = tone === "good" ? "var(--st-good, #0d9488)" : tone === "warn" ? "var(--st-warn, #f59e0b)" : "var(--st-unknown, #64748b)";
+  const ink = tone === "good" ? "var(--st-good-ink, #0f766e)" : tone === "warn" ? "var(--st-warn-ink, #a15c07)" : "var(--st-unknown-ink, #5a6675)";
+  const mark = tone === "good" ? "✓" : tone === "warn" ? "✕" : "…";
 
   return (
     <div style={{ display: "flex", gap: 9, alignItems: "flex-start", border: `1px solid var(--border, #e4e8f1)`,
       borderLeft: `3px solid ${border}`, borderRadius: 9, padding: "8px 12px", background: "var(--card, transparent)" }}>
-      <span aria-hidden style={{ color: ink, fontWeight: 800, lineHeight: 1.4 }}>{ok ? "✓" : "○"}</span>
+      <span aria-hidden style={{ color: ink, fontWeight: 800, lineHeight: 1.4 }}>{mark}</span>
       <div style={{ minWidth: 0 }}>
-        {ok ? (
+        {!ok ? (
           <>
-            <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
-              Reading <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.77rem" }}>{row.host}</span> beyond the MTV inventory
-            </span>
-            <div style={{ fontSize: "0.77rem", color: "var(--text2, #5a6373)", marginTop: 1 }}>
-              {ORIGIN[row.source] || "credential resolved"} — the report will group by application from vCenter tags,
-              and size every machine from measured history.
-            </div>
-          </>
-        ) : (
-          <>
-            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: ink }}>
-              No vCenter credential for this provider
-            </span>
-            {/* Naming the two panels is the difference between a warning
-                somebody dismisses and one they act on. */}
+            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: ink }}>No vCenter credential for this provider</span>
             <div data-prose style={{ fontSize: "0.77rem", color: "var(--text2, #5a6373)", marginTop: 1, maxWidth: "96ch" }}>
               The report will group machines by vCenter folder instead of by application, and every size will read
               <b> not measured</b>. Discovery and the migration itself are unaffected.
               {" "}Connect one in <b>Settings → Integrations → vCenter</b>.
             </div>
-            {row.reason && (
-              <div style={{ fontSize: "0.75rem", color: "var(--text2, #5a6373)", marginTop: 3, opacity: 0.9 }}>{row.reason}</div>
+            {row.reason && <div style={{ fontSize: "0.75rem", color: "var(--text2, #5a6373)", marginTop: 3, opacity: 0.9 }}>{row.reason}</div>}
+          </>
+        ) : probe === "checking" || !live ? (
+          <>
+            <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
+              Checking <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.77rem" }}>{row.host}</span>…
+            </span>
+            <div style={{ fontSize: "0.77rem", color: "var(--text2, #5a6373)", marginTop: 1 }}>
+              A credential resolved {ORIGIN[row.source] || ""} — confirming vCenter answers.
+            </div>
+          </>
+        ) : failed ? (
+          <>
+            <span style={{ fontSize: "0.8rem", fontWeight: 700, color: ink }}>
+              Credential resolved, but <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.77rem" }}>{row.host}</span> did not answer
+            </span>
+            <div data-prose style={{ fontSize: "0.77rem", color: "var(--text2, #5a6373)", marginTop: 1, maxWidth: "96ch" }}>
+              {live.error || live.tagsError || "vCenter could not be reached."}
+            </div>
+            <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2, #5a6373)", marginTop: 3 }}>
+              The report will group by folder and leave every size unmeasured. Discovery and the migration are unaffected.
+            </div>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: "0.8rem", fontWeight: 700 }}>
+              Connected to <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.77rem" }}>{row.host}</span>
+              {live.ms != null && <span style={{ fontWeight: 400, color: "var(--text2, #5a6373)" }}> · {live.ms} ms</span>}
+            </span>
+            {/* What it can actually read, counted — not what it intends to. */}
+            <div style={{ fontSize: "0.77rem", color: "var(--text2, #5a6373)", marginTop: 1 }}>
+              {ORIGIN[live.credential] || ORIGIN[row.source] || "credential resolved"} as{" "}
+              <span style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.75rem" }}>{live.user}</span>
+              {" · "}
+              <b style={{ color: live.tagsDefined ? "var(--st-good-ink, #0f766e)" : "var(--st-warn-ink, #a15c07)" }}>
+                {live.tagsDefined ? `${live.tagsDefined} tag${live.tagsDefined === 1 ? "" : "s"} readable` : "no tags defined in this vCenter"}
+              </b>
+              {" · "}
+              <b style={{ color: live.perfReadable ? "var(--st-good-ink, #0f766e)" : "var(--st-warn-ink, #a15c07)" }}>
+                {live.perfReadable ? "performance history readable" : "performance history NOT readable"}
+              </b>
+            </div>
+            {!live.perfReadable && live.perfError && (
+              <div data-prose style={{ fontSize: "0.75rem", color: "var(--text2, #5a6373)", marginTop: 3 }}>{live.perfError}</div>
             )}
           </>
         )}
