@@ -6,6 +6,7 @@ import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
 import MigrationRecord from "./MigrationRecord";
+import { IconDeploy, IconTicket, IconMigrate, ProductMark } from "./icons";
 
 /**
  * A live plan and an archived run are the same case at two points in its life,
@@ -45,6 +46,16 @@ function asRecord(x, kind) {
     window: gate.windowStart ? { start: gate.windowStart, end: gate.windowEnd } : null,
   };
 }
+
+/**
+ * The brand asset, when one has been supplied. Left null rather than pointing
+ * at a file that may not exist: a broken image in a header is worse than a
+ * neutral mark, and an onError fallback flashes the broken state first.
+ *
+ * To use the real logo: put it at console/public/brand-mark.svg and set this
+ * to "/brand-mark.svg".
+ */
+const BRAND_MARK = null;
 
 /** Discrete, readable stops. 90 for a dense laptop review, 150 for a room. */
 const ZOOM_STEPS = [90, 100, 110, 125, 150];
@@ -172,7 +183,19 @@ export function AutomationHub({ open, onClose }) {
         animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
         <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
-          <span style={{ width: 40, height: 40, borderRadius: 11, background: "linear-gradient(135deg,#3d5afe,#7a3dff 55%,#0ea5a0)", display: "grid", placeItems: "center", fontSize: "1.25rem", boxShadow: "0 6px 16px rgba(61,90,254,0.35)" }}>🤖</span>
+          {/* Drop the real TCS asset at console/public/brand-mark.svg and it is
+              used instead of the neutral mark — no code change. Until then the
+              geometric one stands in, because a nearly-right corporate logo in
+              front of the company that owns it is worse than an honest neutral
+              one. No gradient and no emoji: a gradient-filled rounded square
+              with an emoji inside is the visual signature of an internal tool. */}
+          <span style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center",
+            border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)",
+            color: "var(--text-strong, var(--text))", flex: "none" }}>
+            {BRAND_MARK
+              ? <img src={BRAND_MARK} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
+              : <ProductMark size={22} />}
+          </span>
           <div style={{ flex: 1 }}>
             {/* Product lockup, then the module — the pattern the app header
                 already sets, so the two agree rather than each inventing a
@@ -232,8 +255,17 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "🚀 App Deployment Agent"], ["snow", "🎫 ServiceNow Agent"], ["mig", "🚚 VM Migration Agent"]].map(([k, label]) => (
-              <button key={k} onClick={() => setAgent(k)} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: agent === k ? "linear-gradient(135deg,#3d5afe,#5b6cff)" : "transparent", fontWeight: 700, fontSize: "0.86rem", color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer", boxShadow: agent === k ? "0 3px 10px rgba(61,90,254,0.3)" : "none", transition: "all .15s" }}>{label}</button>
+            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate]].map(([k, label, Icon]) => (
+              <button key={k} onClick={() => setAgent(k)} style={{ display: "inline-flex", alignItems: "center", gap: 8,
+                padding: "8px 16px", borderRadius: 8, border: "none",
+                background: agent === k ? "#3d5afe" : "transparent",
+                fontWeight: 700, fontSize: "0.86rem", fontFamily: "inherit",
+                color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer",
+                transition: "background .15s, color .15s" }}>
+                {/* The icon inherits the label's colour, so an active tab turns
+                    once rather than being recoloured in two places. */}
+                <Icon size={17} />{label}
+              </button>
             ))}
           </div>
         </div>
