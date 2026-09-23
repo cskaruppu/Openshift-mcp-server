@@ -2190,6 +2190,12 @@ const CR_ANN = {
   sysId: "tcs.agentic-ai/change-request-sys-id",
   state: "tcs.agentic-ai/change-request-state",   // submitted | approved | rejected | cancelled
   at: "tcs.agentic-ai/change-request-checked-at",
+  // The implementation window, copied onto the Plan when the change is raised.
+  // ServiceNow owns it, but a plan whose window can only be read by calling
+  // ServiceNow cannot answer "when is this happening" while ServiceNow is
+  // unreachable — and that is exactly when somebody asks.
+  windowStart: "tcs.agentic-ai/change-window-start",
+  windowEnd: "tcs.agentic-ai/change-window-end",
 };
 
 /** Approval is required unless an operator has deliberately turned it off. */
@@ -2215,6 +2221,10 @@ export function approvalGate(plan) {
     number, sysId: a[CR_ANN.sysId] || null, state,
     checkedAt: a[CR_ANN.at] || null,
     approved: state === "approved",
+    // When it is booked for. Null rather than absent, so a caller can tell
+    // "no window recorded" from "a window it could not read".
+    windowStart: a[CR_ANN.windowStart] || null,
+    windowEnd: a[CR_ANN.windowEnd] || null,
     // Say what to do next rather than only what is wrong.
     next: state === "approved" ? "Approved — the migration can be started."
       : state === "rejected" ? "Rejected in ServiceNow. Raise a new change request if the plan has changed."
@@ -2403,11 +2413,17 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
   const number = rec.number || null;
   if (!number) return { ok: false, error: "ServiceNow accepted the request but returned no change number." };
 
+  // The window ServiceNow booked, kept with the plan. Written only when the
+  // record actually carries one — an empty annotation would read as "scheduled
+  // for nothing", which is worse than absent.
+  const booked = cutoverWindow(rec);
   await annotatePlan(planName, {
     [CR_ANN.number]: number,
     [CR_ANN.sysId]: rec.sys_id || "",
     [CR_ANN.state]: "submitted",
     [CR_ANN.at]: new Date().toISOString(),
+    ...(booked.known && booked.start ? { [CR_ANN.windowStart]: booked.start } : {}),
+    ...(booked.known && booked.end ? { [CR_ANN.windowEnd]: booked.end } : {}),
   });
   await recordChange({
     cluster, namespace: MTV_NS, resourceKind: "plan", resourceName: planName,

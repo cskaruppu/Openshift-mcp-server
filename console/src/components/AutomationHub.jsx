@@ -5,6 +5,46 @@ import FleetAnalysis from "./FleetAnalysis";
 import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
+import MigrationRecord from "./MigrationRecord";
+
+/**
+ * A live plan and an archived run are the same case at two points in its life,
+ * so they are shown by one component and normalised into one shape here. Two
+ * near-identical renderers is how the live half and the history half start
+ * disagreeing about what "scheduled" means.
+ */
+function asRecord(x, kind) {
+  if (kind === "archived") {
+    return {
+      ...x,
+      state: x.outcome === "migrated" ? "migrated"
+        : x.outcome === "rolled-back" ? "rolled-back"
+        : x.outcome === "failed" ? "failed" : "unknown",
+      // An archived run is finished by definition; the store keeps no pending
+      // action, and inventing one would be the panel guessing.
+      pending: x.pending || { owner: "nobody", action: "Nothing is pending — this run is closed.", done: true },
+    };
+  }
+  const gate = x.gate || {};
+  const state = x.phase === "failed" ? "failed"
+    : x.phase === "migrated" ? "migrated"
+    : gate.required && !gate.approved && !["transferring", "awaiting-cutover"].includes(x.phase)
+      ? "awaiting-approval"
+    : x.phase === "awaiting-cutover" ? "awaiting-cutover"
+    : x.phase === "transferring" ? "transferring"
+    : x.phase === "ready" ? "ready"
+    : x.phase === "validating" ? "validating" : "unknown";
+  return {
+    ...x,
+    state,
+    changeRequest: gate.number || null,
+    changeState: gate.state && gate.state !== "none" ? gate.state : null,
+    // A booked window makes "awaiting approval" and "scheduled" different
+    // states rather than the same one worded twice.
+    scheduledAt: gate.windowStart || null,
+    window: gate.windowStart ? { start: gate.windowStart, end: gate.windowEnd } : null,
+  };
+}
 
 /** Discrete, readable stops. 90 for a dense laptop review, 150 for a room. */
 const ZOOM_STEPS = [90, 100, 110, 125, 150];
@@ -2077,6 +2117,24 @@ function MigrationAgent({ clusters, activeCluster }) {
 
   // Hiding, not deleting. The server keeps the row; this only stops it filling
   // the panel once the wave is long finished and nobody is asking about it.
+  /**
+   * Pick a case back up where it was left.
+   *
+   * Resume is a navigation, not an action: it takes you to the step that owns
+   * the next move and leaves the deciding to you. A button on a migration
+   * history that quietly DID something would be the worst button in this
+   * product.
+   */
+  const resumeRun = (rec) => {
+    setStep(4);                     // plan & migrate owns every remaining move
+    setShowHistory(false);          // the case is now in front of you
+    try {
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-plan="${rec.planName}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    } catch { /* not critical */ }
+  };
+
   const dismissRun = async (id, dismissed) => {
     try {
       const d = await post(`/api/migration/history/${encodeURIComponent(id)}/dismiss`, { dismissed });
@@ -2267,71 +2325,21 @@ function MigrationAgent({ clusters, activeCluster }) {
           </div>
           {/* Finished migrations, from the durable store. These survive the
               Plan being deleted — which a rollback does — so this is the
-              only place a rolled-back migration can still be seen. */}
-          {showHistory && (history.archived || []).filter((a) => showDismissed || !a.dismissedAt).map((a) => (
-            <div key={a.id} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap",
-              fontSize: "0.77rem", marginTop: 5, paddingTop: 5, borderTop: "1px solid var(--border,#e4e8f1)" }}>
-              <span style={{ fontSize: "0.72rem", padding: "1px 8px", borderRadius: 999, fontWeight: 700,
-                background: a.outcome === "migrated" ? "rgba(22,163,74,.14)" : "rgba(220,38,38,.12)",
-                color: a.outcome === "migrated" ? "#16a34a" : "#dc2626" }}>
-                {a.outcome === "rolled-back" ? "rolled back" : a.outcome}
-              </span>
-              <b>{a.planName}</b>
-              <span style={{ color: "var(--text2)" }}>
-                {a.strategy} · {a.vmCount} VM{a.vmCount === 1 ? "" : "s"}
-                {a.totalGiB ? ` · ${a.totalGiB} GiB` : ""}
-                {a.vmNames?.length ? ` · ${a.vmNames.slice(0, 3).join(", ")}${a.vmNames.length > 3 ? ` +${a.vmNames.length - 3}` : ""}` : ""}
-              </span>
-              {a.changeRequest && <span style={{ color: "var(--text2)" }}>{a.changeRequest}</span>}
-              {/* Promised against measured — the pair worth keeping, because
-                  the next estimate is only as good as this measurement. */}
-              {a.actualMinutes != null && (
-                <span style={{ color: "var(--text2)" }}>
-                  took {a.actualMinutes} min{a.estimatedMinutes != null ? ` (estimated ${a.estimatedMinutes})` : ""}
-                </span>
-              )}
-              {a.verification?.verdict && (
-                <span style={{ color: "var(--text2)" }}>verification {a.verification.verdict.replace(/-/g, " ")}</span>
-              )}
-              {/* What the model cost THIS migration, kept with the run
-                  rather than in the session that produced it. */}
-              {a.ai?.consulted && (
-                <span style={{ color: "var(--text2)" }}>
-                  AI {a.ai.calls} call{a.ai.calls === 1 ? "" : "s"}
-                  {a.ai.totalTokens != null ? ` · ${a.ai.tokensPartial ? "≥" : ""}${a.ai.totalTokens.toLocaleString()} tokens` : ""}
-                  {a.ai.costUsd != null ? ` · $${a.ai.costUsd < 0.01 ? a.ai.costUsd.toFixed(4) : a.ai.costUsd.toFixed(2)}` : ""}
-                </span>
-              )}
-              {/* Cost read the other way up. "The wave cost $1.52" is an
-                  expense; "$0.38 per machine" is the number that gets compared
-                  against doing it by hand, and it is the same data. Shown only
-                  when both halves were measured — a per-VM figure derived from
-                  a missing cost would read as free. */}
-              {a.unitCost && (
-                <span style={{ fontWeight: 700, color: "var(--st-good-ink)" }}
-                  title={`${a.unitCost.costUsd < 0.01 ? "$" + a.unitCost.costUsd.toFixed(4) : "$" + a.unitCost.costUsd.toFixed(2)} of AI across ${a.unitCost.vmCount} machine(s)`
-                    + (a.unitCost.tokensPerVm != null ? ` · ${a.unitCost.tokensPerVm.toLocaleString()} tokens per machine` : "")
-                    + (a.unitCost.partial ? " · token count is partial, so this is a floor" : "")}>
-                  {a.unitCost.partial ? "≥" : ""}{a.unitCost.perVm} per VM
-                </span>
-              )}
-              <span style={{ marginLeft: "auto", color: "var(--text2)", fontSize: "0.74rem" }}>
-                {a.finishedAt ? new Date(a.finishedAt).toLocaleString() : ""}
-              </span>
-              {/* Dismissing hides the row; it does not delete it. The wording
-                  says so, because "Dismiss" next to a migration record is
-                  exactly where someone assumes the opposite — and this is the
-                  evidence behind an irreversible act on their estate. */}
-              <button onClick={() => dismissRun(a.id, !a.dismissedAt)}
-                title={a.dismissedAt
-                  ? `Dismissed ${new Date(a.dismissedAt).toLocaleString()}. Put it back in the list.`
-                  : "Hide this from the list. It stays in the history store and in ServiceNow — nothing is deleted."}
-                style={{ ...S, padding: "1px 8px", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer" }}>
-                {a.dismissedAt ? "Restore" : "Dismiss"}
-              </button>
-              {a.note && <div style={{ width: "100%", color: "var(--text2)", fontSize: "0.75rem" }}>{a.note}</div>}
+              only place a rolled-back migration can still be seen.
+
+              Live plans come first: a case somebody is waiting on outranks one
+              that closed last week, whatever the timestamps say. */}
+          {showHistory && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 9 }}>
+              {(history.plans || []).map((p) => (
+                <MigrationRecord key={`p-${p.planName}`} rec={asRecord(p, "plan")} onResume={resumeRun} />
+              ))}
+              {(history.archived || []).filter((a) => showDismissed || !a.dismissedAt).map((a) => (
+                <MigrationRecord key={a.id} rec={asRecord(a, "archived")}
+                  onDismiss={(r) => dismissRun(r.id, !r.dismissedAt)} />
+              ))}
             </div>
-          ))}
+          )}
           {showHistory && history.archiveNote && (
             <div data-prose style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text2)" }}>
               ⚠ {history.archiveNote}
