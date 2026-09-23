@@ -57,6 +57,16 @@ function asRecord(x, kind) {
  */
 const BRAND_MARK = null;
 
+/**
+ * Mirrors the server's ADVANCED_ANALYSIS flag for the one thing the server
+ * cannot tell the console about: the vCenter status strip on Discover, which
+ * is drawn before any analysis has been requested.
+ *
+ * It exists to predict what the application-grouping and sizing panels will
+ * say. With those panels off it is describing something nobody will see.
+ */
+const ADVANCED_ANALYSIS = false;
+
 /** Discrete, readable stops. 90 for a dense laptop review, 150 for a room. */
 const ZOOM_STEPS = [90, 100, 110, 125, 150];
 const zoomBtn = {
@@ -2546,7 +2556,7 @@ function MigrationAgent({ clusters, activeCluster }) {
               MTV inventory. Placed here because the credential is keyed by the
               source provider, and the source provider is chosen right above —
               a settings page would have to ask which one you meant. */}
-          <VCenterConnect provider={provider} />
+          {ADVANCED_ANALYSIS && <VCenterConnect provider={provider} />}
 
           {/* ── Inventory table ───────────────────────────────────────────── */}
           {vms?.length > 0 && (

@@ -1077,7 +1077,8 @@ export default function FleetAnalysis({
     }))
     .filter((g) => g.rows.length);
   const blocked = (byLevel?.unsupported || 0) + (byLevel?.unknown || 0);
-  const wontLand = analysis.capacity?.placement?.available ? analysis.capacity.placement.unplacedCount : 0;
+  const wontLand = analysis.advanced !== false && analysis.capacity?.placement?.available
+    ? analysis.capacity.placement.unplacedCount : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1153,20 +1154,32 @@ export default function FleetAnalysis({
       {/* ── How old this answer is, and what moved under it ──────────────── */}
       <StalenessBand analysis={analysis} onRecheck={onRecheck} busy={busy} />
 
-      {/* ── Will it land? Blockers first, then where everything goes ─────── */}
-      <LandingPanel capacity={analysis.capacity} />
+      {/* ── Advanced analysis, behind the server's flag ──────────────────────
+          The server decides, not the console: it also skips the vCenter reads
+          these panels need, so a build with them hidden is a faster request as
+          well as a shorter page. `advanced` is only ever false when the server
+          explicitly said so — an older server that does not send the field
+          leaves these visible rather than silently dropping them.
 
-      {/* ── And if a node is lost while it runs ──────────────────────────── */}
-      <RehearsalPanel rehearsal={analysis.capacity?.rehearsal} />
+          Set ADVANCED_ANALYSIS=true and restart the pod to bring them back. */}
+      {analysis.advanced !== false && (
+        <>
+          {/* ── Will it land? Blockers first, then where everything goes ─── */}
+          <LandingPanel capacity={analysis.capacity} />
 
-      {/* ── Which machines are one system, as the source declares it ─────── */}
-      <ApplicationsPanel applications={analysis.applications} />
+          {/* ── And if a node is lost while it runs ───────────────────────── */}
+          <RehearsalPanel rehearsal={analysis.capacity?.rehearsal} />
 
-      {/* ── What they actually use, where that could be measured ─────────── */}
-      <RightSizingPanel rightsizing={analysis.rightsizing} />
+          {/* ── Which machines are one system, as the source declares it ─── */}
+          <ApplicationsPanel applications={analysis.applications} />
 
-      {/* ── And what the whole thing costs ───────────────────────────────── */}
-      <TcoPanel tco={analysis.tco} />
+          {/* ── What they actually use, where that could be measured ─────── */}
+          <RightSizingPanel rightsizing={analysis.rightsizing} />
+
+          {/* ── And what the whole thing costs ───────────────────────────── */}
+          <TcoPanel tco={analysis.tco} />
+        </>
+      )}
 
       {/* ── The chain from evidence to sign-off ──────────────────────────── */}
       <EvidenceChain analysis={analysis} />

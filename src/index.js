@@ -3116,60 +3116,77 @@ async function startSSE() {
           // nothing.
           const affinity = await import("./services/affinity.js");
           analysis.affinity = affinity.affinityGroups(vms);
-          // Applications as the SOURCE declares them — vCenter tags, custom
-          // attributes, resource pools, folders, or a CMDB when one is wired
-          // in. Kept strictly apart from affinity above, which is inference:
-          // grouping decides what moves together, and a confident wrong group
-          // splits a working system across two platforms for a month.
-          const appGroups = await import("./services/application-groups.js");
-          // Tags live in vAPI, not in the inventory Forklift mirrors, so an
-          // estate that is fully tagged reads as untagged unless the agent
-          // asks vCenter itself. Never fatal: a tagging service that will not
-          // answer leaves the machines exactly as discovery reported them.
-          const tagging = await import("./services/vcenter-tags.js");
-          // WHICH vCenter — resolved from the source provider the operator
-          // chose at Discover, not from one global setting. An estate with
-          // several vCenters would otherwise authenticate against the wrong
-          // one and return somebody else's tags.
-          const registry = await import("./services/vcenter-registry.js");
-          const vcStore = await vcSettingsStore().catch(() => ({}));
-          // The provider the operator picked at Discover, with the vCenter URL
-          // and credential secret MTV already holds for it.
-          const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
-          const sourceProvider = (mtv?.sources || []).find((sp) => sp.uid === body.provider || sp.name === body.provider) || null;
-          const vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
-            sourceProvider, vcStore,
-            // MTV already holds this provider's credentials; reusing them means
-            // nothing has to be configured, and they cannot drift out of step
-            // with the ones MTV migrates with.
-            async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
-          )).catch(() => ({ configured: false, source: "error", reason: null }));
+          // ── Advanced analysis — OFF by default ───────────────────────────
+          // Application grouping, measured right-sizing and the cost footprint
+          // all depend on reading vCenter directly, and every one of them is
+          // honest about having nothing to say when it cannot. That honesty is
+          // right and it is also three panels of blanks in front of a customer.
+          //
+          // So they are behind a switch, off unless ADVANCED_ANALYSIS is set.
+          // It gates the COMPUTATION, not just the rendering: the vCenter tag
+          // and QueryPerf calls are the slow part of this request, and a demo
+          // does not want to wait on a SOAP round trip for an answer it is not
+          // going to show.
+          //
+          // Turn it back on with ADVANCED_ANALYSIS=true and restart the pod —
+          // no rebuild, and the console follows the flag it is handed.
+          analysis.advanced = process.env.ADVANCED_ANALYSIS === "true";
+          if (analysis.advanced) {
+            // Applications as the SOURCE declares them — vCenter tags, custom
+            // attributes, resource pools, folders, or a CMDB when one is wired
+            // in. Kept strictly apart from affinity above, which is inference:
+            // grouping decides what moves together, and a confident wrong group
+            // splits a working system across two platforms for a month.
+            const appGroups = await import("./services/application-groups.js");
+            // Tags live in vAPI, not in the inventory Forklift mirrors, so an
+            // estate that is fully tagged reads as untagged unless the agent
+            // asks vCenter itself. Never fatal: a tagging service that will not
+            // answer leaves the machines exactly as discovery reported them.
+            const tagging = await import("./services/vcenter-tags.js");
+            // WHICH vCenter — resolved from the source provider the operator
+            // chose at Discover, not from one global setting. An estate with
+            // several vCenters would otherwise authenticate against the wrong
+            // one and return somebody else's tags.
+            const registry = await import("./services/vcenter-registry.js");
+            const vcStore = await vcSettingsStore().catch(() => ({}));
+            // The provider the operator picked at Discover, with the vCenter URL
+            // and credential secret MTV already holds for it.
+            const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
+            const sourceProvider = (mtv?.sources || []).find((sp) => sp.uid === body.provider || sp.name === body.provider) || null;
+            const vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
+              sourceProvider, vcStore,
+              // MTV already holds this provider's credentials; reusing them means
+              // nothing has to be configured, and they cannot drift out of step
+              // with the ones MTV migrates with.
+              async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
+            )).catch(() => ({ configured: false, source: "error", reason: null }));
 
-          const tagged = await withClusterContext(url, async () => tagging.enrichWithTags(vms, { cfg: vcCfg }))
-            .catch(() => ({ vms, source: "error", tagged: 0, reason: null }));
-          analysis.applications = appGroups.applicationGroups(tagged.vms, {
-            cmdb: body.cmdb || null,
-            placement: analysis.capacity?.placement || null,
-          });
-          analysis.applications.tagSource = {
-            source: tagged.source, tagged: tagged.tagged, reason: tagged.reason || vcCfg.reason,
-            credential: vcCfg.source || null, vcenter: vcCfg.url || null, provider: sourceProvider?.name || null,
-          };
-          // What these machines actually use. The agent runs in the
-          // destination, so it has no history for a VM still on VMware —
-          // whatever cannot be measured gets no recommendation and says so.
-          const rs = await import("./services/rightsizing.js");
-          const util = await withClusterContext(url, async () =>
-            rs.readUtilisation(vms, { supplied: body.utilisation || null, windowDays: body.utilisationDays || 30, vcenterCfg: vcCfg }),
-          ).catch(() => ({ source: "none", samples: {}, reason: "Utilisation could not be read." }));
-          analysis.rightsizing = {
-            ...rs.fleetRightSizing(vms, util.samples || {}),
-            source: util.source, basis: util.basis || null, sourceReason: util.reason || null,
-          };
-          // The business case. Countable figures always; money only when a rate
-          // card exists, because nothing reports what a customer pays VMware.
-          const tco = await import("./services/tco.js");
-          analysis.tco = tco.tcoComparison(vms, analysis.capacity, { rightsizing: analysis.rightsizing });
+            const tagged = await withClusterContext(url, async () => tagging.enrichWithTags(vms, { cfg: vcCfg }))
+              .catch(() => ({ vms, source: "error", tagged: 0, reason: null }));
+            analysis.applications = appGroups.applicationGroups(tagged.vms, {
+              cmdb: body.cmdb || null,
+              placement: analysis.capacity?.placement || null,
+            });
+            analysis.applications.tagSource = {
+              source: tagged.source, tagged: tagged.tagged, reason: tagged.reason || vcCfg.reason,
+              credential: vcCfg.source || null, vcenter: vcCfg.url || null, provider: sourceProvider?.name || null,
+            };
+            // What these machines actually use. The agent runs in the
+            // destination, so it has no history for a VM still on VMware —
+            // whatever cannot be measured gets no recommendation and says so.
+            const rs = await import("./services/rightsizing.js");
+            const util = await withClusterContext(url, async () =>
+              rs.readUtilisation(vms, { supplied: body.utilisation || null, windowDays: body.utilisationDays || 30, vcenterCfg: vcCfg }),
+            ).catch(() => ({ source: "none", samples: {}, reason: "Utilisation could not be read." }));
+            analysis.rightsizing = {
+              ...rs.fleetRightSizing(vms, util.samples || {}),
+              source: util.source, basis: util.basis || null, sourceReason: util.reason || null,
+            };
+            // The business case. Countable figures always; money only when a rate
+            // card exists, because nothing reports what a customer pays VMware.
+            const tco = await import("./services/tco.js");
+            analysis.tco = tco.tcoComparison(vms, analysis.capacity, { rightsizing: analysis.rightsizing });
+          }
           // Fleet-level findings and the per-VM method/power call are what the
           // pre-migration report is FOR, so both are produced here rather than
           // behind a second button the operator has to know to press.
