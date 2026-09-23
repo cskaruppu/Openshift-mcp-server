@@ -182,19 +182,19 @@ export function AutomationHub({ open, onClose }) {
         display: "flex", flexDirection: "column", overflow: "hidden",
         animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
-        <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "18px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
           {/* Drop the real TCS asset at console/public/brand-mark.svg and it is
               used instead of the neutral mark — no code change. Until then the
               geometric one stands in, because a nearly-right corporate logo in
               front of the company that owns it is worse than an honest neutral
               one. No gradient and no emoji: a gradient-filled rounded square
               with an emoji inside is the visual signature of an internal tool. */}
-          <span style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center",
+          <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
             border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)",
             color: "var(--text-strong, var(--text))", flex: "none" }}>
             {BRAND_MARK
-              ? <img src={BRAND_MARK} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />
-              : <ProductMark size={22} />}
+              ? <img src={BRAND_MARK} alt="" style={{ width: 21, height: 21, objectFit: "contain" }} />
+              : <ProductMark size={20} />}
           </span>
           <div style={{ flex: 1 }}>
             {/* Product lockup, then the module — the pattern the app header
@@ -219,7 +219,6 @@ export function AutomationHub({ open, onClose }) {
                 <span className="ah-lockup-module">Automation Hub</span>
               </span>
             </div>
-            <div style={{ fontSize: "0.78rem", color: "var(--text2)" }}>Fleet-wide agent-driven deployment &amp; incident remediation</div>
           </div>
           {presenting && (
             <button onClick={() => setShowNotes((v) => !v)} title="Show or hide the explanatory notes"
