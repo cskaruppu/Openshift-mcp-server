@@ -1815,6 +1815,9 @@ function MigrationAgent({ clusters, activeCluster }) {
   const [step, setStep] = useState(1);                 // 1 discover | 2 analyse | 3 select | 4 plan
   const [analysis, setAnalysis] = useState(null);      // roll-up of everything discovered
   const [estimate, setEstimate] = useState(null);      // measured transfer estimate for the wave
+  // Live plans that are stalled on a human rather than on the platform. They
+  // are offered as a choice rather than imposed as a destination.
+  const [waiting, setWaiting] = useState([]);
 
   const cUrl = (p) => clusterUrl(p, cluster);
   const get = async (p) => (await fetch(cUrl(p))).json();
@@ -1998,9 +2001,19 @@ function MigrationAgent({ clusters, activeCluster }) {
       if (live.length) {
         setPlans(live.map((p) => ({ planName: p.planName, strategy: p.strategy, vms: p.vms })));
         refreshStatus(live.map((p) => p.planName));
-        // Land the operator on the plans, not on a discovery form, when
-        // something is already moving.
-        setStep(4);
+        // Land on the plans ONLY when the system is mid-flight — bytes moving,
+        // a cutover due. An operator wants to watch that.
+        //
+        // When the case is instead waiting on a PERSON — an unapproved change,
+        // a validated plan nobody has started — jumping here traps them: the
+        // agent opens on somebody else's half-finished wave with no way to
+        // begin a new one, which is what it did. That case gets an explicit
+        // choice at the top of Discover instead.
+        const moving = live.some((p) => ["transferring", "awaiting-cutover", "validating"].includes(p.phase));
+        setWaiting(moving ? [] : live);
+        if (moving) setStep(4);
+      } else {
+        setWaiting([]);
       }
     } catch { /* an unreachable cluster is reported by the panels themselves */ }
   }, [cluster]);      // eslint-disable-line react-hooks/exhaustive-deps
@@ -2125,6 +2138,30 @@ function MigrationAgent({ clusters, activeCluster }) {
    * history that quietly DID something would be the worst button in this
    * product.
    */
+  /**
+   * Put the workbench back at the start.
+   *
+   * Everything downstream of Discover is derived from a selection, so leaving
+   * any of it behind means the next wave is assembled partly from the last
+   * one — a report about machines you no longer selected, a grouping preview
+   * for a plan that has already been created. Clearing all of it is the only
+   * version that cannot half-work.
+   *
+   * What is NOT cleared: the plans on the cluster. Starting a new wave does not
+   * abandon the old one — it is still in the history, still waiting on whoever
+   * has it, and still resumable.
+   */
+  const startNewMigration = () => {
+    setStep(1);
+    setVms(null);
+    setSel({});
+    setAnalysis(null);
+    setAdvice(null);
+    setPreview(null);
+    setEstimate(null);
+    setShowHistory(false);
+  };
+
   const resumeRun = (rec) => {
     setStep(4);                     // plan & migrate owns every remaining move
     setShowHistory(false);          // the case is now in front of you
@@ -2255,6 +2292,46 @@ function MigrationAgent({ clusters, activeCluster }) {
       {/* ── Step strip ───────────────────────────────────────────────────────
           Steps are only clickable backwards. Going forward is a gate: you reach
           the analysis by analysing, and migration by accepting the analysis. */}
+      {/* ── A case is open, and it is waiting on a person ────────────────────
+          Offered as a choice rather than imposed as a destination. The agent
+          used to land here silently, which meant somebody opening it to start
+          a new wave found themselves inside an unfinished one with no way out —
+          and the only visible action belonged to whoever left it there. */}
+      {ready?.ok && waiting.length > 0 && step === 1 && (
+        <div style={{ border: "1px solid var(--st-warn)", borderLeft: "3px solid var(--st-warn)",
+          borderRadius: 10, padding: "10px 13px", background: "var(--st-warn-bg)" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <span aria-hidden style={{ color: "var(--st-warn-ink)", fontWeight: 800 }}>◷</span>
+            <b style={{ fontSize: "0.82rem" }}>
+              {waiting.length === 1 ? "A migration is already open" : `${waiting.length} migrations are already open`}
+            </b>
+            <span style={{ fontSize: "0.78rem", color: "var(--text2)" }}>
+              waiting on a decision, not on the platform — nothing is moving.
+            </span>
+          </div>
+          {waiting.slice(0, 3).map((p) => (
+            <div key={p.planName} style={{ display: "flex", gap: 9, alignItems: "baseline", flexWrap: "wrap", marginTop: 6 }}>
+              <b style={{ fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.78rem" }}>{p.planName}</b>
+              <span style={{ fontSize: "0.77rem", color: "var(--text2)" }}>
+                {p.pending?.action || p.gate?.next || "Awaiting the next step."}
+              </span>
+              <button onClick={() => { setStep(4); }}
+                style={{ ...S, marginLeft: "auto", padding: "4px 12px", fontSize: "0.77rem", fontWeight: 700, cursor: "pointer" }}>
+                Resume this →
+              </button>
+            </div>
+          ))}
+          <div data-prose style={{ fontSize: "0.76rem", color: "var(--text2)", marginTop: 8, paddingTop: 7, borderTop: "1px solid var(--border)" }}>
+            Or start a new wave. The open one stays exactly as it is — still in the history, still waiting on whoever
+            has it, and still resumable.
+          </div>
+          <button onClick={startNewMigration} style={{ marginTop: 7, padding: "6px 14px", borderRadius: 8, border: "none",
+            background: "#3d5afe", color: "#fff", fontSize: "0.79rem", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            Start a new migration
+          </button>
+        </div>
+      )}
+
       {ready?.ok && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {[[1, "Discover"], [2, "Analyse support"], [3, "Select & strategy"], [4, "Plan & migrate"]].map(([n, label], i) => (
@@ -2281,6 +2358,17 @@ function MigrationAgent({ clusters, activeCluster }) {
               </button>
             </span>
           ))}
+          {/* Always reachable, from any step. Walking back through the rail
+              returns you to Discover with the LAST wave's inventory, report and
+              selection still loaded — which looks like a new migration and is
+              not one. This is the only control that actually clears them. */}
+          {step > 1 && (
+            <button onClick={startNewMigration}
+              title="Clear this wave and start again from Discover. Any plan already created stays on the cluster."
+              style={{ ...S, marginLeft: "auto", padding: "5px 12px", fontSize: "0.77rem", fontWeight: 700, cursor: "pointer" }}>
+              + New migration
+            </button>
+          )}
         </div>
       )}
 
