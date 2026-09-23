@@ -114,6 +114,20 @@ function heuristicExtract(text) {
   const cpu = /(\d+)\s*(?:v?cpu|core|vcpus|cores)\b/i.exec(t);
   if (cpu) out.cpuCores = Number(cpu[1]);
 
+  // A catalogue size named outright. Worth reading, because naming the type is
+  // the ONLY way to say "this exact size" — vCPU and memory go through
+  // reconcileSizing, which picks for you, and on a tie its choice can be a
+  // series with node requirements this cluster does not meet.
+  //   "instance type o1.small", "flavour u1.medium", or a bare "o1.small".
+  // The keyword form accepts any name so a cluster's own custom types work;
+  // the bare form is restricted to the standard series, so ordinary prose
+  // cannot be mistaken for a size.
+  const SERIES = "u|o|cx|m|n|gn|rt";
+  const SIZES = "nano|micro|small|medium|large|\\d*xlarge";
+  const it = /\b(?:instance\s*-?\s*type|instancetype|flavou?r)\s*[:=]?\s*([a-z][\w.-]*)/i.exec(t)
+    || new RegExp(`\\b((?:${SERIES})\\d+\\.(?:${SIZES}))\\b`, "i").exec(t);
+  if (it) out.instanceType = it[1].toLowerCase().replace(/[.\-]+$/, "");
+
   // Count. Word-numbers first, because a bare digit before "VMs" is usually an
   // OS version — "RHEL 9 VMs" means version 9, not nine machines.
   const WORDNUM = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
@@ -159,7 +173,7 @@ function heuristicExtract(text) {
 
 const EXTRACT_SYSTEM = `You extract VM provisioning intent into JSON. You never invent values.
 Output ONLY a JSON object with any of these keys you can determine with confidence:
-name, namespace, count, os, cpuCores (number), memoryMi (number, MiB),
+name, namespace, count, os, cpuCores (number), memoryMi (number, MiB), instanceType,
 diskSizeGi (number), storageClass, networkAttachmentDefinition, sshKey, username,
 hostname, environment (dev|test|prod), owner, costCentre, requestId, expiresOn (ISO date),
 sizingRationale.
@@ -167,6 +181,7 @@ Rules:
 - Omit any key you are not confident about. Omission is always better than a guess.
 - Memory and disk are different things. "32GB RAM, 200GB disk" -> memoryMi 32768, diskSizeGi 200.
 - Never output a name or namespace that the text does not contain.
+- instanceType is a catalogue size named literally, e.g. "o1.small". Never derive one from vCPU/memory.
 - Never output an sshKey unless the text literally contains a public key.
 ${UNTRUSTED_GUARD}`;
 
@@ -688,6 +703,18 @@ export async function buildVMRequestCard(text, overrides = {}) {
   }
   const reconciliation = reconcileSizing(request, catalogue.instanceTypes);
   if (reconciliation.chosen && !request.instanceType) request.instanceType = reconciliation.chosen.name;
+
+  // Backfill the numbers the chosen size actually carries. The manifest still
+  // references the instance type — these are never written into it — but
+  // without them the quota check has nothing to add up, and a quota check with
+  // no data is not a pass.
+  if (request.instanceType && (!request.cpuCores || !request.memoryMi)) {
+    const it = catalogue.instanceTypes.find((i) => i.name === request.instanceType);
+    if (it) {
+      if (!request.cpuCores) request.cpuCores = it.cpu;
+      if (!request.memoryMi) request.memoryMi = parseMemToMi(it.memory);
+    }
+  }
 
   const preflight = request.namespace ? await preflightVMRequest(request) : null;
   return {

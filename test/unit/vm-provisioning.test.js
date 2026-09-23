@@ -52,6 +52,25 @@ describe("VM intent extraction", () => {
     }
   });
 
+  test("a named instance type is read, and is sizing on its own", async () => {
+    const { request: r, missing } = await extractVMRequest(
+      "provision a RHEL 9 VM called sap-app-01 in namespace dev, instance type o1.small, 30GB disk");
+    assert.equal(r.instanceType, "o1.small");
+    assert.equal(r.diskSizeGi, 30);
+    assert.ok(!missing.includes("sizing"), "naming a catalogue size satisfies sizing");
+  });
+
+  test("a bare catalogue size is recognised without the keyword", async () => {
+    const { request: r } = await extractVMRequest("create a vm called db-01 in dev on u1.medium.");
+    assert.equal(r.instanceType, "u1.medium", "trailing punctuation must not become part of the name");
+  });
+
+  test("prose is not mistaken for an instance type", async () => {
+    const { request: r } = await extractVMRequest("create a small vm called web-01 in dev, 2 vCPU, 4GB RAM");
+    assert.equal(r.instanceType, null, "'small' alone is not a size");
+    assert.equal(r.cpuCores, 2);
+  });
+
   test("batch requests produce indexed names", () => {
     assert.deepEqual(vmNames(normalizeVMRequest({ name: "web", count: 3 })), ["web-1", "web-2", "web-3"]);
     assert.deepEqual(vmNames(normalizeVMRequest({ name: "web", count: 1 })), ["web"]);
