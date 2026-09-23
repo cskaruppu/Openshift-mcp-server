@@ -6,6 +6,14 @@ import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
 
+/** Discrete, readable stops. 90 for a dense laptop review, 150 for a room. */
+const ZOOM_STEPS = [90, 100, 110, 125, 150];
+const zoomBtn = {
+  padding: "6px 11px", border: "none", background: "transparent", cursor: "pointer",
+  fontSize: "0.78rem", fontWeight: 700, fontFamily: "inherit", color: "var(--muted,#5a6373)",
+  lineHeight: 1.5, display: "grid", placeItems: "center",
+};
+
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
   return `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(cluster)}`;
@@ -30,33 +38,57 @@ export function AutomationHub({ open, onClose }) {
   const activeCluster = useActiveCluster();
   const [agent, setAgent] = useState("sop"); // sop | snow
   const [clusters, setClusters] = useState([]);
-  // Presentation mode: this panel gets demoed on a shared screen, where 0.78rem
-  // inside a 1320px modal inside the dashboard chrome is unreadable.
+  // This panel gets demoed on everything from a laptop to a projector, so the
+  // scale is a dial rather than a switch. A binary "present" toggle only ever
+  // has one right room; a range has one for each of them.
+  //
+  // Steps, not a slider: a demo is driven with one hand while talking, and
+  // discrete stops land on a readable size every time. A slider invites
+  // fiddling and lands on 103%.
+  const [zoom, setZoom] = useState(() => {
+    try { return Number(localStorage.getItem("ah-zoom")) || 100; } catch { return 100; }
+  });
   const [presenting, setPresenting] = useState(() => {
     try { return localStorage.getItem("ah-presenting") === "1"; } catch { return false; }
   });
   const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
-    try { localStorage.setItem("ah-presenting", presenting ? "1" : "0"); } catch { /* private window */ }
-  }, [presenting]);
+    try {
+      localStorage.setItem("ah-presenting", presenting ? "1" : "0");
+      localStorage.setItem("ah-zoom", String(zoom));
+    } catch { /* private window */ }
+  }, [presenting, zoom]);
 
   useEffect(() => {
-    if (!open || !presenting) return undefined;
+    if (!open) return undefined;
     // Everything here is sized in rem, and rem is relative to <html> — not to a
-    // parent — so the scale has to be applied there. Restored on exit, and the
-    // dashboard chrome is hidden while it applies, so nothing else is affected.
+    // parent — so the scale has to be applied there. Font size rather than CSS
+    // `zoom` or a transform: font size REFLOWS, so a table still fills the
+    // width it is given. A transform scales the pixels and leaves the layout
+    // the wrong size, which is exactly the "screenshot of an app" look this is
+    // meant to avoid.
     const previous = document.documentElement.style.fontSize;
-    document.documentElement.style.fontSize = "19.2px";     // 120% of the 16px default
-    // Escape leaves presentation mode rather than closing the panel — losing
-    // your place mid-demo because you wanted normal text would be worse.
-    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); setPresenting(false); } };
+    document.documentElement.style.fontSize = `${(16 * zoom) / 100}px`;
+    const onKey = (e) => {
+      if (e.key === "Escape" && presenting) { e.stopPropagation(); setPresenting(false); return; }
+      // The shortcuts every other tool uses for this, so nobody has to learn one.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); stepZoom(1); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "-") { e.preventDefault(); stepZoom(-1); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "0") { e.preventDefault(); setZoom(100); }
+    };
     window.addEventListener("keydown", onKey, true);
     return () => {
       document.documentElement.style.fontSize = previous;
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [open, presenting]);
+  }, [open, zoom, presenting]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stepZoom = (dir) => setZoom((z) => {
+    const i = ZOOM_STEPS.indexOf(z);
+    const at = i === -1 ? ZOOM_STEPS.findIndex((v) => v >= z) : i;
+    return ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, at + dir))] ?? z;
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -79,13 +111,21 @@ export function AutomationHub({ open, onClose }) {
         /* Explanatory prose is essential in the printed pack and noise on a
            screen someone is talking over. Hidden by default while presenting,
            one click away. */
-        .ah-terse [data-prose]{display:none !important}`}</style>
+        .ah-terse [data-prose]{display:none !important}
+        /* The default scrollbar is the loudest object on the page once the
+           content is calm. Thin, on the surface colour, and it only appears
+           over content that actually scrolls. */
+        .ah-ink *::-webkit-scrollbar{width:10px;height:10px}
+        .ah-ink *::-webkit-scrollbar-track{background:transparent}
+        .ah-ink *::-webkit-scrollbar-thumb{background:color-mix(in srgb, currentColor 18%, transparent);border-radius:99px;border:3px solid transparent;background-clip:content-box}
+        .ah-ink *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb, currentColor 32%, transparent);background-clip:content-box}
+        .ah-ink *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb, currentColor 22%, transparent) transparent}`}</style>
       {/* ah-ink re-steps the secondary text token for this subtree only — see
           styles.css. Everything inside the hub reads var(--text2), so one
           class fixes the whole agent rather than sixty inline colours. */}
       <div onClick={(e) => e.stopPropagation()} className={`ah-ink${presenting && !showNotes ? " ah-terse" : ""}`}
-        style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1320px, 97vw)" : "min(1040px, 96vw)",
-        height: presenting ? "100vh" : "min(760px, 90vh)", minHeight: presenting ? 0 : 520,
+        style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1560px, 97vw)" : "min(1040px, 96vw)",
+        height: presenting ? "100vh" : "min(1000px, 94vh)", minHeight: presenting ? 0 : 560,
         background: "var(--bg, #fff)", border: presenting ? "none" : "1px solid var(--border, #e4e8f1)",
         borderRadius: presenting ? 0 : 18, boxShadow: presenting ? "none" : "0 24px 70px rgba(0,0,0,0.4)",
         display: "flex", flexDirection: "column", overflow: "hidden",
@@ -125,14 +165,28 @@ export function AutomationHub({ open, onClose }) {
               {showNotes ? "Hide notes" : "ⓘ Show notes"}
             </button>
           )}
-          <button onClick={() => setPresenting((v) => !v)}
-            title={presenting ? "Leave presentation mode (Esc)" : "Full screen, larger text, fewer notes — for screen sharing"}
-            style={{ padding: "6px 12px", borderRadius: 8, fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-              border: presenting ? "none" : "1px solid var(--border,#e4e8f1)",
-              background: presenting ? "#3d5afe" : "var(--card-bg,#fff)",
-              color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
-            {presenting ? "⤢ Exit presentation" : "⤢ Present"}
-          </button>
+          {/* One segmented control rather than three loose buttons. Grouping
+              the two things that change how this LOOKS, away from the one that
+              closes it, is most of the difference between a tool and a demo. */}
+          <div style={{ display: "inline-flex", alignItems: "stretch", borderRadius: 9, overflow: "hidden",
+            border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)" }}>
+            <button onClick={() => stepZoom(-1)} disabled={zoom <= ZOOM_STEPS[0]}
+              title="Smaller (Ctrl -)" aria-label="Smaller"
+              style={{ ...zoomBtn, opacity: zoom <= ZOOM_STEPS[0] ? 0.38 : 1 }}>−</button>
+            <button onClick={() => setZoom(100)} title="Reset to 100% (Ctrl 0)"
+              style={{ ...zoomBtn, minWidth: 54, fontVariantNumeric: "tabular-nums",
+                borderLeft: "1px solid var(--border,#e4e8f1)", borderRight: "1px solid var(--border,#e4e8f1)",
+                color: zoom === 100 ? "var(--muted,#5a6373)" : "#3d5afe" }}>{zoom}%</button>
+            <button onClick={() => stepZoom(1)} disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+              title="Larger (Ctrl +)" aria-label="Larger"
+              style={{ ...zoomBtn, opacity: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 0.38 : 1 }}>+</button>
+            <button onClick={() => setPresenting((v) => !v)}
+              title={presenting ? "Leave full screen (Esc)" : "Full screen — hides the dashboard chrome behind this panel"}
+              style={{ ...zoomBtn, minWidth: 38, borderLeft: "1px solid var(--border,#e4e8f1)",
+                background: presenting ? "#3d5afe" : "transparent", color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
+              {presenting ? "⤡" : "⤢"}
+            </button>
+          </div>
           <button onClick={onClose} title="Close" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontSize: "1.15rem", cursor: "pointer", color: "var(--muted,#5a6373)", lineHeight: 1 }}>×</button>
         </div>
         {/* Segmented agent switcher */}
