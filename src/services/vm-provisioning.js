@@ -144,6 +144,19 @@ function heuristicExtract(text) {
   }
   const disk = /(\d+)\s*(?:gb|gib|g)\s*(?:of\s*)?(?:disk|storage|persistent)/i.exec(t);
   if (disk) out.diskSizeGi = Number(disk[1]);
+
+  // Storage class. Left unsaid it means "the cluster default", which is a real
+  // answer and usually the right one — so this only fires on a name, never a
+  // guess. Three orders, because people write it all three ways. A class name
+  // is a DNS label plus dots, so the character class is wider than a namespace.
+  const sc = /\b(?:storage\s*-?\s*class|storageclass)\s*[:=]?\s*([a-z0-9][\w.-]*)/i.exec(t)
+    || /\b([a-z0-9][\w.-]*)\s+storage\s*class\b/i.exec(t)
+    || /\bdisk\s+(?:on|using|from)\s+(?:the\s+)?([a-z0-9][\w.-]*)/i.exec(t);
+  if (sc) {
+    const name = sc[1].toLowerCase().replace(/[.\-]+$/, "");
+    // "the default storage class" names the policy, not a class.
+    if (!/^(the|a|an|default|cluster)$/.test(name)) out.storageClass = name;
+  }
   // Memory: the largest GB figure that is not the disk figure.
   const mems = [...t.matchAll(MEM_RE)].map((m) => {
     const v = Number(m[1]);

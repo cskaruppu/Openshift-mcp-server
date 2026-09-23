@@ -71,6 +71,23 @@ describe("VM intent extraction", () => {
     assert.equal(r.cpuCores, 2);
   });
 
+  test("a storage class is read in any of the three orders people write it", async () => {
+    for (const phrase of [
+      "30GB disk, storage class vxflexos-xfs",
+      "30GB disk on the vxflexos-xfs storage class",
+      "30GB disk on vxflexos-xfs",
+    ]) {
+      const { request: r } = await extractVMRequest(`create a vm called db-01 in dev, u1.small, ${phrase}`);
+      assert.equal(r.storageClass, "vxflexos-xfs", `not read from: ${phrase}`);
+      assert.equal(r.diskSizeGi, 30);
+    }
+  });
+
+  test("'the default storage class' names a policy, not a class", async () => {
+    const { request: r } = await extractVMRequest("create a vm called db-01 in dev, u1.small, 30GB disk on the default storage class");
+    assert.equal(r.storageClass, null, "an unnamed class must stay unset so the cluster default applies");
+  });
+
   test("batch requests produce indexed names", () => {
     assert.deepEqual(vmNames(normalizeVMRequest({ name: "web", count: 3 })), ["web-1", "web-2", "web-3"]);
     assert.deepEqual(vmNames(normalizeVMRequest({ name: "web", count: 1 })), ["web"]);
