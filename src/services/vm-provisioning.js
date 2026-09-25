@@ -210,7 +210,7 @@ export async function extractVMRequest(text) {
     try {
       const r = await classifyJSON({
         system: EXTRACT_SYSTEM,
-        prompt: `Extract the VM request:\n\n${fenceUntrusted(String(text || "").slice(0, 4000))}`,
+        prompt: `Extract the VM request:\n\n${fenceUntrusted("VM_REQUEST", String(text || "").slice(0, 4000))}`,
       });
       if (r && typeof r === "object") ai = r;
     } catch { /* fall back to heuristics */ }
