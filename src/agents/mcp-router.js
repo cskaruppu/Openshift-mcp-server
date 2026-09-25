@@ -52,6 +52,7 @@ import { registerUpgradeAdvisorTools } from "../tools/upgrade-advisor.js";
 import { registerBenchmarkTools } from "../tools/benchmarks.js";
 import { registerProvisioningTools } from "../tools/provisioning.js";
 import { registerPreflightTools } from "../tools/upgrade-preflight.js";
+import { registerContainerizeTools } from "../tools/containerize.js";
 import { registerMultiClusterTools } from "../services/multi-cluster.js";
 
 import { getAgentById, getAgentProfile } from "./registry.js";
@@ -66,7 +67,7 @@ const REGISTRARS = [
   registerNotificationTools, registerVeleroTools, registerComplianceTools, registerDriftTools,
   registerImpactTools, registerOperatorDiagTools, registerPolicyGenTools, registerSCCAdvisorTools,
   registerTimelineTools, registerUpgradeAdvisorTools, registerBenchmarkTools, registerProvisioningTools,
-  registerPreflightTools,
+  registerPreflightTools, registerContainerizeTools,
 ];
 
 /**

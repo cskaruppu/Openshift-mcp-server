@@ -49,6 +49,7 @@ import { registerDriftTools } from "./tools/drift.js";
 import { registerImpactTools } from "./tools/impact.js";
 import { registerOperatorDiagTools } from "./tools/operator-diag.js";
 import { registerPolicyGenTools } from "./tools/policy-gen.js";
+import { registerContainerizeTools } from "./tools/containerize.js";
 import { registerSCCAdvisorTools } from "./tools/scc-advisor.js";
 import { registerTimelineTools } from "./tools/timeline.js";
 import { registerUpgradeAdvisorTools } from "./tools/upgrade-advisor.js";
@@ -306,6 +307,7 @@ function createMcpServer() {
     ["registerAppChangeWatcherTools", registerAppChangeWatcherTools],
     ["registerImageVulnScannerTools", registerImageVulnScannerTools],
     ["registerDeployFromDocTools",    registerDeployFromDocTools],
+    ["registerContainerizeTools",     registerContainerizeTools],
   ];
 
   let registered = 0;
@@ -3032,6 +3034,63 @@ async function startSSE() {
     // ── VM provisioning (UC-06) ───────────────────────────────────────────
     // Human-initiated by construction. There is deliberately no autonomous
     // path: provisioning consumes quota, addresses, licences and money.
+    // ── Containerisation assessment ──────────────────────────────────────
+    // The other half of the disposition. The migration analysis answers "can
+    // this machine move"; this answers "should it still be a machine", and
+    // the two are allowed to disagree — one discovery pass, two destinations,
+    // both landing on this cluster.
+    //
+    // Guest credentials arrive in the body and are used for this request
+    // only. Nothing is stored: a credential that can log in to every machine
+    // in an estate is a larger liability than the assessment is worth. Sent
+    // without one, the endpoint still answers — with every machine marked
+    // not assessed, which is the honest result and not an error.
+      if (url.pathname === "/api/containerize/assess" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const vms = body.vms || [];
+          if (!vms.length) return sendJson(res, 400, { error: "No machines were supplied to assess." });
+
+          const gd = await import("./services/guest-discovery.js");
+          const cr = await import("./services/containerization-readiness.js");
+          const registry = await import("./services/vcenter-registry.js");
+          const mig = await import("./services/vm-migration.js");
+
+          // The same credential resolution the analyse route uses: MTV already
+          // holds this provider's vCenter login, so nothing has to be
+          // configured twice and the two cannot drift apart.
+          const vcStore = await vcSettingsStore().catch(() => ({}));
+          const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
+          const sourceProvider = (mtv?.sources || []).find((sp) => sp.uid === body.provider || sp.name === body.provider) || null;
+          const vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
+            sourceProvider, vcStore,
+            async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
+          )).catch(() => ({ configured: false, source: "error", reason: null }));
+
+          const creds = body.guestUsername && body.guestPassword
+            ? { "*": { username: body.guestUsername, password: body.guestPassword } }
+            : (body.guestCredentials || null);
+
+          const discovery = await gd.discoverGuests(vms, { cfg: vcCfg, guestCredentials: creds });
+          const results = cr.scoreSelection(vms, discovery.guests);
+
+          return sendJson(res, 200, {
+            results,
+            funnel: cr.containerisationFunnel(results),
+            verdictLabels: cr.VERDICT_LABEL,
+            discovery: {
+              source: discovery.source,
+              reason: discovery.reason,
+              coverage: discovery.coverage,
+              credentialSupplied: Boolean(creds),
+              vcenter: vcCfg.url || null,
+              credential: vcCfg.source || null,
+              provider: sourceProvider?.name || null,
+            },
+          });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
     // ── UC-10 · VM migration on MTV (Forklift) ──────────────────────────────
     // Read-only up to createPlans; a Plan validates without moving anything;
     // only /migrate moves data, and only for a Plan MTV has marked Ready.

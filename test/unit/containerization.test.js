@@ -294,7 +294,7 @@ describe("the funnel", () => {
     assert.equal(f.candidates, 2);
     assert.equal(f.candidatePctOfEstate, 40, "40% of the estate");
     assert.equal(f.candidatePctOfAssessed, 67, "67% of what answered — the number competitors quote");
-    assert.match(f.note, /could not be read and are not counted as candidates or as blocked/);
+    assert.match(f.note, /could not be read and are not counted as a candidate or as blocked/);
   });
 
   test("scoreSelection joins on id then name", () => {

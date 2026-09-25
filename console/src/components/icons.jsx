@@ -55,6 +55,18 @@ export function IconMigrate({ size = 17 }) {
   );
 }
 
+/** Containerisation: a machine's contents, repacked into a smaller unit. The
+    inner box is deliberately off-centre and smaller than the outer one — the
+    point of the assessment is that not everything in the VM comes across. */
+export function IconContainer({ size = 17 }) {
+  return (
+    <svg {...base(size)}>
+      <path d="M3 7.2 12 3l9 4.2v9.6L12 21l-9-4.2Z" />
+      <path d="M3 7.2 12 11.4l9-4.2M12 11.4V21" />
+    </svg>
+  );
+}
+
 /**
  * The product mark — EXPORTED BUT NOT MOUNTED.
  *

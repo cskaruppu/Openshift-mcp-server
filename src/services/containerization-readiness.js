@@ -403,7 +403,7 @@ export function containerisationFunnel(results = []) {
     candidatePctOfAssessed: assessed ? Math.round((candidates / assessed) * 100) : 0,
     note: assessed === total
       ? `All ${total} machines were assessed.`
-      : `${assessed} of ${total} machines were assessed. ${total - assessed} could not be read and are not counted as candidates or as blocked.`,
+      : `${assessed} of ${total} machines were assessed. ${total - assessed} ${total - assessed === 1 ? "could not be read and is" : "could not be read and are"} not counted as a candidate or as blocked.`,
   };
 }
 

@@ -6,7 +6,8 @@ import MigrationSelect from "./MigrationSelect";
 import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
 import MigrationRecord from "./MigrationRecord";
-import { IconDeploy, IconTicket, IconMigrate } from "./icons";
+import ContainerizationAgent from "./ContainerizationAgent";
+import { IconDeploy, IconTicket, IconMigrate, IconContainer } from "./icons";
 
 /**
  * A live plan and an archived run are the same case at two points in its life,
@@ -268,7 +269,7 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate]].map(([k, label, Icon]) => (
+            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Containerization Agent", IconContainer]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ display: "inline-flex", alignItems: "center", gap: 8,
                 padding: "8px 16px", borderRadius: 8, border: "none",
                 background: agent === k ? "#3d5afe" : "transparent",
@@ -285,6 +286,7 @@ export function AutomationHub({ open, onClose }) {
         <div style={{ flex: 1, overflow: "auto", padding: "18px 22px 24px" }}>
           {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} />
             : agent === "snow" ? <SnowAgent clusters={clusters} activeCluster={activeCluster} />
+            : agent === "v2c" ? <ContainerizationAgent cluster={activeCluster} />
             : <MigrationAgent clusters={clusters} activeCluster={activeCluster} />}
         </div>
       </div>
