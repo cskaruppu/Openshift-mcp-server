@@ -268,6 +268,11 @@ async function soapSession(cfg) {
   ), null, 20_000);
   const sessionManager = /<sessionManager[^>]*>([^<]+)<\/sessionManager>/.exec(content.text)?.[1] || "SessionManager";
   const perfManager = /<perfManager[^>]*>([^<]+)<\/perfManager>/.exec(content.text)?.[1] || "PerfMgr";
+  // Guest operations live under their own manager, and an appliance that
+  // disagrees with the convention is read rather than assumed — same reason
+  // the perf manager is read here instead of hardcoded.
+  const guestOperationsManager = /<guestOperationsManager[^>]*>([^<]+)<\/guestOperationsManager>/
+    .exec(content.text)?.[1] || "guestOperationsManager";
 
   const login = await soapPost(cfg, soapEnvelope(
     `<Login><_this type="SessionManager">${xmlEscape(sessionManager)}</_this>`
@@ -277,7 +282,7 @@ async function soapSession(cfg) {
   const raw = login.setCookie || "";
   const cookie = /vmware_soap_session=[^;]+/.exec(raw)?.[0];
   if (!cookie) throw new Error("vCenter accepted the SOAP login but returned no session cookie.");
-  const made = { key, cookie, perfManager, expires: Date.now() + SOAP_TTL_MS };
+  const made = { key, cookie, perfManager, guestOperationsManager, expires: Date.now() + SOAP_TTL_MS };
   _soaps.set(key, made);
   return made;
 }
