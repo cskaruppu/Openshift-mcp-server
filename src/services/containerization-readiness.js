@@ -127,6 +127,50 @@ const WINDOWS = /windows|microsoft/i;
 /** Windows guests that are a desktop rather than a server. */
 const WINDOWS_DESKTOP = /windows\s*(?:xp|vista|7|8|8\.1|10|11)\b/i;
 
+/**
+ * Does this process list look like everything, or only what one account can see?
+ *
+ * The blind spot this closes was a stated weakness of the whole agent: on
+ * Linux, an unprivileged guest account sees its own processes and little else,
+ * so a machine running Tomcat under `tomcat` comes back looking empty and
+ * scores as "nothing recognisable" — or worse, a machine whose only visible
+ * process is the app itself scores READY while the database beside it stays
+ * invisible.
+ *
+ * Neither vCenter nor the guest reports "you saw a partial list", so it has to
+ * be inferred, and the two signals that actually separate the cases are:
+ *
+ *   - every visible process shares one owner, and that owner is not root or
+ *     SYSTEM. A real machine runs somebody else's processes too.
+ *   - a running Linux guest reporting a handful of processes. Even an idle one
+ *     runs dozens of system processes; single digits means we are being shown
+ *     a slice.
+ *
+ * Inference, so it is reported as a doubt rather than a finding — but a doubt
+ * that must stop a READY verdict, because "ready" from a partial read is the
+ * single most damaging thing this tool could say.
+ */
+export function suspectPartialProcessView(processes = [], os = "") {
+  if (!processes.length) return null;
+  const owners = [...new Set(processes.map((p) => p.owner).filter(Boolean))];
+  const windows = WINDOWS.test(String(os || ""));
+  const privileged = /^(root|system|nt authority\\system|local system)$/i;
+
+  if (owners.length === 1 && !privileged.test(owners[0])) {
+    return {
+      reason: `every visible process is owned by "${owners[0]}"`,
+      detail: "A machine running only one account's processes is far more likely to be a partial view than a real estate. An unprivileged guest credential sees its own processes and little else.",
+    };
+  }
+  if (!windows && processes.length < 8) {
+    return {
+      reason: `only ${processes.length} process${processes.length === 1 ? "" : "es"} were visible`,
+      detail: "A running Linux guest has dozens of system processes even when idle. A single-digit list is a slice, not an inventory.",
+    };
+  }
+  return null;
+}
+
 const matches = (procs, re) => procs.filter((p) => re.test(p.cmdLine || "") || re.test(p.name || ""));
 const first = (procs, re) => matches(procs, re)[0] || null;
 /** The evidence string a finding carries: what we saw, trimmed to readable. */
@@ -336,6 +380,18 @@ export function scoreContainerisation({ vm = {}, guest = null } = {}) {
       };
     });
   }
+
+  // Read BEFORE the verdict is chosen, because it must be able to stop READY.
+  check(() => {
+    const partial = suspectPartialProcessView(processes, osName);
+    return partial && {
+      id: "partial-process-view", blocks: false, severity: "warning", required: true,
+      title: "The process list looks partial",
+      detail: `This machine was scored from a process list where ${partial.reason}. ${partial.detail} Anything not visible — a database, a second application — was not assessed and is not in the verdict.`,
+      action: "Re-assess with an account that can see all processes: root or a sudo-capable account on Linux, an administrator on Windows.",
+      evidence: [...new Set(processes.map((p) => p.owner).filter(Boolean))].join(", ") || null,
+    };
+  });
 
   check(() => runtimes.length === 0 && {
     id: "no-recognised-runtime", blocks: false, severity: "warning", required: true,

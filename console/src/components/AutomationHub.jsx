@@ -286,7 +286,7 @@ export function AutomationHub({ open, onClose }) {
         <div style={{ flex: 1, overflow: "auto", padding: "18px 22px 24px" }}>
           {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} />
             : agent === "snow" ? <SnowAgent clusters={clusters} activeCluster={activeCluster} />
-            : agent === "v2c" ? <ContainerizationAgent cluster={activeCluster} />
+            : agent === "v2c" ? <ContainerizationAgent cluster={activeCluster} clusters={clusters} />
             : <MigrationAgent clusters={clusters} activeCluster={activeCluster} />}
         </div>
       </div>

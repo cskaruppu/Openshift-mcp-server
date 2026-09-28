@@ -47,7 +47,9 @@ const btn = (primary) => ({
   background: primary ? "#3d5afe" : "transparent", color: primary ? "#fff" : "var(--muted,#5a6373)",
 });
 
-export default function ContainerizationAgent({ cluster }) {
+export default function ContainerizationAgent({ cluster, clusters = [] }) {
+  const [scope, setScope] = useState("cluster");   // cluster | fleet
+  const [fleet, setFleet] = useState(null);
   const [providers, setProviders] = useState([]);
   const [provider, setProvider] = useState("");
   const [search, setSearch] = useState("");
@@ -122,6 +124,11 @@ export default function ContainerizationAgent({ cluster }) {
     <div>
       <Intro />
       <Toolchain tc={tc} />
+      <ScopeSwitch scope={scope} setScope={setScope} clusters={clusters} cluster={cluster} />
+      {scope === "fleet" && (
+        <FleetView clusters={clusters} fleet={fleet} setFleet={setFleet} post={post} creds={creds} setCreds={setCreds} />
+      )}
+      {scope === "fleet" ? null : (<>
 
       {/* ── Pick the machines ─────────────────────────────────────────── */}
       <div style={card}>
@@ -195,7 +202,174 @@ export default function ContainerizationAgent({ cluster }) {
       )}
 
       {result && <Results result={result} post={post} caps={tc?.capabilities} />}
+      </>)}
     </div>
+  );
+}
+
+/**
+ * One cluster, or the estate.
+ *
+ * Offered rather than defaulted: a fleet run touches every cluster's vCenter
+ * and is a much heavier request than looking at one, so it is a choice the
+ * operator makes knowingly.
+ */
+function ScopeSwitch({ scope, setScope, clusters, cluster }) {
+  if (!clusters.length) return null;
+  const tab = (k, lbl) => (
+    <button key={k} onClick={() => setScope(k)} style={{
+      padding: "7px 14px", borderRadius: 8, border: "none", fontFamily: "inherit",
+      fontWeight: 700, fontSize: ".82rem", cursor: "pointer",
+      background: scope === k ? "#3d5afe" : "transparent", color: scope === k ? "#fff" : "var(--muted,#5a6373)",
+    }}>{lbl}</button>
+  );
+  return (
+    <div style={{ ...card, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 10,
+        background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
+        {tab("cluster", `This cluster — ${cluster}`)}
+        {tab("fleet", `Whole estate — ${clusters.length} clusters`)}
+      </div>
+      <span style={{ fontSize: ".8rem", color: "var(--muted,#5a6373)" }}>
+        The same vCenter is often registered in more than one cluster. Across the estate, machines are
+        merged on their BIOS UUID so none is counted twice.
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The estate view.
+ *
+ * The numbers here are the ones that go on a slide, which is exactly why they
+ * are computed over de-duplicated machines and why disagreements between
+ * clusters are shown rather than resolved quietly.
+ */
+function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const d = await post("/api/containerize/fleet", {
+        clusters: clusters.map((c) => ({ cluster: c.name || c.id || c })),
+        guestUsername: creds.username || undefined,
+        guestPassword: creds.password || undefined,
+      });
+      if (d.error) { showToast(d.error, "err"); return; }
+      setFleet(d);
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(false); }
+  };
+
+  const download = (format) => {
+    const body = JSON.stringify({ fleet, format, clusters: clusters.map((c) => c.name || c.id || c),
+      credentialSupplied: Boolean(creds.username && creds.password) });
+    fetch("/api/containerize/export", { method: "POST", headers: { "Content-Type": "application/json" }, body })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `containerisation-assessment.${format}`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch((e) => showToast(e.message, "err"));
+  };
+
+  return (
+    <>
+      <GuestCredential creds={creds} setCreds={setCreds} />
+      <div style={{ marginBottom: 16 }}>
+        <button style={btn(true)} onClick={run} disabled={busy}>
+          {busy ? `Reading ${clusters.length} clusters…` : `Assess the whole estate`}
+        </button>
+        <span style={{ marginLeft: 12, fontSize: ".8rem", color: "var(--muted,#5a6373)" }}>
+          Reads every cluster's vCenter. Slower than one cluster, and the only number worth quoting.
+        </span>
+      </div>
+
+      {fleet && (
+        <>
+          <div style={{ ...card, borderColor: "rgba(61,90,254,.25)" }}>
+            <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "baseline" }}>
+              <Figure n={fleet.funnel.candidates} of={fleet.funnel.total} pct={fleet.funnel.candidatePctOfEstate} title="of the estate" strong />
+              <Figure n={fleet.funnel.candidates} of={fleet.funnel.assessed} pct={fleet.funnel.candidatePctOfAssessed} title="of what answered" />
+              <Figure n={fleet.distinct} of={fleet.observations} pct={Math.round((fleet.distinct / Math.max(1, fleet.observations)) * 100)} title="distinct machines, after de-duplication" />
+            </div>
+            <p style={{ margin: "12px 0 0", fontSize: ".84rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>
+              {fleet.note} {fleet.funnel.note}
+            </p>
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <button style={btn(false)} onClick={() => download("html")}>Download the pack (HTML / print to PDF)</button>
+              <button style={btn(false)} onClick={() => download("csv")}>Download the register (CSV)</button>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={label}>Where the work sits</div>
+            <p style={{ margin: "0 0 10px", fontSize: ".84rem", color: "var(--muted,#5a6373)" }}>{fleet.portfolio.note}</p>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
+              <tbody>
+                {fleet.portfolio.topBlockers.map((b) => (
+                  <tr key={b.id} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+                    <td style={{ padding: "6px 8px 6px 0", fontWeight: 600 }}>{b.title}</td>
+                    <td style={{ padding: "6px 8px", width: 60 }}>{b.count}</td>
+                    <td style={{ padding: "6px 0", color: "var(--muted,#5a6373)" }}>{b.machines.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {fleet.conflicts.length > 0 && (
+            <div style={{ ...card, borderColor: "rgba(217,119,6,.3)" }}>
+              <div style={{ ...label, color: "#b45309" }}>The same machine scored differently in two clusters — {fleet.conflicts.length}</div>
+              {fleet.conflicts.map((c) => (
+                <p key={c.key} style={{ margin: "0 0 8px", fontSize: ".83rem", lineHeight: 1.6 }}>
+                  <strong>{c.name}</strong> — {c.seenIn.map((s) => `${s.cluster}: ${s.verdict}`).join(" · ")}.
+                  <br /><span style={{ color: "var(--muted,#5a6373)" }}>{c.why}</span>
+                </p>
+              ))}
+            </div>
+          )}
+
+          {fleet.possible.length > 0 && (
+            <div style={card}>
+              <div style={label}>Possible duplicates — confirm before trusting the count</div>
+              {fleet.possible.map((x) => (
+                <p key={x.name} style={{ margin: "0 0 6px", fontSize: ".82rem" }}>
+                  <strong>{x.name}</strong> matched on {x.basis} ({x.confidence}) across {x.seenIn.map((s) => s.cluster).join(", ")}. {x.note}
+                </p>
+              ))}
+            </div>
+          )}
+
+          <div style={{ ...card, background: "var(--card-bg,#f7f9fc)" }}>
+            <div style={label}>Dependencies</div>
+            <p style={{ margin: 0, fontSize: ".83rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>
+              {fleet.dependencies.note}
+            </p>
+          </div>
+
+          <div style={card}>
+            <div style={label}>Per cluster</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
+              <tbody>
+                {fleet.perCluster.map((c) => (
+                  <tr key={c.cluster} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+                    <td style={{ padding: "6px 8px 6px 0", fontWeight: 600 }}>{c.cluster}</td>
+                    <td style={{ padding: "6px 8px", color: "var(--muted,#5a6373)" }}>{c.provider || "—"}{c.vcenter ? ` · ${c.vcenter}` : ""}</td>
+                    <td style={{ padding: "6px 0", color: c.reason ? "#b45309" : "var(--muted,#5a6373)" }}>
+                      {c.reason || `${c.machines} machine${c.machines === 1 ? "" : "s"} read`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 

@@ -42,6 +42,12 @@ export const PROPERTY_BATCH = 100;
 const GUEST_PROPS = [
   "name",
   "runtime.powerState",
+  // Identity, for de-duplicating a fleet. The BIOS UUID follows the machine
+  // and is what makes "the same VM registered in two clusters" a fact rather
+  // than a guess from matching hostnames — two machines legitimately share a
+  // hostname more often than anyone expects.
+  "config.uuid",
+  "config.instanceUuid",
   "guest.guestFullName",
   "guest.guestFamily",
   "guest.guestId",
@@ -147,6 +153,8 @@ export function parseGuestProperties(xml = "") {
         id: props["guest.guestId"] || null,
       },
       hostname: props["guest.hostName"] || null,
+      biosUuid: props["config.uuid"] || null,
+      instanceUuid: props["config.instanceUuid"] || null,
       ipAddress: props["guest.ipAddress"] || null,
       toolsRunningStatus: running,
       // Tri-state on purpose. null means vCenter did not report the field at
@@ -239,6 +247,8 @@ export function unreadableGuest(vm, reason) {
     powerState: vm?.powerState || null,
     os: { fullName: vm?.guestOS || vm?.osType || null, family: null, id: null },
     hostname: null,
+    biosUuid: null,
+    instanceUuid: null,
     ipAddress: null,
     toolsRunning: null,
     processes: null,

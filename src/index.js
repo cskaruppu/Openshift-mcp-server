@@ -3124,6 +3124,99 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 200, { components: [], capabilities: {}, error: err.message }); }
       }
 
+      // ── Fleet-wide, across clusters ─────────────────────────────────────
+      // The same vCenter is frequently registered in more than one cluster's
+      // MTV — a hub and a DR site, or two teams who each added it. Assessed per
+      // cluster, one machine is counted twice and can be a candidate in one run
+      // and blocked in another. This assesses each cluster, then merges on a
+      // real identity and reports what disagreed rather than smoothing it.
+      if (url.pathname === "/api/containerize/fleet" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const targets = body.clusters || [];
+          if (!targets.length) return sendJson(res, 400, { error: "Name the clusters to assess, each with the source provider to read." });
+
+          const gd = await import("./services/guest-discovery.js");
+          const cr = await import("./services/containerization-readiness.js");
+          const fleet = await import("./services/fleet-containerization.js");
+          const registry = await import("./services/vcenter-registry.js");
+          // Imported here, not borrowed from the /api/migration/ block: this
+          // route lives outside it, and reaching for a binding declared in
+          // another scope is the "mig is not defined" bug the scope checker
+          // exists to catch.
+          const mig = await import("./services/vm-migration.js");
+          const vcStore = await vcSettingsStore().catch(() => ({}));
+          const creds = body.guestUsername && body.guestPassword
+            ? { "*": { username: body.guestUsername, password: body.guestPassword } }
+            : (body.guestCredentials || null);
+
+          const observations = [], perCluster = [];
+          for (const t of targets) {
+            const cUrl = new URL(url.href);
+            cUrl.searchParams.set("cluster", t.cluster);
+            const one = { cluster: t.cluster, provider: t.provider || null, machines: 0, reason: null };
+            try {
+              const mtv = await withClusterContext(cUrl, async () => mig.checkMtvReadiness());
+              const sp = (mtv?.sources || []).find((x) => x.uid === t.provider || x.name === t.provider) || (mtv?.sources || [])[0] || null;
+              if (!sp) { one.reason = "No source provider is registered in this cluster's MTV."; perCluster.push(one); continue; }
+              one.provider = sp.name;
+              one.vcenter = sp.url || null;
+
+              const vms = await withClusterContext(cUrl, async () => mig.discoverVMs(sp.uid, { search: body.search || "" }));
+              const selection = (vms || []).slice(0, Math.max(1, body.limit || 200));
+              if (!selection.length) { one.reason = "No machines were returned by this provider."; perCluster.push(one); continue; }
+
+              const cfg = await withClusterContext(cUrl, async () => registry.resolveForProvider(
+                sp, vcStore, async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
+              ));
+              const { guests } = await gd.discoverGuests(selection, { cfg, guestCredentials: creds });
+              const results = cr.scoreSelection(selection, guests);
+              for (const [i, vm] of selection.entries()) {
+                observations.push({
+                  cluster: t.cluster, provider: sp.name, vcenterUrl: sp.url || cfg?.url || null,
+                  vm, guest: guests.get(vm.id || vm.name) || null, result: results[i],
+                });
+              }
+              one.machines = selection.length;
+            } catch (e) {
+              // One unreachable cluster must not lose the rest of the estate.
+              one.reason = e.message;
+            }
+            perCluster.push(one);
+          }
+
+          return sendJson(res, 200, {
+            ...fleet.fleetAnalysis(observations, { flows: body.flows || null }),
+            perCluster,
+            verdictLabels: cr.VERDICT_LABEL,
+          });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // The document the assessment ends in. CSV for the register people work
+      // from, HTML that prints to PDF for the pack that goes to a board.
+      if (url.pathname === "/api/containerize/export" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          if (!body.fleet?.machines) return sendJson(res, 400, { error: "Run a fleet assessment first." });
+          const rep = await import("./services/containerization-report.js");
+          const meta = {
+            at: new Date().toISOString().replace("T", " ").slice(0, 16),
+            actor: req.user?.name || "operator",
+            clusters: body.clusters || [],
+            credentialSupplied: body.credentialSupplied === true,
+          };
+          const format = (body.format || "html").toLowerCase();
+          const isCsv = format === "csv";
+          const out = isCsv ? rep.toCsv(body.fleet, meta) : rep.toHtml(body.fleet, meta);
+          res.writeHead(200, {
+            "Content-Type": isCsv ? "text/csv; charset=utf-8" : "text/html; charset=utf-8",
+            "Content-Disposition": `attachment; filename="containerisation-assessment.${isCsv ? "csv" : "html"}"`,
+          });
+          return res.end(out);
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       if (url.pathname === "/api/containerize/mta/readiness" && req.method === "GET") {
         try {
           const mta = await import("./services/mta-client.js");

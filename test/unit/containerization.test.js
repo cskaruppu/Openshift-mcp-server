@@ -47,6 +47,26 @@ const processXml = `
 </ListProcessesInGuestResponse>`;
 
 const proc = (name, cmdLine, owner = "root") => ({ pid: 1, name, cmdLine, owner });
+
+/**
+ * What a real Linux guest is also running.
+ *
+ * Fixtures used to be one or two processes, which is not what a machine looks
+ * like — and once partial-view detection landed, a two-process list correctly
+ * stopped reading as a full inventory. Including the system processes makes
+ * these fixtures a machine rather than a sketch.
+ */
+const SYSTEM = [
+  proc("systemd", "/usr/lib/systemd/systemd --switched-root --system"),
+  proc("sshd", "/usr/sbin/sshd -D"),
+  proc("chronyd", "/usr/sbin/chronyd", "chrony"),
+  proc("rsyslogd", "/usr/sbin/rsyslogd -n"),
+  proc("crond", "/usr/sbin/crond -n"),
+  proc("dbus-daemon", "/usr/bin/dbus-daemon --system", "dbus"),
+  proc("agetty", "/sbin/agetty -o -p -- \\u --noclear tty1"),
+  proc("polkitd", "/usr/lib/polkit-1/polkitd", "polkitd"),
+];
+const machine = (...procs) => [...procs, ...SYSTEM];
 const guestWith = (processes, over = {}) => ({
   vmId: "vm-1", name: "vm-1", source: "vcenter-guest+processes", powerState: "poweredOn",
   os: { fullName: "Red Hat Enterprise Linux 9 (64-bit)", family: "linuxGuest", id: "rhel9_64Guest" },
@@ -167,7 +187,7 @@ describe("containerisation readiness — verdicts", () => {
   const tomcat = proc("java", "/usr/lib/jvm/java-17/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap start");
 
   test("a lone app server with nothing else is a candidate", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("sshd", "/usr/sbin/sshd -D")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat)) });
     assert.equal(r.verdict, VERDICTS.READY);
     assert.equal(r.runtimes[0].id, "tomcat");
     assert.equal(r.confidence, "medium", "confidence is capped — ports and units were never read");
@@ -188,7 +208,7 @@ describe("containerisation readiness — verdicts", () => {
       "/usr/lib/jvm/java-17/bin/java -Dcatalina.base=/opt/tomcat -classpath /opt/tomcat/lib:/opt/app/spring-boot-3.1.jar org.apache.catalina.startup.Bootstrap start");
     const rts = detectRuntimes([springOnTomcat]);
     assert.deepEqual(rts.map((r) => r.id), ["tomcat"]);
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([springOnTomcat]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(springOnTomcat)) });
     assert.equal(r.verdict, VERDICTS.READY);
     assert.ok(!r.concerns.some((c) => c.id === "multi-app-host"));
   });
@@ -201,12 +221,12 @@ describe("containerisation readiness — verdicts", () => {
   test("a web server in front of an app is an Ingress, not a second workload", () => {
     const rts = detectRuntimes([tomcat, proc("nginx", "nginx: master process /usr/sbin/nginx")]);
     assert.equal(distinctWorkloads(rts).length, 1);
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("nginx", "nginx: master process /usr/sbin/nginx")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat, proc("nginx", "nginx: master process /usr/sbin/nginx"))) });
     assert.equal(r.verdict, VERDICTS.READY);
   });
 
   test("a local database blocks it, and says the data is the reason", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("postgres", "/usr/bin/postgres -D /var/lib/pgsql/data")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat, proc("postgres", "/usr/bin/postgres -D /var/lib/pgsql/data"))) });
     assert.equal(r.verdict, VERDICTS.VM_ONLY);
     const b = r.blockers.find((x) => x.id === "local-datastore");
     assert.ok(b, "a database on the box must block");
@@ -215,7 +235,7 @@ describe("containerisation readiness — verdicts", () => {
   });
 
   test("two application runtimes need splitting before anything is built", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("node", "/usr/bin/node /srv/api/server.js")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat, proc("node", "/usr/bin/node /srv/api/server.js"))) });
     assert.equal(r.verdict, VERDICTS.WITH_WORK);
     assert.ok(r.concerns.some((c) => c.id === "multi-app-host" && c.required));
   });
@@ -226,14 +246,14 @@ describe("containerisation readiness — verdicts", () => {
       [proc("corosync", "/usr/sbin/corosync -f"), "clustered-service"],
       [proc("lmgrd", "/opt/flexlm/lmgrd -c license.dat"), "licence-daemon"],
     ]) {
-      const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, p]) });
+      const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat, p)) });
       assert.equal(r.verdict, VERDICTS.VM_ONLY, `${id} must block`);
       assert.ok(r.blockers.some((b) => b.id === id));
     }
   });
 
   test("a machine already running containers is not wrapped in another one", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([proc("dockerd", "/usr/bin/dockerd -H fd://")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(proc("dockerd", "/usr/bin/dockerd -H fd://"))) });
     assert.equal(r.verdict, VERDICTS.VM_ONLY);
     const b = r.blockers.find((x) => x.id === "already-container-host");
     assert.match(b.action, /retirement candidate/);
@@ -252,25 +272,25 @@ describe("containerisation readiness — verdicts", () => {
   });
 
   test("agents are reported but do not block", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("splunkd", "/opt/splunkforwarder/bin/splunkd")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat, proc("splunkd", "/opt/splunkforwarder/bin/splunkd"))) });
     assert.equal(r.verdict, VERDICTS.READY, "a log forwarder is not a reason to keep a VM");
     assert.ok(r.concerns.some((c) => c.id === "agent-monitoring"));
   });
 
   test("nothing recognised is inconclusive, not a rejection", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([proc("acme-daemon", "/opt/acme/bin/acmed --config /etc/acme.conf")]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(proc("acme-daemon", "/opt/acme/bin/acmed --config /etc/acme.conf"))) });
     assert.equal(r.verdict, VERDICTS.INCONCLUSIVE);
     assert.match(r.concerns.find((c) => c.id === "no-recognised-runtime").detail, /bespoke binary/);
   });
 
   test("an unreported guest OS makes the OS check not run, rather than pass", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat], { os: { fullName: null } }) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat), { os: { fullName: null } }) });
     assert.ok(r.unchecked.some((u) => u.fact === "guestOS"));
     assert.ok(r.coverage.ran < r.coverage.total);
   });
 
   test("every scored machine lists the facts no process list can carry", () => {
-    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat]) });
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat)) });
     for (const f of ["listeningPorts", "services", "kernelModules"]) {
       assert.ok(r.unchecked.some((u) => u.fact === f), `${f} must be declared unread`);
     }
@@ -282,9 +302,9 @@ describe("the funnel", () => {
   const tomcat = proc("java", "/usr/bin/java -Dcatalina.base=/opt/t org.apache.catalina.startup.Bootstrap");
   test("unread machines are not counted as candidates, and both rates are shown", () => {
     const results = [
-      scoreContainerisation({ vm: { id: "1" }, guest: guestWith([tomcat]) }),                                   // ready
-      scoreContainerisation({ vm: { id: "2" }, guest: guestWith([tomcat, proc("node", "/usr/bin/node a.js")]) }), // with work
-      scoreContainerisation({ vm: { id: "3" }, guest: guestWith([proc("Xorg", "/usr/lib/Xorg :0")]) }),           // vm-only
+      scoreContainerisation({ vm: { id: "1" }, guest: guestWith(machine(tomcat)) }),                                   // ready
+      scoreContainerisation({ vm: { id: "2" }, guest: guestWith(machine(tomcat, proc("node", "/usr/bin/node a.js"))) }), // with work
+      scoreContainerisation({ vm: { id: "3" }, guest: guestWith(machine(proc("Xorg", "/usr/lib/Xorg :0"))) }),           // vm-only
       scoreContainerisation({ vm: { id: "4" }, guest: guestWith(null, { processReason: "no credential" }) }),     // unreadable
       scoreContainerisation({ vm: { id: "5" }, guest: guestWith(null, { powerState: "poweredOff" }) }),           // off
     ];
@@ -298,7 +318,7 @@ describe("the funnel", () => {
   });
 
   test("scoreSelection joins on id then name", () => {
-    const guests = new Map([["vm-1", guestWith([tomcat], { vmId: "vm-1" })]]);
+    const guests = new Map([["vm-1", guestWith(machine(tomcat), { vmId: "vm-1" })]]);
     const out = scoreSelection([{ id: "vm-1", name: "a" }, { id: "vm-2", name: "b" }], guests);
     assert.equal(out[0].verdict, VERDICTS.READY);
     assert.equal(out[1].verdict, VERDICTS.UNREADABLE, "a machine with no guest record is unread, not ready");
@@ -313,7 +333,7 @@ const { containerfileFor, CONVENTIONAL_PORT, NO_BASE_IMAGE } =
 
 describe("build proposal", () => {
   const tomcat = proc("java", "/usr/lib/jvm/java-17/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap start");
-  const score = (procs, over) => scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith(procs, over) });
+  const score = (procs, over) => scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith(procs && machine(...procs), over) });
 
   test("a candidate gets a Containerfile and manifests", () => {
     const p = proposeContainerBuild(score([tomcat]), { appName: "sap-app" });
@@ -405,7 +425,7 @@ describe("build proposal", () => {
 
 test("the proposed Deployment is hardened, not merely generated", () => {
   const tomcat = proc("java", "/usr/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap");
-  const p = proposeContainerBuild(scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith([tomcat]) }));
+  const p = proposeContainerBuild(scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith(machine(tomcat)) }));
   const dep = p.manifests.find((m) => m.kind === "Deployment").json;
   const pod = dep.spec.template.spec;
   assert.equal(pod.securityContext.runAsNonRoot, true);
@@ -416,4 +436,40 @@ test("the proposed Deployment is hardened, not merely generated", () => {
   // A workload lifted off a VM is the likeliest thing in the estate to have
   // assumed root; taking it away in the proposal makes it a review argument
   // rather than an audit finding.
+});
+
+describe("partial process views", () => {
+  const tomcat = proc("java", "/usr/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap", "tomcat");
+
+  test("a list showing only the credential's own processes cannot read as ready", () => {
+    // The blind spot this closes: an unprivileged guest account sees its own
+    // processes and little else, so the database beside the app stays invisible
+    // and the machine scores clean.
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("java", "/usr/bin/java -jar helper.jar", "tomcat")]) });
+    assert.notEqual(r.verdict, VERDICTS.READY);
+    const c = r.concerns.find((x) => x.id === "partial-process-view");
+    assert.ok(c && c.required);
+    assert.match(c.detail, /owned by "tomcat"/);
+    assert.match(c.action, /root or a sudo-capable account/);
+  });
+
+  test("a handful of processes on a running Linux guest is a slice, not an inventory", () => {
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith([tomcat, proc("sshd", "/usr/sbin/sshd -D")]) });
+    assert.ok(r.concerns.some((x) => x.id === "partial-process-view"));
+  });
+
+  test("a real machine's process list does not trip it", () => {
+    const r = scoreContainerisation({ vm: { id: "v" }, guest: guestWith(machine(tomcat)) });
+    assert.equal(r.verdict, VERDICTS.READY);
+    assert.ok(!r.concerns.some((x) => x.id === "partial-process-view"));
+  });
+
+  test("Windows is exempt from the count rule — it genuinely runs fewer", () => {
+    const r = scoreContainerisation({
+      vm: { id: "v" },
+      guest: guestWith([proc("w3wp.exe", "c:\\inetsrv\\w3wp.exe", "IIS APPPOOL"), proc("services.exe", "c:\\windows\\services.exe", "SYSTEM")],
+        { os: { fullName: "Microsoft Windows Server 2019 (64-bit)" } }),
+    });
+    assert.ok(!r.concerns.some((x) => x.id === "partial-process-view"));
+  });
 });
