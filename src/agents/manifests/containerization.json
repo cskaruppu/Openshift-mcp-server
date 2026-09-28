@@ -28,7 +28,10 @@
   "tools": [
     "containerize_assess",
     "containerize_inspect_guest",
-    "containerize_plan"
+    "containerize_plan",
+    "containerize_toolchain_check",
+    "containerize_code_analysis",
+    "containerize_build_manifests"
   ],
   "services": [],
   "capabilities": [
@@ -49,7 +52,13 @@
     "Propose the OpenShift manifests that would run it: Deployment with runAsNonRoot, a read-only root filesystem and all capabilities dropped, plus Service, Route and a default-deny NetworkPolicy",
     "List every assumption behind the proposal separately from the findings — the port above all, which is a convention rather than a reading",
     "Refuse to generate anything for a machine that was blocked, powered off, unreadable or inconclusive, and say which of those it was",
-    "Refuse a licensed runtime such as WebLogic or WebSphere rather than inventing a base image for it"
+    "Refuse a licensed runtime such as WebLogic or WebSphere rather than inventing a base image for it",
+    "Hand code analysis to Red Hat MTA rather than reproducing it — discovers MTA across every API group it has shipped under (mta.konveyor.io, tackle.konveyor.io, konveyor.io), finds its Hub route, and reports a permissions problem as a permissions problem rather than as 'not installed'",
+    "Show MTA's findings beside the agent's own, each attributed to its source and never blended into one score: MTA reports what is wrong inside the code, the agent what is wrong around it on the machine",
+    "Carry MTA's effort estimate in its own story points, multiplied by incidents rather than by rules, and exclude unestimated findings from the total instead of scoring them zero",
+    "Propose the build on tooling the customer already owns: an OpenShift ImageStream and a BuildConfig carrying the reviewed Containerfile inline, so what was read is what gets built",
+    "Propose a binary build that needs no git repository, because an application on a twelve-year-old VM very often is not in one",
+    "Propose a Tekton pipeline using the Buildah, git-clone and openshift-client ClusterTasks that ship with OpenShift Pipelines, leaving the image scanner unpinned for the customer to choose"
   ],
   "boundaries": [
     "Read-only. Builds no image, writes nothing to any guest, creates nothing on the target cluster.",
@@ -59,6 +68,8 @@
     "Scores no machine it could not read, and counts no unread machine as a candidate.",
     "Proposes only. Builds no image, tags nothing, pushes nothing, deploys nothing.",
     "Cannot extract the application's files, because it executes nothing in the guest — the Containerfile is a scaffold with placeholder COPY paths, and says so in its own header.",
-    "Sets no CPU or memory requests. A VM's shape is not a container's requirement, and copying one to the other is the most expensive mistake available here."
+    "Sets no CPU or memory requests. A VM's shape is not a container's requirement, and copying one to the other is the most expensive mistake available here.",
+    "Submits no artefact to MTA. MTA analyses a war, jar or repository; this agent executes nothing in a guest and cannot extract one, so a human or a pipeline supplies it.",
+    "Starts no build and runs no pipeline. Every manifest is proposed for a human to apply."
   ]
 }

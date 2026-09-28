@@ -3108,6 +3108,47 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
+    // ── Red Hat MTA, and the build layer ────────────────────────────────
+    // The customer's own toolchain does the analysis and the building. MTA
+    // reports what is wrong inside the code and carries Red Hat's name; the
+    // agent reports what is wrong around it. Neither produces both columns,
+    // and they are deliberately never blended into one score.
+      if (url.pathname === "/api/containerize/mta/readiness" && req.method === "GET") {
+        try {
+          const mta = await import("./services/mta-client.js");
+          return sendJson(res, 200, await withClusterContext(url, async () => mta.mtaReadiness()));
+        } catch (err) { return sendJson(res, 200, { ok: false, installed: false, blocking: [{ code: "error", message: err.message }] }); }
+      }
+
+      // Findings for one application MTA has already analysed. Submitting an
+      // artefact is NOT done here: MTA reads a war, a jar or a repository, and
+      // this agent executes nothing in a guest, so it has none to give. The
+      // artefact comes from a human or a pipeline, and saying so is the honest
+      // shape of the handoff.
+      if (url.pathname === "/api/containerize/mta/issues" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const mta = await import("./services/mta-client.js");
+          const ready = await withClusterContext(url, async () => mta.mtaReadiness());
+          if (!ready.ok) return sendJson(res, 200, { ok: false, reason: (ready.blocking[0] || ready.warnings[0])?.message || "MTA is not usable on this cluster.", readiness: ready });
+          if (!body.application) return sendJson(res, 400, { error: "Name the application in MTA whose findings you want." });
+          const out = await mta.applicationIssues(ready.hubUrl, body.application, { token: body.token || null });
+          return sendJson(res, 200, { ok: true, flavour: ready.flavour, ...out });
+        } catch (err) { return sendJson(res, 200, { ok: false, reason: err.message }); }
+      }
+
+      // The build, on tooling the customer already owns: a BuildConfig with the
+      // reviewed Containerfile inline, an ImageStream, and a Tekton pipeline for
+      // once there is a repository. Proposed — nothing is built or started.
+      if (url.pathname === "/api/containerize/build" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          if (!body.plan?.ok) return sendJson(res, 400, { error: "Supply a build proposal. Run the assessment and propose a build first." });
+          const bp = await import("./services/build-pipeline.js");
+          return sendJson(res, 200, bp.proposeBuildPipeline(body.plan, { buildNamespace: body.buildNamespace || null }));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
     // ── UC-10 · VM migration on MTV (Forklift) ──────────────────────────────
     // Read-only up to createPlans; a Plan validates without moving anything;
     // only /migrate moves data, and only for a Plan MTV has marked Ready.

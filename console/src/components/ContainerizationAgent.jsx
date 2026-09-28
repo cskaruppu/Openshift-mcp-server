@@ -75,6 +75,15 @@ export default function ContainerizationAgent({ cluster }) {
   }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadProviders(); }, [loadProviders]);
 
+  const [mta, setMta] = useState(null);
+  useEffect(() => {
+    let live = true;
+    get("/api/containerize/mta/readiness")
+      .then((d) => { if (live) setMta(d); })
+      .catch(() => { if (live) setMta({ ok: false, unknown: true }); });
+    return () => { live = false; };
+  }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
+
   const discover = async () => {
     if (!provider) return;
     setBusy("discover"); setVms(null); setResult(null);
@@ -106,6 +115,7 @@ export default function ContainerizationAgent({ cluster }) {
   return (
     <div>
       <Intro />
+      <Toolchain mta={mta} />
 
       {/* ── Pick the machines ─────────────────────────────────────────── */}
       <div style={card}>
@@ -165,6 +175,53 @@ export default function ContainerizationAgent({ cluster }) {
       )}
 
       {result && <Results result={result} post={post} />}
+    </div>
+  );
+}
+
+
+/**
+ * Where each layer comes from.
+ *
+ * Shown before anything is discovered, because "why should I trust this" is the
+ * first question an architect asks and the honest answer is that most of this
+ * is their own toolchain. The MTA row reports its real state — a customer
+ * seeing "not installed" here and installing it is the integration working.
+ */
+function Toolchain({ mta }) {
+  const rows = [
+    ["VM migration", "MTV / Konveyor Forklift", "ok", "Red Hat, in your subscription"],
+    ["Code analysis", `Red Hat MTA${mta?.flavour ? ` · ${mta.flavour}` : ""}`,
+      mta == null ? "pending" : mta.ok ? "ok" : "missing",
+      mta == null ? "checking…" : mta.ok ? `reachable via ${mta.hubUrlSource}` : (mta.blocking?.[0]?.message || "not usable on this cluster")],
+    ["Build", "OpenShift BuildConfig · Buildah", "ok", "Ships with OpenShift"],
+    ["Pipeline", "Tekton · OpenShift Pipelines", "ok", "Red Hat operator, CNCF project"],
+    ["Run", "OpenShift · KubeVirt", "ok", "Red Hat"],
+    ["Discovery, disposition, evidence", "TCS Agentic AI", "own", "This product"],
+  ];
+  const dot = { ok: "#16a34a", missing: "#b45309", pending: "#94a3b8", own: "#3d5afe" };
+  return (
+    <div style={card}>
+      <div style={label}>Toolchain</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
+        <tbody>
+          {rows.map(([layer, tool, state, note]) => (
+            <tr key={layer} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+              <td style={{ padding: "6px 8px 6px 0", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{layer}</td>
+              <td style={{ padding: "6px 8px", fontWeight: 600 }}>
+                <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%",
+                  background: dot[state], marginRight: 8, verticalAlign: "middle" }} />
+                {tool}
+              </td>
+              <td style={{ padding: "6px 0", color: "var(--muted,#5a6373)" }}>{note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p style={{ margin: "10px 0 0", fontSize: ".8rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
+        Every layer but the last is Red Hat or CNCF. This product decides which machines go where,
+        records why, and hands the work to those tools — it does not reimplement them.
+      </p>
     </div>
   );
 }
@@ -317,6 +374,8 @@ function Plans({ plan }) {
           {p.containerfiles.map((cf) => <Code key={cf.tier} title={`Containerfile — ${cf.tier} (${cf.runtimeLabel})`} text={cf.containerfile} />)}
           {p.manifests.map((m) => <Code key={m.kind + m.name} title={`${m.kind} / ${m.name}`} text={m.yaml.trim()} collapsed />)}
 
+          <BuildProposal plan={p} />
+
           <div style={{ ...label, marginTop: 12 }}>Next</div>
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
             {p.nextSteps.map((n, i) => <li key={i}>{n}</li>)}
@@ -332,6 +391,67 @@ function Plans({ plan }) {
           </ul>
         </>
       )}
+    </div>
+  );
+}
+
+
+/**
+ * The build, on the customer's own tooling. A third explicit act after assess
+ * and propose — by this point they have agreed the verdict and read the
+ * scaffold, and this is the first artefact that could actually run.
+ */
+function BuildProposal({ plan }) {
+  const [build, setBuild] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/containerize/build", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plan }),
+      });
+      const d = await r.json();
+      if (d.error) { showToast(d.error, "err"); return; }
+      setBuild(d);
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(false); }
+  };
+
+  if (!build) {
+    return (
+      <div style={{ marginTop: 12 }}>
+        <button style={btn(false)} onClick={load} disabled={busy}>
+          {busy ? "Proposing…" : "Show how to build it"}
+        </button>
+        <span style={{ marginLeft: 10, fontSize: ".78rem", color: "var(--muted,#5a6373)" }}>
+          BuildConfig, ImageStream and a Tekton pipeline. Starts nothing.
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border,#eef1f7)" }}>
+      <div style={label}>Build it on your own toolchain</div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem", marginBottom: 12 }}>
+        <tbody>
+          {build.toolchain.map((t) => (
+            <tr key={t.component} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+              <td style={{ padding: "5px 8px 5px 0", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{t.component}</td>
+              <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.tool}</td>
+              <td style={{ padding: "5px 0", color: "var(--muted,#5a6373)" }}>{t.provenance}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <Code title="Run it" text={build.commands.join("\n")} />
+      {build.manifests.map((m) => <Code key={m.kind + m.name} title={`${m.kind} / ${m.name}`} text={m.yaml.trim()} collapsed />)}
+
+      <div style={{ ...label, marginTop: 10, color: "#b45309" }}>Before you do</div>
+      <ul style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+        {build.caveats.map((c) => <li key={c.id}><strong>{c.title}.</strong> {c.detail}</li>)}
+      </ul>
     </div>
   );
 }

@@ -18,6 +18,8 @@ import {
   scoreSelection, containerisationFunnel, readinessCoverageNote, VERDICT_LABEL,
 } from "../services/containerization-readiness.js";
 import { proposeContainerBuild } from "../services/containerization-plan.js";
+import { mtaReadiness, applicationIssues, effortSummary, combinedView } from "../services/mta-client.js";
+import { proposeBuildPipeline } from "../services/build-pipeline.js";
 import { resolveForProvider } from "../services/vcenter-registry.js";
 import { ocpGet } from "../utils/openshift-client.js";
 
@@ -183,6 +185,114 @@ export function registerContainerizeTools(server) {
       for (const a of plan.assumptions) out.push(`- **${a.field}** = \`${a.value}\`. ${a.why} _${a.confirm}_`);
       out.push("", "## Next", "");
       plan.nextSteps.forEach((n, i) => out.push(`${i + 1}. ${n}`));
+      return text(out.join("\n"));
+    },
+  );
+
+  server.tool(
+    "containerize_toolchain_check",
+    "Check the open-source toolchain this agent hands work to: Red Hat MTA for code analysis, and what is needed to build. Reports exactly why anything is unusable rather than reporting it as absent.",
+    {},
+    async () => {
+      const mta = await mtaReadiness();
+      const lines = ["# Toolchain", "",
+        "| Layer | Tool | Status |", "|---|---|---|",
+        "| VM migration | MTV / Konveyor Forklift | integrated |",
+        `| Code analysis | Red Hat MTA${mta.flavour ? ` (${mta.flavour})` : ""} | ${mta.ok ? `reachable at ${mta.hubUrl}` : "not usable — see below"} |`,
+        "| Build | OpenShift BuildConfig, Buildah | proposed per machine |",
+        "| Pipeline | Tekton / OpenShift Pipelines | proposed per machine |",
+        "| Run | OpenShift, KubeVirt | integrated |", ""];
+      for (const b of mta.blocking || []) lines.push(`**Blocked — ${b.code}.** ${b.message}`);
+      for (const w of mta.warnings || []) lines.push(`_Warning — ${w.code}._ ${w.message}`);
+      if (mta.ok) lines.push(`MTA Hub discovered via ${mta.hubUrlSource}${mta.namespace ? ` in namespace ${mta.namespace}` : ""}.`);
+      return text(lines.join("\n"));
+    },
+  );
+
+  server.tool(
+    "containerize_code_analysis",
+    "Fetch Red Hat MTA's findings for an application and show them beside this agent's findings from the running machine. The two are never blended: MTA reports what is wrong inside the code, the agent what is wrong around it.",
+    {
+      application: z.string().describe("The application's name or id as MTA knows it"),
+      provider: z.string().optional().describe("MTV source provider, to pair the findings with a machine assessment"),
+      vm: z.string().optional().describe("VM name to assess alongside"),
+      ...credShape,
+    },
+    async ({ application, provider, vm, guestUsername, guestPassword }) => {
+      const ready = await mtaReadiness();
+      if (!ready.ok) {
+        const why = (ready.blocking || [])[0]?.message || (ready.warnings || [])[0]?.message || "MTA is not usable on this cluster.";
+        return text(`Red Hat MTA is not usable here, so there is no code column to show.\n\n${why}`);
+      }
+      let mta;
+      try { mta = await applicationIssues(ready.hubUrl, application); }
+      catch (e) { return text(`MTA is reachable but would not return findings for "${application}": ${e.message}`); }
+
+      let assessment = null;
+      if (provider && vm) {
+        try {
+          const vms = await discoverVMs(provider, { search: vm });
+          const match = (vms || []).find((v) => v.name === vm) || (vms || [])[0];
+          if (match) {
+            const cfg = await resolveVcenterFor(provider);
+            const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
+            const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+            [assessment] = scoreSelection([match], guests);
+          }
+        } catch { /* the code column stands on its own */ }
+      }
+
+      const view = combinedView(assessment, { ok: true, flavour: ready.flavour, ...mta });
+      const out = [`# ${application}`, "", view.division, ""];
+      out.push(`## ${view.platform.source}`, "");
+      if (view.platform.verdict) {
+        out.push(`**${view.platform.verdict}** — ${view.platform.summary}`, "");
+        for (const b of view.platform.blockers) out.push(`- Blocker: ${b.title}`);
+        for (const c of view.platform.concerns) out.push(`- Needs work: ${c.title}`);
+      } else {
+        out.push("_No machine was assessed alongside this application._");
+      }
+      out.push("", `## ${view.code.source}`, "", mta.effort.note, "");
+      for (const i of mta.issues.slice(0, 40)) {
+        out.push(`- **${i.title}** \`${i.id}\`${i.category ? ` · ${i.category}` : ""}${i.effort != null ? ` · ${i.effort} pts × ${i.incidents || 1}` : ""}`);
+        if (i.files.length) out.push(`  ${i.files.join(", ")}`);
+      }
+      if (mta.issues.length > 40) out.push(`- …and ${mta.issues.length - 40} more`);
+      return text(out.join("\n"));
+    },
+  );
+
+  server.tool(
+    "containerize_build_manifests",
+    "Propose the build for an assessed machine on the customer's own toolchain: an ImageStream, a BuildConfig carrying the reviewed Containerfile inline, and a Tekton pipeline. Proposes only — starts nothing.",
+    {
+      provider: z.string().describe("MTV source provider uid or name"),
+      vm: z.string().describe("VM name as the source inventory reports it"),
+      buildNamespace: z.string().optional(),
+      ...credShape,
+    },
+    async ({ provider, vm, buildNamespace, guestUsername, guestPassword }) => {
+      let vms;
+      try { vms = await discoverVMs(provider, { search: vm }); }
+      catch (e) { return text(`Could not read the VM inventory: ${e.message}`); }
+      const match = (vms || []).find((v) => v.name === vm) || (vms || [])[0];
+      if (!match) return text(`No VM named "${vm}" was found.`);
+
+      const cfg = await resolveVcenterFor(provider);
+      const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
+      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+      const [result] = scoreSelection([match], guests);
+      const plan = proposeContainerBuild(result, { appName: match.name });
+      if (!plan.ok) return text(`# ${match.name} — no build proposed\n\n${plan.refusal.message}`);
+
+      const build = proposeBuildPipeline(plan, { buildNamespace });
+      const out = [`# ${plan.machine} — build proposal`, "", "**Nothing has been built or started.**", "",
+        "| Layer | Tool | Where it comes from |", "|---|---|---|"];
+      for (const t of build.toolchain) out.push(`| ${t.component} | ${t.tool} | ${t.provenance} |`);
+      out.push("", "## Run it", "", "```bash", ...build.commands, "```", "", "## Manifests", "");
+      for (const m of build.manifests) out.push(`### ${m.kind} / ${m.name}`, "", "```yaml", m.yaml.trim(), "```", "");
+      out.push("## Before you do", "");
+      for (const c of build.caveats) out.push(`- **${c.title}.** ${c.detail}`);
       return text(out.join("\n"));
     },
   );
