@@ -143,6 +143,11 @@ export async function checkMtvReadiness() {
     // and a hard requirement for anything on vSAN. Read from the provider we
     // are already fetching, so detecting it costs nothing.
     vddkImage: p.spec?.settings?.vddkInitImage || null,
+    // Some MTV deployments set this on the Provider rather than in the secret,
+    // and a vCenter MTV reaches insecurely is one this agent must be allowed
+    // to reach the same way — otherwise the agent reports a certificate error
+    // for a connection the platform team already decided to trust.
+    insecureSkipVerify: /^true$/i.test(String(p.spec?.settings?.insecureSkipVerify ?? "")),
     reason: cond(p, "Ready")?.message || cond(p, "ConnectionTested")?.message || null,
   }));
   const sources = providers.filter((p) => p.isSource);

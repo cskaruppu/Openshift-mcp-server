@@ -192,7 +192,12 @@ export async function resolveForProvider(provider, store = {}, readSecret = null
         const secret = await readSecret(provider.secret.name, provider.secret.namespace);
         const cred = credentialFromMtvSecret(secret, provider.url);
         if (cred?.configured) {
-          return { ...cred, provider: provider.name || null, providerUid: provider.uid || null };
+          // The Provider CR can carry the flag instead of the secret. Honour
+          // either, because a vCenter MTV reaches insecurely is one the
+          // platform team has already decided to trust — and refusing it here
+          // reports a certificate error for a connection that works.
+          const insecure = cred.insecure || provider.insecureSkipVerify === true;
+          return { ...cred, insecure, provider: provider.name || null, providerUid: provider.uid || null };
         }
         mtvNote = `MTV's secret ${provider.secret.namespace}/${provider.secret.name} does not carry a usable username and password.`;
       } catch (e) {

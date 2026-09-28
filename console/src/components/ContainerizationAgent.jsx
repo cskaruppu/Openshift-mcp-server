@@ -94,11 +94,10 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
   const canDiscover = tc?.capabilities?.discover?.ready !== false;
   const discoverBlockers = tc?.capabilities?.discover?.blockedBy || [];
 
-  const discover = async () => {
-    if (!provider) return;
+  const discover = async (acceptCertificate = false) => {
     setBusy("discover"); setVms(null); setResult(null);
     try {
-      const d = await post("/api/containerize/inventory", { provider: provider || undefined, search });
+      const d = await post("/api/containerize/inventory", { provider: provider || undefined, search, acceptCertificate });
       setVms(d.vms || []);
       setInventorySource(d);
       if (d.error) showToast(d.error, "err");
@@ -286,6 +285,21 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
               ? `${inventorySource.total ?? inventorySource.vms.length} machines read from ${inventorySource.vcenter || "vCenter"}${inventorySource.via ? ` via ${inventorySource.via}` : ""}. Templates are excluded.`
               : inventorySource.reason}
           </p>
+        )}
+
+        {/* Offered where the failure happens, not buried in a setting — and
+            scoped to this request, because a trust decision that outlives the
+            conversation in which it was made is how a lab shortcut reaches
+            production. */}
+        {inventorySource?.certificateProblem && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border,#eef1f7)" }}>
+            <button style={btn(false)} onClick={() => discover(true)} disabled={busy === "discover"}>
+              Accept this certificate for this assessment
+            </button>
+            <span style={{ marginLeft: 10, fontSize: ".78rem", color: "var(--muted,#5a6373)" }}>
+              Applies to this request only and is not stored. Prefer mounting the CA — this is the lab answer, not the production one.
+            </span>
+          </div>
         )}
       </div>
 

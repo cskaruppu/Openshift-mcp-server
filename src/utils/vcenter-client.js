@@ -24,6 +24,7 @@
  * worse than one that says so.
  */
 import { Agent, fetch as undiciFetch } from "undici";
+import { caForConnection, clusterTrustBundle } from "./trust-store.js";
 
 /**
  * vCenter appliances are routinely fronted by their own certificate authority,
@@ -39,10 +40,16 @@ import { Agent, fetch as undiciFetch } from "undici";
  */
 const _agents = new Map();
 function agent({ insecure = false, ca = null } = {}) {
-  const key = insecure ? "insecure" : ca ? `ca:${ca.length}:${ca.slice(-48)}` : "verified";
+  // The pod's own trust bundle, merged with whatever the provider carries.
+  // Node ignores the operating system's certificate store and uses its own
+  // compiled-in public roots, which is why MTV — a Go program reading the
+  // system store OpenShift populates — could reach a vCenter this agent could
+  // not. Additive: public roots still apply.
+  const chain = insecure ? null : caForConnection(ca);
+  const key = insecure ? "insecure" : chain ? `ca:${chain.length}:${String(chain[0] || "").slice(-48)}` : "verified";
   if (_agents.has(key)) return _agents.get(key);
   const a = new Agent({
-    connect: { timeout: 15_000, rejectUnauthorized: !insecure, ...(ca && !insecure ? { ca } : {}) },
+    connect: { timeout: 15_000, rejectUnauthorized: !insecure, ...(chain ? { ca: chain } : {}) },
     keepAliveTimeout: 30_000,
     connections: 8,
   });
@@ -58,6 +65,16 @@ function agent({ insecure = false, ca = null } = {}) {
  * certificate each need a completely different fix, and a message that cannot
  * tell them apart sends someone to check the wrong thing for an afternoon.
  */
+/** What this pod actually has to verify with — so the message is specific. */
+function trustNote() {
+  try {
+    const b = clusterTrustBundle();
+    return b.certs.length
+      ? `This pod has ${b.certs.length} certificate authorities loaded (${b.sources.map((x) => x.path).join(", ")}) and none of them signs it. Mount your cluster's CA bundle, put the CA in the provider's secret as cacert, or accept this certificate explicitly for the assessment.`
+      : "This pod has no certificate authorities beyond Node's built-in public roots. Mount your cluster's CA bundle into it, put the CA in the provider's secret as cacert, or accept this certificate explicitly for the assessment.";
+  } catch { return ""; }
+}
+
 export function describeNetworkError(err, url) {
   const cause = err?.cause || err;
   const code = cause?.code || "";
@@ -70,9 +87,9 @@ export function describeNetworkError(err, url) {
     UND_ERR_CONNECT_TIMEOUT: `The connection${at} timed out — usually a firewall or a missing route between the cluster and vCenter.`,
     EHOSTUNREACH: `No route to the vCenter host${at}.`,
     ENETUNREACH: `No route to the vCenter network${at}.`,
-    DEPTH_ZERO_SELF_SIGNED_CERT: `vCenter${at} presents a self-signed certificate that this agent does not trust. MTV was given a CA bundle for it, or told to skip verification — the same has to be true here.`,
-    SELF_SIGNED_CERT_IN_CHAIN: `vCenter's certificate chain${at} is signed by a CA this agent does not trust. Supply that CA, or accept a self-signed certificate for this provider.`,
-    UNABLE_TO_VERIFY_LEAF_SIGNATURE: `vCenter's certificate${at} cannot be verified against the CAs this agent has.`,
+    DEPTH_ZERO_SELF_SIGNED_CERT: `vCenter${at} presents a self-signed certificate that this agent does not trust. MTV was given a CA bundle for it, or told to skip verification — the same has to be true here. ${trustNote()}`,
+    SELF_SIGNED_CERT_IN_CHAIN: `vCenter's certificate chain${at} is signed by a CA this agent does not trust. Supply that CA, or accept a self-signed certificate for this provider. ${trustNote()}`,
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: `vCenter's certificate${at} cannot be verified against the CAs this agent has. ${trustNote()}`,
     CERT_HAS_EXPIRED: `vCenter's certificate${at} has expired.`,
     ERR_TLS_CERT_ALTNAME_INVALID: `vCenter's certificate${at} is issued for a different hostname. MTV may be reaching it by a name this certificate covers and the agent by one it does not.`,
   };

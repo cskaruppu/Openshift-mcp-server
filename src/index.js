@@ -3183,8 +3183,22 @@ async function startSSE() {
             });
           }
 
+          // An explicit, per-request decision to accept a certificate this pod
+          // cannot verify. Deliberately NOT a stored setting: a trust decision
+          // that outlives the conversation in which it was made is how a lab
+          // shortcut ends up in production. It applies to this call only.
+          if (body.acceptCertificate === true) {
+            cfg = { ...cfg, insecure: true };
+            via = `${via || "vCenter"} — certificate accepted for this request only`;
+          }
           const out = await inv.listVcenterInventory({ cfg, search: body.search || "", limit: body.limit || 2000 });
-          return sendJson(res, 200, { ...out, via });
+          return sendJson(res, 200, {
+            ...out, via,
+            // So the console can offer the override at the moment it is needed
+            // rather than making somebody find a setting.
+            certificateProblem: /certificate|self-signed|verify/i.test(out.reason || "") && body.acceptCertificate !== true,
+            insecure: cfg.insecure === true,
+          });
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
