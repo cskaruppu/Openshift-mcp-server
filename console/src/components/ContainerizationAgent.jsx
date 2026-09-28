@@ -62,9 +62,18 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
 
   const cUrl = (p) => clusterUrl(p, cluster);
   const get = async (p) => (await fetch(cUrl(p))).json();
-  const post = async (p, body) => (await fetch(cUrl(p), {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}),
-  })).json();
+  const post = async (p, body) => {
+    let payload;
+    try {
+      payload = JSON.stringify(body || {});
+    } catch (e) {
+      // A circular structure here is always the same mistake — a React event
+      // or a DOM node reaching a request body — and the raw error names
+      // neither the request nor the field.
+      throw new Error(`The request to ${p} could not be built: ${e.message}. This is a bug in the console, not a problem with the cluster.`);
+    }
+    return (await fetch(cUrl(p), { method: "POST", headers: { "Content-Type": "application/json" }, body: payload })).json();
+  };
 
   // The source providers MTV already holds, so a vCenter never has to be
   // configured twice and the two credentials cannot drift apart.
@@ -95,9 +104,13 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
   const discoverBlockers = tc?.capabilities?.discover?.blockedBy || [];
 
   const discover = async (acceptCertificate = false) => {
+    // Coerced rather than trusted. A caller that forwards an event here must
+    // not be able to put a DOM node in a request body — the failure is a
+    // circular-structure error a long way from the mistake.
+    const accept = acceptCertificate === true;
     setBusy("discover"); setVms(null); setResult(null);
     try {
-      const d = await post("/api/containerize/inventory", { provider: provider || undefined, search, acceptCertificate });
+      const d = await post("/api/containerize/inventory", { provider: provider || undefined, search, acceptCertificate: accept });
       setVms(d.vms || []);
       setInventorySource(d);
       if (d.error) showToast(d.error, "err");
@@ -261,7 +274,12 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
             <input style={input} value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="optional" onKeyDown={(e) => e.key === "Enter" && discover()} />
           </div>
-          <button style={btn(true)} onClick={discover}
+          {/* Wrapped, not passed bare. React hands an onClick handler the
+              synthetic event as its first argument, so `onClick={discover}`
+              called discover(event) — and the event arrived where
+              acceptCertificate belongs, turning a boolean into a DOM node that
+              JSON.stringify then choked on with a circular-structure error. */}
+          <button style={btn(true)} onClick={() => discover()}
             disabled={busy === "discover"}
             title={canDiscover ? "" : discoverBlockers.map((b) => b.tool).join(", ") + " is not usable on this cluster"}>
             {busy === "discover" ? "Reading inventory…" : "Discover"}

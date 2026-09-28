@@ -1409,7 +1409,7 @@ export function ChatView() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
                   </button>
                 ) : (
-                  <button className="ac-send-btn" onClick={send} disabled={!input.trim() && !pendingImage} title={pendingImage ? "Analyze screenshot" : "Send"}>
+                  <button className="ac-send-btn" onClick={() => send()} disabled={!input.trim() && !pendingImage} title={pendingImage ? "Analyze screenshot" : "Send"}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                   </button>
                 )}
