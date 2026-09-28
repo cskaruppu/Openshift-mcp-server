@@ -3139,7 +3139,26 @@ async function startSSE() {
       if (url.pathname === "/api/containerize/toolchain" && req.method === "GET") {
         try {
           const tc = await import("./services/toolchain-status.js");
-          return sendJson(res, 200, await withClusterContext(url, async () => tc.toolchainStatus()));
+          // The agent spans the fleet, so its prerequisites do too. Checking
+          // only the cluster the console happens to be pointed at tells an
+          // operator their toolchain is fine while three other clusters have
+          // no OpenShift Virtualization to land a VM on.
+          const wanted = (url.searchParams.get("clusters") || "").split(",").map((x) => x.trim()).filter(Boolean);
+          const here = await withClusterContext(url, async () => tc.toolchainStatus());
+          if (!wanted.length) return sendJson(res, 200, here);
+
+          const perCluster = [];
+          for (const name of wanted) {
+            const cUrl = new URL(url.href);
+            cUrl.searchParams.set("cluster", name);
+            try {
+              const one = await withClusterContext(cUrl, async () => tc.toolchainStatus());
+              perCluster.push({ cluster: name, ...one });
+            } catch (e) {
+              perCluster.push({ cluster: name, components: [], capabilities: {}, error: e.message });
+            }
+          }
+          return sendJson(res, 200, { ...here, perCluster });
         } catch (err) { return sendJson(res, 200, { components: [], capabilities: {}, error: err.message }); }
       }
 

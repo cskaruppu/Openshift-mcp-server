@@ -81,11 +81,12 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
   const [tc, setTc] = useState(null);
   useEffect(() => {
     let live = true;
-    get("/api/containerize/toolchain")
+    const names = clusters.map((c) => c.name || c.id || c).filter(Boolean);
+    get(`/api/containerize/toolchain${names.length ? `?clusters=${encodeURIComponent(names.join(","))}` : ""}`)
       .then((d) => { if (live) setTc(d); })
       .catch(() => { if (live) setTc({ components: [], capabilities: {}, unreachable: true }); });
     return () => { live = false; };
-  }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cluster, clusters.length]);            // eslint-disable-line react-hooks/exhaustive-deps
 
   // Discovery needs MTV and nothing else. Gating it on the build or pipeline
   // tooling would invent a dependency that does not exist — those gate their
@@ -159,7 +160,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
   return (
     <div>
       <Intro />
-      <Toolchain tc={tc} />
+      {scope === "fleet" && tc?.perCluster ? <ToolchainMatrix tc={tc} /> : <Toolchain tc={tc} />}
       <ScopeSwitch scope={scope} setScope={setScope} clusters={clusters} cluster={cluster} />
       {scope === "fleet" && (
         <FleetView clusters={clusters} fleet={fleet} setFleet={setFleet} post={post} creds={creds} setCreds={setCreds} />
@@ -497,6 +498,77 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
  * is their own toolchain. The MTA row reports its real state — a customer
  * seeing "not installed" here and installing it is the integration working.
  */
+
+/**
+ * The toolchain across every cluster.
+ *
+ * The single-cluster table is honest about one cluster and silent about the
+ * rest, which on a fleet is the same as wrong: an operator reads five green
+ * dots and does not learn that three of their clusters have no OpenShift
+ * Virtualization to land a VM on. Rows are clusters, columns are layers, and
+ * every cell that is not green carries its reason underneath.
+ */
+function ToolchainMatrix({ tc }) {
+  const rows = tc.perCluster || [];
+  const layers = (rows[0]?.components || tc.components || []).filter((c) => !c.self);
+  const dot = (c) => (c?.usable ? "#16a34a" : c?.present === null || c === undefined ? "#94a3b8" : "#b45309");
+  const gaps = [];
+  for (const r of rows) {
+    for (const c of r.components || []) {
+      if (!c.self && !c.usable) gaps.push({ cluster: r.cluster, tool: c.tool, reason: c.reason });
+    }
+    if (r.error) gaps.push({ cluster: r.cluster, tool: "this cluster", reason: r.error });
+  }
+
+  return (
+    <div style={card}>
+      <div style={label}>Toolchain — checked on every cluster</div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+          <thead><tr>
+            <th style={{ textAlign: "left", padding: "5px 10px 5px 0", fontSize: ".7rem", textTransform: "uppercase",
+              letterSpacing: ".6px", color: "var(--muted,#5a6373)" }}>Cluster</th>
+            {layers.map((l) => (
+              <th key={l.id} style={{ textAlign: "left", padding: "5px 10px", fontSize: ".7rem", textTransform: "uppercase",
+                letterSpacing: ".6px", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{l.layer}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.cluster} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+                <td style={{ padding: "7px 10px 7px 0", fontWeight: 600, whiteSpace: "nowrap" }}>{r.cluster}</td>
+                {layers.map((l) => {
+                  const c = (r.components || []).find((x) => x.id === l.id);
+                  return (
+                    <td key={l.id} style={{ padding: "7px 10px" }}>
+                      <span title={c?.usable ? "usable" : (c?.reason || "not usable")}
+                        style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: dot(c) }} />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {gaps.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border,#eef1f7)" }}>
+          {gaps.map((g, i) => (
+            <p key={i} style={{ margin: "0 0 6px", fontSize: ".81rem", lineHeight: 1.6, color: "#b45309" }}>
+              <strong>{g.cluster} — {g.tool}.</strong> {g.reason || "Not usable on this cluster."}
+            </p>
+          ))}
+        </div>
+      )}
+      <p style={{ margin: "10px 0 0", fontSize: ".79rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
+        Every layer but this product is Red Hat or CNCF, and every cell is a live API check against that cluster.
+        A cluster missing OpenShift Virtualization has nowhere to land the machines this assessment says to keep as VMs.
+      </p>
+    </div>
+  );
+}
+
 function Toolchain({ tc }) {
   const dot = { ok: "#16a34a", bad: "#b45309", unknown: "#94a3b8", own: "#3d5afe" };
   const state = (c) => (c.self ? "own" : c.usable ? "ok" : c.present === null ? "unknown" : "bad");

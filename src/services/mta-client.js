@@ -36,6 +36,7 @@
  */
 
 import { ocpGet } from "../utils/openshift-client.js";
+import { apiGroupPresent } from "../utils/api-discovery.js";
 import { fetch as undiciFetch, Agent } from "undici";
 
 /**
@@ -63,11 +64,23 @@ const nowIso = () => new Date().toISOString();
  * we may not look at it, which is a role to grant. Reporting that as "not
  * installed" sends someone to reinstall a working product.
  */
-export function mtaAccessVerdict({ status, error }) {
-  if (status === 403) {
+export function mtaAccessVerdict({ status, error, groupServed = null }) {
+  // A 403 alone proves NOTHING about whether MTA is installed. The API server
+  // authorizes before it routes, so a service account with no rule for
+  // mta.konveyor.io is refused identically whether the group is served or does
+  // not exist — and reading that as presence told customers to grant a role for
+  // a product they had never installed. Only discovery settles it.
+  if (status === 403 && groupServed === true) {
     return {
       code: "rbac-denied", rbacDenied: true,
       message: "MTA is installed, but this service account may not read its resources. Grant read on the MTA API group — a cluster-side role binding, no image rebuild.",
+    };
+  }
+  if (status === 403 && groupServed === false) return null;   // not installed; the caller says so
+  if (status === 403) {
+    return {
+      code: "indeterminate",
+      message: "The MTA API group could not be read and API discovery did not answer, so whether MTA is installed is unknown. Grant the system:discovery ClusterRole, or set MTA_HUB_URL if it runs elsewhere.",
     };
   }
   if (status === 404) return null;                 // genuinely absent; the caller says so
@@ -104,6 +117,12 @@ export async function mtaReadiness(env = process.env) {
   // MTA is a real deployment and discovery would never find it.
   const configured = (env.MTA_HUB_URL || "").replace(/\/+$/, "");
 
+  // Which of MTA's API groups this cluster actually serves. Asked once, before
+  // any resource call, because it is the only thing that separates "installed
+  // and not readable" from "not installed".
+  const served = new Map();
+  for (const g of MTA_GROUPS) served.set(g.group, await apiGroupPresent(g.group, g.version));
+
   let found = null;
   // Whether the cluster answered AT ALL. Without this, a cluster we cannot
   // reach looks identical to one where MTA is absent, and the panel tells the
@@ -112,9 +131,17 @@ export async function mtaReadiness(env = process.env) {
   let clusterAnswered = false;
   for (const g of MTA_GROUPS) {
     for (const ns of MTA_NAMESPACES) {
+      const groupServed = served.get(g.group)?.present ?? null;
+      // Not served by this cluster: skip its namespaces entirely rather than
+      // probing four paths that can only produce the same misleading 403.
+      if (groupServed === false) { clusterAnswered = true; break; }
       const r = await safe(`/apis/${g.group}/${g.version}/namespaces/${ns}/tackles`);
       if (r.__status >= 200 || Array.isArray(r.items)) clusterAnswered = true;
-      const verdict = mtaAccessVerdict({ status: r.__status, error: r.__error });
+      const verdict = mtaAccessVerdict({ status: r.__status, error: r.__error, groupServed });
+      if (verdict && !verdict.rbacDenied && verdict.code === "indeterminate") {
+        blocking.push(verdict);
+        return { ok: false, blocking, warnings, installed: null, readable: false, flavour: g.label, namespace: ns, hubUrl: configured || null, checkedAt: nowIso() };
+      }
       if (verdict?.rbacDenied) {
         blocking.push(verdict);
         return { ok: false, blocking, warnings, installed: true, readable: false, flavour: g.label, namespace: ns, hubUrl: configured || null, checkedAt: nowIso() };

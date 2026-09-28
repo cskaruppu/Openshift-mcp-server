@@ -15,12 +15,15 @@ const { scoreContainerisation } = await import("../../src/services/containerizat
 const { proposeContainerBuild } = await import("../../src/services/containerization-plan.js");
 
 describe("MTA readiness signals", () => {
-  test("403 is 'installed but not readable', never 'not installed'", () => {
-    const v = mtaAccessVerdict({ status: 403 });
-    assert.equal(v.rbacDenied, true);
-    assert.match(v.message, /installed/);
-    // Reporting a permissions problem as absence sends someone to reinstall a
-    // product that is running — the same trap the MTV check already avoids.
+  test("a 403 means 'installed but not readable' ONLY when discovery says the group is served", () => {
+    // This test used to assert that any 403 meant installed. It was wrong, and
+    // it encoded the bug: the API server authorizes before it routes, so a
+    // service account with no rule for mta.konveyor.io is refused identically
+    // whether MTA is installed or has never existed. The cluster reported MTA
+    // as installed on an estate that had never had it.
+    assert.equal(mtaAccessVerdict({ status: 403, groupServed: true }).rbacDenied, true);
+    assert.equal(mtaAccessVerdict({ status: 403, groupServed: false }), null, "not served means not installed");
+    assert.equal(mtaAccessVerdict({ status: 403, groupServed: null }).code, "indeterminate");
     assert.equal(mtaAccessVerdict({ status: 404 }), null);
   });
 

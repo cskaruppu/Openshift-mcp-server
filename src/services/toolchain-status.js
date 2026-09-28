@@ -26,7 +26,7 @@
  * Never throws.
  */
 
-import { ocpGet } from "../utils/openshift-client.js";
+import { probeResource } from "../utils/api-discovery.js";
 
 /** What a capability needs before the console should offer it. */
 export const CAPABILITIES = Object.freeze({
@@ -39,28 +39,28 @@ export const CAPABILITIES = Object.freeze({
 
 const COMPONENTS = [
   {
-    id: "mtv", layer: "VM migration", tool: "MTV / Konveyor Forklift",
+    id: "mtv", group: "forklift.konveyor.io", version: "v1beta1", layer: "VM migration", tool: "MTV / Konveyor Forklift",
     provenance: "Red Hat, in your subscription",
     gates: [CAPABILITIES.DISCOVER],
     probe: "/apis/forklift.konveyor.io/v1beta1/providers",
     absent: "MTV is not installed. The Containerization Agent reads its VM inventory and its vCenter credential from MTV, so discovery cannot run without it. Install the Migration Toolkit for Virtualization from OperatorHub.",
   },
   {
-    id: "build", layer: "Build", tool: "OpenShift BuildConfig · Buildah",
+    id: "build", group: "build.openshift.io", version: "v1", layer: "Build", tool: "OpenShift BuildConfig · Buildah",
     provenance: "Ships with OpenShift",
     gates: [CAPABILITIES.BUILD],
     probe: "/apis/build.openshift.io/v1/buildconfigs",
     absent: "The build API is not served by this cluster. On OpenShift it always is; on plain Kubernetes it is not, and the build proposal would produce manifests nothing can apply.",
   },
   {
-    id: "tekton", layer: "Pipeline", tool: "Tekton · OpenShift Pipelines",
+    id: "tekton", group: "tekton.dev", version: "v1", layer: "Pipeline", tool: "Tekton · OpenShift Pipelines",
     provenance: "Red Hat operator, CNCF project",
     gates: [CAPABILITIES.PIPELINE],
     probe: "/apis/tekton.dev/v1/pipelines",
     absent: "OpenShift Pipelines is not installed. The binary build path still works without it — the pipeline is what the build becomes once the application has a repository. Install it from OperatorHub when you get there.",
   },
   {
-    id: "kubevirt", layer: "Run — virtual machines", tool: "OpenShift Virtualization · KubeVirt",
+    id: "kubevirt", group: "kubevirt.io", version: "v1", layer: "Run — virtual machines", tool: "OpenShift Virtualization · KubeVirt",
     provenance: "Red Hat",
     gates: [CAPABILITIES.RUN_VM],
     probe: "/apis/kubevirt.io/v1/virtualmachines",
@@ -77,30 +77,14 @@ const nowIso = () => new Date().toISOString();
  * find out. A null is rendered differently from a false, because "we could not
  * check" and "it is not there" lead somewhere different.
  */
-async function probe(path) {
-  try {
-    await ocpGet(path);
-    return { present: true, readable: true, status: 200, reason: null };
-  } catch (e) {
-    const m = /OCP API (\d{3})/.exec(e.message || "");
-    const status = m ? Number(m[1]) : 0;
-    if (status === 404) return { present: false, readable: true, status, reason: null };
-    if (status === 403) {
-      return {
-        present: true, readable: false, status,
-        reason: "Installed, but this service account may not read it. Grant read on this API group — a cluster-side role binding, no image rebuild.",
-      };
-    }
-    if (status === 401) return { present: null, readable: false, status, reason: "The cluster rejected the credential." };
-    // A cluster that is not reachable at all produces a URL-parse or socket
-    // error, and surfacing that verbatim tells an operator nothing they can
-    // act on — "Failed to parse URL from https://undefined:undefined" is the
-    // API server address being unset, not a missing operator.
-    if (/Failed to parse URL|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|fetch failed/i.test(e.message || "")) {
-      return { present: null, readable: false, status, reason: "This cluster could not be reached, so nothing on it could be checked. The toolchain may well be installed." };
-    }
-    return { present: null, readable: false, status, reason: `Could not be checked: ${e.message}` };
-  }
+async function probe(c) {
+  const r = await probeResource({ group: c.group, version: c.version, path: c.probe });
+  return {
+    present: r.installed, readable: r.readable, status: r.status,
+    // A group that is served but whose resource 404s is installed and simply
+    // has nothing in the namespace we looked in — not a reason to show red.
+    reason: r.installed === false ? c.absent : r.reason,
+  };
 }
 
 /**
@@ -112,12 +96,12 @@ export async function toolchainStatus(opts = {}) {
   const components = [];
 
   for (const c of COMPONENTS) {
-    const r = await probe(c.probe);
+    const r = await probe(c);
     components.push({
       id: c.id, layer: c.layer, tool: c.tool, provenance: c.provenance, gates: c.gates,
       // usable means: it is there AND we can see it. Anything else disables
       // what it gates, with the reason attached rather than a bare red dot.
-      usable: r.present === true && r.readable === true,
+      usable: r.present === true && r.readable === true && r.status === 200,
       present: r.present, readable: r.readable,
       reason: r.present === false ? c.absent : r.reason,
     });
