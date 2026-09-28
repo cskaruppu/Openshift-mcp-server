@@ -75,14 +75,20 @@ export default function ContainerizationAgent({ cluster }) {
   }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadProviders(); }, [loadProviders]);
 
-  const [mta, setMta] = useState(null);
+  const [tc, setTc] = useState(null);
   useEffect(() => {
     let live = true;
-    get("/api/containerize/mta/readiness")
-      .then((d) => { if (live) setMta(d); })
-      .catch(() => { if (live) setMta({ ok: false, unknown: true }); });
+    get("/api/containerize/toolchain")
+      .then((d) => { if (live) setTc(d); })
+      .catch(() => { if (live) setTc({ components: [], capabilities: {}, unreachable: true }); });
     return () => { live = false; };
   }, [cluster]);            // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Discovery needs MTV and nothing else. Gating it on the build or pipeline
+  // tooling would invent a dependency that does not exist — those gate their
+  // own steps, further down, where they actually bite.
+  const canDiscover = tc?.capabilities?.discover?.ready !== false;
+  const discoverBlockers = tc?.capabilities?.discover?.blockedBy || [];
 
   const discover = async () => {
     if (!provider) return;
@@ -115,7 +121,7 @@ export default function ContainerizationAgent({ cluster }) {
   return (
     <div>
       <Intro />
-      <Toolchain mta={mta} />
+      <Toolchain tc={tc} />
 
       {/* ── Pick the machines ─────────────────────────────────────────── */}
       <div style={card}>
@@ -132,10 +138,24 @@ export default function ContainerizationAgent({ cluster }) {
             <input style={input} value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="optional" onKeyDown={(e) => e.key === "Enter" && discover()} />
           </div>
-          <button style={btn(true)} onClick={discover} disabled={!provider || busy === "discover"}>
+          <button style={btn(true)} onClick={discover}
+            disabled={!provider || !canDiscover || busy === "discover"}
+            title={canDiscover ? "" : discoverBlockers.map((b) => b.tool).join(", ") + " is not usable on this cluster"}>
             {busy === "discover" ? "Reading inventory…" : "Discover"}
           </button>
         </div>
+
+        {discoverBlockers.length > 0 && (
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border,#eef1f7)" }}>
+            {discoverBlockers.map((b) => (
+              <p key={b.id} style={{ margin: "0 0 6px", fontSize: ".82rem", lineHeight: 1.6, color: "#b45309" }}>
+                <strong>{b.tool} must be installed first.</strong> {b.reason}
+              </p>
+            ))}
+          </div>
+        )}
+
+        <ProviderScope providers={providers} provider={provider} cluster={cluster} />
       </div>
 
       {vms && (
@@ -174,7 +194,7 @@ export default function ContainerizationAgent({ cluster }) {
         </div>
       )}
 
-      {result && <Results result={result} post={post} />}
+      {result && <Results result={result} post={post} caps={tc?.capabilities} />}
     </div>
   );
 }
@@ -188,40 +208,71 @@ export default function ContainerizationAgent({ cluster }) {
  * is their own toolchain. The MTA row reports its real state — a customer
  * seeing "not installed" here and installing it is the integration working.
  */
-function Toolchain({ mta }) {
-  const rows = [
-    ["VM migration", "MTV / Konveyor Forklift", "ok", "Red Hat, in your subscription"],
-    ["Code analysis", `Red Hat MTA${mta?.flavour ? ` · ${mta.flavour}` : ""}`,
-      mta == null ? "pending" : mta.ok ? "ok" : "missing",
-      mta == null ? "checking…" : mta.ok ? `reachable via ${mta.hubUrlSource}` : (mta.blocking?.[0]?.message || "not usable on this cluster")],
-    ["Build", "OpenShift BuildConfig · Buildah", "ok", "Ships with OpenShift"],
-    ["Pipeline", "Tekton · OpenShift Pipelines", "ok", "Red Hat operator, CNCF project"],
-    ["Run", "OpenShift · KubeVirt", "ok", "Red Hat"],
-    ["Discovery, disposition, evidence", "TCS Agentic AI", "own", "This product"],
-  ];
-  const dot = { ok: "#16a34a", missing: "#b45309", pending: "#94a3b8", own: "#3d5afe" };
+function Toolchain({ tc }) {
+  const dot = { ok: "#16a34a", bad: "#b45309", unknown: "#94a3b8", own: "#3d5afe" };
+  const state = (c) => (c.self ? "own" : c.usable ? "ok" : c.present === null ? "unknown" : "bad");
+
+  if (!tc) return <div style={{ ...card, color: "var(--muted,#5a6373)", fontSize: ".84rem" }}>Checking the toolchain on this cluster…</div>;
+
   return (
     <div style={card}>
-      <div style={label}>Toolchain</div>
+      <div style={label}>Toolchain — checked on this cluster</div>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
         <tbody>
-          {rows.map(([layer, tool, state, note]) => (
-            <tr key={layer} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
-              <td style={{ padding: "6px 8px 6px 0", color: "var(--muted,#5a6373)", whiteSpace: "nowrap" }}>{layer}</td>
-              <td style={{ padding: "6px 8px", fontWeight: 600 }}>
+          {(tc.components || []).map((c) => (
+            <tr key={c.id} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+              <td style={{ padding: "6px 8px 6px 0", color: "var(--muted,#5a6373)", whiteSpace: "nowrap", verticalAlign: "top" }}>{c.layer}</td>
+              <td style={{ padding: "6px 8px", fontWeight: 600, verticalAlign: "top" }}>
                 <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%",
-                  background: dot[state], marginRight: 8, verticalAlign: "middle" }} />
-                {tool}
+                  background: dot[state(c)], marginRight: 8, verticalAlign: "middle" }} />
+                {c.tool}
               </td>
-              <td style={{ padding: "6px 0", color: "var(--muted,#5a6373)" }}>{note}</td>
+              <td style={{ padding: "6px 0", color: c.usable || c.self ? "var(--muted,#5a6373)" : "#b45309", verticalAlign: "top" }}>
+                {/* The reason a layer is unusable is the useful half. A red dot
+                    with no sentence beside it is a support ticket. */}
+                {c.usable || c.self ? c.provenance : (c.reason || "Not usable on this cluster.")}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       <p style={{ margin: "10px 0 0", fontSize: ".8rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
-        Every layer but the last is Red Hat or CNCF. This product decides which machines go where,
-        records why, and hands the work to those tools — it does not reimplement them.
+        Every layer but the last is Red Hat or CNCF, and each row above is a live API check against this
+        cluster rather than a claim. This product decides which machines go where, records why, and hands
+        the work to those tools — it does not reimplement them.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Which vCenter, and whose.
+ *
+ * The source list comes from MTV's Provider objects, which are resources IN the
+ * active cluster — so it is already scoped correctly for a fleet with many
+ * clusters and many vCenters. What it was not doing was SAYING so, which left
+ * an operator with several vCenters unable to tell which one a name referred
+ * to. The URL is what disambiguates two providers both called "vsphere".
+ */
+function ProviderScope({ providers, provider, cluster }) {
+  const p = providers.find((x) => x.uid === provider);
+  if (!providers.length) return null;
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border,#eef1f7)", fontSize: ".8rem", lineHeight: 1.6 }}>
+      <span style={{ color: "var(--muted,#5a6373)" }}>
+        {providers.length} source provider{providers.length === 1 ? "" : "s"} registered in MTV on cluster <strong>{cluster}</strong>.
+        Switch cluster to see the vCenters attached to another one.
+      </span>
+      {p && (
+        <div style={{ marginTop: 4 }}>
+          <strong>{p.name}</strong>
+          {p.url && <span style={{ color: "var(--muted,#5a6373)" }}> · {p.url}</span>}
+          {p.type && <span style={{ color: "var(--muted,#5a6373)" }}> · {p.type}</span>}
+          {p.connected === false && (
+            <span style={{ color: "#b45309", fontWeight: 600 }}> · not connected{p.reason ? ` — ${p.reason}` : ""}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -264,7 +315,7 @@ function GuestCredential({ creds, setCreds }) {
   );
 }
 
-function Results({ result, post }) {
+function Results({ result, post, caps }) {
   const { funnel, results, discovery, verdictLabels = {} } = result;
   const [plan, setPlan] = useState(null);
   const [planning, setPlanning] = useState(false);
@@ -326,7 +377,7 @@ function Results({ result, post }) {
         </div>
       )}
 
-      {plan && <Plans plan={plan} />}
+      {plan && <Plans plan={plan} caps={caps} />}
 
       {assessed.map((r) => <Machine key={r.vmId || r.name} r={r} labels={verdictLabels} />)}
 
@@ -351,7 +402,7 @@ function Results({ result, post }) {
  * rather than below them — read after the YAML they look like a disclaimer, and
  * the port being a guess is the single most consequential thing on this screen.
  */
-function Plans({ plan }) {
+function Plans({ plan, caps }) {
   return (
     <div style={{ ...card, borderColor: "rgba(61,90,254,.25)" }}>
       <strong style={{ fontSize: ".95rem" }}>Proposed builds</strong>
@@ -374,7 +425,7 @@ function Plans({ plan }) {
           {p.containerfiles.map((cf) => <Code key={cf.tier} title={`Containerfile — ${cf.tier} (${cf.runtimeLabel})`} text={cf.containerfile} />)}
           {p.manifests.map((m) => <Code key={m.kind + m.name} title={`${m.kind} / ${m.name}`} text={m.yaml.trim()} collapsed />)}
 
-          <BuildProposal plan={p} />
+          <BuildProposal plan={p} caps={caps} />
 
           <div style={{ ...label, marginTop: 12 }}>Next</div>
           <ol style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
@@ -401,7 +452,7 @@ function Plans({ plan }) {
  * and propose — by this point they have agreed the verdict and read the
  * scaffold, and this is the first artefact that could actually run.
  */
-function BuildProposal({ plan }) {
+function BuildProposal({ plan, caps }) {
   const [build, setBuild] = useState(null);
   const [busy, setBusy] = useState(false);
   const load = async () => {
@@ -417,10 +468,16 @@ function BuildProposal({ plan }) {
     finally { setBusy(false); }
   };
 
+  const blocked = caps?.build?.blockedBy || [];
   if (!build) {
     return (
       <div style={{ marginTop: 12 }}>
-        <button style={btn(false)} onClick={load} disabled={busy}>
+        {blocked.map((b) => (
+          <p key={b.id} style={{ margin: "0 0 8px", fontSize: ".82rem", lineHeight: 1.6, color: "#b45309" }}>
+            <strong>{b.tool} is not usable on this cluster.</strong> {b.reason}
+          </p>
+        ))}
+        <button style={btn(false)} onClick={load} disabled={busy || blocked.length > 0}>
           {busy ? "Proposing…" : "Show how to build it"}
         </button>
         <span style={{ marginLeft: 10, fontSize: ".78rem", color: "var(--muted,#5a6373)" }}>

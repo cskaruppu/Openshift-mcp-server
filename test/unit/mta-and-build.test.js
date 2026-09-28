@@ -144,3 +144,42 @@ describe("the build layer", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+describe("toolchain gating", () => {
+  test("a capability is gated only by what it actually needs", async () => {
+    const { CAPABILITIES } = await import("../../src/services/toolchain-status.js");
+    // The shape the console relies on: discovery must not depend on Tekton.
+    // Inventing that dependency would disable discovery on every cluster that
+    // has not installed OpenShift Pipelines, for no reason.
+    assert.equal(CAPABILITIES.DISCOVER, "discover");
+    assert.equal(CAPABILITIES.PIPELINE, "pipeline");
+    assert.notEqual(CAPABILITIES.DISCOVER, CAPABILITIES.PIPELINE);
+  });
+
+  test("the status call degrades to a shape the console can render", async () => {
+    // No cluster is reachable from the test runner, so every probe fails. The
+    // point is that it still answers, with every row explained, rather than
+    // throwing and leaving the panel blank.
+    const { toolchainStatus } = await import("../../src/services/toolchain-status.js");
+    const out = await toolchainStatus();
+    assert.ok(Array.isArray(out.components) && out.components.length >= 5);
+    for (const c of out.components) {
+      assert.ok(c.layer && c.tool, "every row names its layer and tool");
+      assert.ok(c.usable === true || c.reason, "an unusable row must carry its reason");
+    }
+    const self = out.components.find((c) => c.self);
+    assert.ok(self, "this product's own row is stated, not probed — claiming to have verified itself would be theatre");
+    for (const key of Object.values((await import("../../src/services/toolchain-status.js")).CAPABILITIES)) {
+      assert.ok(out.capabilities[key], `capability ${key} missing`);
+    }
+  });
+});
+
+test("an unreachable cluster is not reported as MTA being absent", async () => {
+  // No cluster is reachable from the test runner, so this is the real path.
+  const { mtaReadiness } = await import("../../src/services/mta-client.js");
+  const r = await mtaReadiness({});
+  assert.equal(r.installed, null, "unknown is not absent — false would tell a customer to install what they may already run");
+  assert.equal(r.blocking[0].code, "cluster-unreachable");
+});

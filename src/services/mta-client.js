@@ -105,9 +105,15 @@ export async function mtaReadiness(env = process.env) {
   const configured = (env.MTA_HUB_URL || "").replace(/\/+$/, "");
 
   let found = null;
+  // Whether the cluster answered AT ALL. Without this, a cluster we cannot
+  // reach looks identical to one where MTA is absent, and the panel tells the
+  // customer to install a product they may already be running — the precise
+  // mistake this module exists to avoid, made against itself.
+  let clusterAnswered = false;
   for (const g of MTA_GROUPS) {
     for (const ns of MTA_NAMESPACES) {
       const r = await safe(`/apis/${g.group}/${g.version}/namespaces/${ns}/tackles`);
+      if (r.__status >= 200 || Array.isArray(r.items)) clusterAnswered = true;
       const verdict = mtaAccessVerdict({ status: r.__status, error: r.__error });
       if (verdict?.rbacDenied) {
         blocking.push(verdict);
@@ -119,6 +125,14 @@ export async function mtaReadiness(env = process.env) {
   }
 
   if (!found && !configured) {
+    if (!clusterAnswered) {
+      blocking.push({
+        code: "cluster-unreachable",
+        message: "This cluster could not be reached, so whether MTA is installed could not be checked. It may well be.",
+      });
+      // installed: null, not false. Unknown is not absent.
+      return { ok: false, blocking, warnings, installed: null, readable: false, hubUrl: null, checkedAt: nowIso() };
+    }
     blocking.push({
       code: "not-installed",
       message: "The Migration Toolkit for Applications is not installed on this cluster. Install the MTA operator from OperatorHub, or set MTA_HUB_URL if it runs elsewhere.",

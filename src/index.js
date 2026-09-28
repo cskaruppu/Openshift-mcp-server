@@ -3113,6 +3113,17 @@ async function startSSE() {
     // reports what is wrong inside the code and carries Red Hat's name; the
     // agent reports what is wrong around it. Neither produces both columns,
     // and they are deliberately never blended into one score.
+      // Every layer, probed against this cluster. The first version of the
+      // toolchain table drew four of its five rows green from a literal, which
+      // is worse than omitting them: a green dot on the one panel whose whole
+      // purpose is to be checkable.
+      if (url.pathname === "/api/containerize/toolchain" && req.method === "GET") {
+        try {
+          const tc = await import("./services/toolchain-status.js");
+          return sendJson(res, 200, await withClusterContext(url, async () => tc.toolchainStatus()));
+        } catch (err) { return sendJson(res, 200, { components: [], capabilities: {}, error: err.message }); }
+      }
+
       if (url.pathname === "/api/containerize/mta/readiness" && req.method === "GET") {
         try {
           const mta = await import("./services/mta-client.js");
