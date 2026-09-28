@@ -57,6 +57,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
   const [sel, setSel] = useState({});
   const [creds, setCreds] = useState({ username: "", password: "" });
   const [result, setResult] = useState(null);
+  const [posture, setPosture] = useState(null);
   const [busy, setBusy] = useState(null);
 
   const cUrl = (p) => clusterUrl(p, cluster);
@@ -116,6 +117,41 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
       });
       if (d.error) { showToast(d.error, "err"); return; }
       setResult(d);
+      // The OS and platform picture for the same machines. Separate call so a
+      // slow cluster read cannot delay the verdicts, and a failure here loses
+      // a panel rather than the assessment.
+      post("/api/containerize/os-support", { vms: selection, advise: true })
+        .then((o) => { if (!o.error) setPosture(o); })
+        .catch(() => { /* the panel simply does not appear */ });
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(null); }
+  };
+
+  /**
+   * Re-read only the machines whose guest credential was rejected.
+   *
+   * A fleet where most machines share one account and a handful have their own
+   * is the normal case. Re-running everything to pick those up wastes a long
+   * read and, worse, invites someone to run the whole thing again with the
+   * second credential and keep the wrong half.
+   */
+  const retryRejected = async (names, extra) => {
+    if (!names.length || !extra.username || !extra.password) return;
+    setBusy("assess");
+    try {
+      const perMachine = Object.fromEntries(names.map((n) => [n, { username: extra.username, password: extra.password }]));
+      const d = await post("/api/containerize/assess", {
+        vms: selection.filter((v) => names.includes(v.name)),
+        provider,
+        guestCredentials: perMachine,
+      });
+      if (d.error) { showToast(d.error, "err"); return; }
+      // Merge: the retried machines replace their old rows, everything else stands.
+      setResult((prev) => {
+        const replaced = new Map(d.results.map((r) => [r.name, r]));
+        const results = prev.results.map((r) => replaced.get(r.name) || r);
+        return { ...prev, results, funnel: recount(results, prev.funnel) };
+      });
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
@@ -201,7 +237,8 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         </div>
       )}
 
-      {result && <Results result={result} post={post} caps={tc?.capabilities} />}
+      {posture && <OsSupport posture={posture} />}
+      {result && <Results result={result} post={post} caps={tc?.capabilities} onRetry={retryRejected} />}
       </>)}
     </div>
   );
@@ -489,7 +526,7 @@ function GuestCredential({ creds, setCreds }) {
   );
 }
 
-function Results({ result, post, caps }) {
+function Results({ result, post, caps, onRetry }) {
   const { funnel, results, discovery, verdictLabels = {} } = result;
   const [plan, setPlan] = useState(null);
   const [planning, setPlanning] = useState(false);
@@ -552,6 +589,8 @@ function Results({ result, post, caps }) {
       )}
 
       {plan && <Plans plan={plan} caps={caps} />}
+
+      {(discovery.retryable || []).length > 0 && <RetryRejected names={discovery.retryable} onRetry={onRetry} />}
 
       {assessed.map((r) => <Machine key={r.vmId || r.name} r={r} labels={verdictLabels} />)}
 
@@ -712,6 +751,143 @@ function Code({ title, text, collapsed = false }) {
         <pre style={{ margin: "6px 0 0", padding: 12, borderRadius: 8, overflow: "auto", maxHeight: 340,
           background: "var(--code-bg,#0f172a)", color: "#e2e8f0", fontSize: ".74rem", lineHeight: 1.55,
           fontFamily: "SF Mono, Fira Code, monospace" }}>{text}</pre>
+      )}
+    </div>
+  );
+}
+
+
+/** Keep the headline honest after a partial re-read. */
+function recount(results, prev) {
+  const NOT = new Set(["unreadable", "powered-off"]);
+  const total = results.length;
+  const assessed = results.filter((r) => !NOT.has(r.verdict)).length;
+  const candidates = results.filter((r) => ["container-ready", "container-with-work"].includes(r.verdict)).length;
+  return {
+    ...prev, total, assessed, notAssessed: total - assessed, candidates,
+    candidatePctOfEstate: total ? Math.round((candidates / total) * 100) : 0,
+    candidatePctOfAssessed: assessed ? Math.round((candidates / assessed) * 100) : 0,
+    note: assessed === total
+      ? `All ${total} machines were assessed.`
+      : `${assessed} of ${total} machines were assessed. ${total - assessed} could not be read.`,
+  };
+}
+
+/**
+ * Machines whose guest credential was rejected, offered as a group.
+ *
+ * The alternative — one identical sentence per machine — makes the operator do
+ * the grouping themselves, and a fleet with two or three service accounts is
+ * completely ordinary.
+ */
+function RetryRejected({ names, onRetry }) {
+  const [extra, setExtra] = useState({ username: "", password: "" });
+  return (
+    <div style={{ ...card, borderColor: "rgba(217,119,6,.3)" }}>
+      <div style={{ ...label, color: "#b45309" }}>
+        {names.length} machine{names.length === 1 ? "" : "s"} rejected the credential
+      </div>
+      <p style={{ margin: "0 0 10px", fontSize: ".83rem", lineHeight: 1.6 }}>
+        {names.join(", ")} — these have a different local account. Supply it and only these are re-read;
+        the machines that answered are not touched.
+      </p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <input style={{ ...input, flex: "1 1 180px" }} placeholder="Username for these machines"
+          value={extra.username} onChange={(e) => setExtra((c) => ({ ...c, username: e.target.value }))} autoComplete="off" />
+        <input style={{ ...input, flex: "1 1 180px" }} type="password" placeholder="Password"
+          value={extra.password} onChange={(e) => setExtra((c) => ({ ...c, password: e.target.value }))} autoComplete="new-password" />
+        <button style={btn(true)} disabled={!extra.username || !extra.password}
+          onClick={() => onRetry(names, extra)}>Re-read these {names.length}</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Guest OS and platform.
+ *
+ * Three sources on one panel, kept apart: what the dated matrix says, what the
+ * cluster actually ships, and — if a model is configured — a narrative that is
+ * labelled as narrative. The support levels are never the model's.
+ */
+function OsSupport({ posture }) {
+  const STATUS = {
+    corroborated: { fg: "#15803d", text: "matrix and cluster agree" },
+    documented: { fg: "#b45309", text: "matrix only — no boot source here" },
+    "image-without-support-claim": { fg: "#b45309", text: "cluster ships an image the matrix does not list" },
+    "matrix-only": { fg: "#64748b", text: "no boot source on this cluster" },
+  };
+  const LEVEL = { supported: "#15803d", unsupported: "#b91c1c", caveats: "#b45309", unknown: "#64748b" };
+  const a = posture.advice;
+
+  return (
+    <div style={card}>
+      <div style={label}>Guest OS and platform support</div>
+      <p style={{ margin: "0 0 10px", fontSize: ".84rem", lineHeight: 1.6 }}>{posture.headline}</p>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem", marginBottom: 10 }}>
+        <thead><tr>
+          {["Distribution", "Machines", "Matrix", "On this cluster"].map((h) => (
+            <th key={h} style={{ textAlign: "left", padding: "5px 8px 5px 0", fontSize: ".7rem",
+              textTransform: "uppercase", letterSpacing: ".6px", color: "var(--muted,#5a6373)" }}>{h}</th>
+          ))}
+        </tr></thead>
+        <tbody>
+          {posture.distributions.map((d) => (
+            <tr key={d.distro} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+              <td style={{ padding: "6px 8px 6px 0", fontWeight: 600 }}>{d.distro}</td>
+              <td style={{ padding: "6px 8px", width: 70 }}>{d.count}</td>
+              <td style={{ padding: "6px 8px", color: LEVEL[d.level] || "#64748b", fontWeight: 600 }}>
+                {d.level}{d.tierLabel ? <span style={{ display: "block", fontWeight: 400, fontSize: ".74rem", color: "var(--muted,#5a6373)" }}>{d.tierLabel}</span> : null}
+              </td>
+              <td style={{ padding: "6px 0", color: STATUS[d.status]?.fg || "var(--muted,#5a6373)" }}>{STATUS[d.status]?.text || d.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p style={{ margin: 0, fontSize: ".78rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
+        Matrix read {posture.matrix.asOf} — {posture.matrix.age?.note}{" "}
+        <a href={posture.matrix.url} target="_blank" rel="noreferrer" style={{ color: "#3d5afe" }}>Red Hat's certified list</a>.
+        {posture.cluster.openshift ? ` Cluster is OpenShift ${posture.cluster.openshift}.` : " The OpenShift version could not be read."}
+        {posture.images.readable
+          ? ` ${posture.images.images.length} boot sources read from this cluster.`
+          : ` ${posture.images.reason}`}
+      </p>
+
+      {a && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border,#eef1f7)" }}>
+          <div style={label}>Reading of this — narrative</div>
+          {!a.available ? (
+            <p style={{ margin: 0, fontSize: ".82rem", color: "var(--muted,#5a6373)" }}>{a.reason}</p>
+          ) : (
+            <>
+              <p style={{ margin: "0 0 10px", fontSize: ".86rem", lineHeight: 1.6, fontWeight: 600 }}>{a.advice.headline}</p>
+              {a.advice.themes.map((t) => (
+                <p key={t.title} style={{ margin: "0 0 8px", fontSize: ".83rem", lineHeight: 1.6 }}>
+                  <strong>{t.title}.</strong> {t.detail}{t.machines ? <span style={{ color: "var(--muted,#5a6373)" }}> ({t.machines})</span> : null}
+                </p>
+              ))}
+              {a.advice.sequence.length > 0 && (
+                <>
+                  <div style={{ ...label, marginTop: 10 }}>Suggested order</div>
+                  <ol style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+                    {a.advice.sequence.map((x, i) => <li key={i}>{x}</li>)}
+                  </ol>
+                </>
+              )}
+              {a.advice.confirm.length > 0 && (
+                <>
+                  <div style={{ ...label, marginTop: 10, color: "#b45309" }}>Confirm before this goes in a document</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+                    {a.advice.confirm.map((x, i) => <li key={i}>{x}</li>)}
+                  </ul>
+                </>
+              )}
+              <p style={{ margin: "10px 0 0", fontSize: ".78rem", color: "var(--muted,#5a6373)", fontStyle: "italic" }}>{a.caveat}</p>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

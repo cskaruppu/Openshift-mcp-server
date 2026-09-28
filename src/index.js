@@ -3067,11 +3067,20 @@ async function startSSE() {
             async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
           )).catch(() => ({ configured: false, source: "error", reason: null }));
 
-          const creds = body.guestUsername && body.guestPassword
-            ? { "*": { username: body.guestUsername, password: body.guestPassword } }
-            : (body.guestCredentials || null);
+          // Credentials merge rather than replace: a fleet where most machines
+          // share one account and a handful have their own is the normal case,
+          // and forcing one credential per run would mean running it twice and
+          // reconciling the halves by hand. Per-machine keys win over the
+          // wildcard, which credentialFor() already resolves in that order.
+          const creds = {
+            ...(body.guestCredentials || {}),
+            ...(body.guestUsername && body.guestPassword
+              ? { "*": { username: body.guestUsername, password: body.guestPassword } }
+              : {}),
+          };
+          const haveCreds = Object.keys(creds).length > 0;
 
-          const discovery = await gd.discoverGuests(vms, { cfg: vcCfg, guestCredentials: creds });
+          const discovery = await gd.discoverGuests(vms, { cfg: vcCfg, guestCredentials: haveCreds ? creds : null });
           const results = cr.scoreSelection(vms, discovery.guests);
 
           return sendJson(res, 200, {
@@ -3082,7 +3091,17 @@ async function startSSE() {
               source: discovery.source,
               reason: discovery.reason,
               coverage: discovery.coverage,
-              credentialSupplied: Boolean(creds),
+              credentialSupplied: haveCreds,
+              // What went wrong, grouped. The console offers a retry for the
+              // machines whose credential was rejected without re-reading the
+              // ones that answered.
+              failures: discovery.coverage?.failures || {},
+              retryable: results
+                .filter((r) => {
+                  const g = discovery.guests.get(r.vmId || r.name);
+                  return g?.processFailure === "credential-rejected";
+                })
+                .map((r) => r.name),
               vcenter: vcCfg.url || null,
               credential: vcCfg.source || null,
               provider: sourceProvider?.name || null,
@@ -3214,6 +3233,27 @@ async function startSSE() {
             "Content-Disposition": `attachment; filename="containerisation-assessment.${isCsv ? "csv" : "html"}"`,
           });
           return res.end(out);
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // Guest OS and platform support. The matrix is DATA, dated and
+      // overridable; the cluster is EVIDENCE; and the two are reconciled rather
+      // than one being trusted alone. No model supplies a support level here —
+      // asked whether an OS is supported, a model answers confidently from
+      // training data of unknown vintage, and that answer ends up in a business
+      // case.
+      if (url.pathname === "/api/containerize/os-support" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const os = await import("./services/os-support.js");
+          const posture = await withClusterContext(url, async () => os.supportPosture(body.vms || []));
+          // The narrative is opt-in and additive. Every figure above it was
+          // computed before the model was consulted, and the response says so.
+          if (body.advise) {
+            const adv = await import("./services/containerization-advice.js");
+            posture.advice = await adv.adviseOnAssessment({ posture, fleet: body.fleet || null });
+          }
+          return sendJson(res, 200, posture);
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 

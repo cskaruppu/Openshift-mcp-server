@@ -204,6 +204,15 @@ export function parseProcessList(xml = "") {
  * completely different fixes — "could not read processes" as a single message
  * sends someone to the wrong team every time.
  */
+export function categoriseGuestOpError(message = "") {
+  const m = String(message);
+  if (/InvalidGuestLogin|Failed to authenticate/i.test(m)) return "credential-rejected";
+  if (/GuestOperationsUnavailable|guest operations agent|not (?:currently )?(?:running|available)/i.test(m)) return "tools-not-answering";
+  if (/NoPermission|Permission to perform this operation was denied|GuestOperations\.Query/i.test(m)) return "vcenter-privilege";
+  if (/NotSupported|not supported/i.test(m)) return "guest-unsupported";
+  return "other";
+}
+
 export function describeGuestOpError(message = "") {
   const m = String(message);
   if (/InvalidGuestLogin|Failed to authenticate/i.test(m)) {
@@ -274,7 +283,7 @@ export function unreadableGuest(vm, reason) {
  */
 export async function discoverGuests(vms = [], { cfg = null, guestCredentials = null } = {}) {
   cfg = cfg || vcenterConfig();
-  const coverage = { total: vms.length, properties: 0, processes: 0 };
+  const coverage = { total: vms.length, properties: 0, processes: 0, failures: {} };
   const guests = new Map();
 
   if (!cfg.configured) {
@@ -354,16 +363,19 @@ export async function discoverGuests(vms = [], { cfg = null, guestCredentials = 
     // hunting a credential problem that does not exist.
     if (g.powerState && !/poweredOn/i.test(g.powerState)) {
       g.processReason = `The machine is ${g.powerState}. Nothing can be read from inside a machine that is not running.`;
+      g.processFailure = "powered-off";
       continue;
     }
     if (g.toolsRunning === false) {
       g.processReason = "VMware Tools is not running in this guest, so what runs inside it cannot be read.";
+      g.processFailure = "tools-not-running";
       continue;
     }
 
     const cred = credentialFor(vm, guestCredentials);
     if (!cred) {
       g.processReason = "No guest credential was supplied for this machine.";
+      g.processFailure = "no-credential";
       continue;
     }
 
@@ -379,6 +391,11 @@ export async function discoverGuests(vms = [], { cfg = null, guestCredentials = 
       coverage.processes++;
     } catch (e) {
       g.processReason = describeGuestOpError(e.message);
+      // Categorised as well as described: a fleet where forty machines share
+      // one root password and ten have their own needs those ten GROUPED, not
+      // ten identical sentences the operator has to read one at a time.
+      g.processFailure = categoriseGuestOpError(e.message);
+      coverage.failures[g.processFailure] = (coverage.failures[g.processFailure] || 0) + 1;
     }
   }
 
