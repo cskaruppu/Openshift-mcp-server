@@ -164,7 +164,7 @@ export default function ContainerizationAgent({ cluster }) {
         </div>
       )}
 
-      {result && <Results result={result} />}
+      {result && <Results result={result} post={post} />}
     </div>
   );
 }
@@ -207,8 +207,23 @@ function GuestCredential({ creds, setCreds }) {
   );
 }
 
-function Results({ result }) {
+function Results({ result, post }) {
   const { funnel, results, discovery, verdictLabels = {} } = result;
+  const [plan, setPlan] = useState(null);
+  const [planning, setPlanning] = useState(false);
+
+  // Proposing is a second, explicit act. The assessment is the thing a customer
+  // argues with; generating a scaffold before they have agreed the verdict puts
+  // YAML in front of a decision nobody has made yet.
+  const propose = async () => {
+    setPlanning(true);
+    try {
+      const d = await post("/api/containerize/plan", { results });
+      if (d.error) { showToast(d.error, "err"); return; }
+      setPlan(d);
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setPlanning(false); }
+  };
   const assessed = results.filter((r) => !NOT_ASSESSED.has(r.verdict));
   const notAssessed = results.filter((r) => NOT_ASSESSED.has(r.verdict));
 
@@ -243,6 +258,19 @@ function Results({ result }) {
         )}
       </div>
 
+      {funnel.candidates > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <button style={btn(true)} onClick={propose} disabled={planning}>
+            {planning ? "Proposing…" : `Propose a build for the ${funnel.candidates} candidate${funnel.candidates === 1 ? "" : "s"}`}
+          </button>
+          <span style={{ marginLeft: 12, fontSize: ".8rem", color: "var(--muted,#5a6373)" }}>
+            Proposes a Containerfile and manifests. Builds nothing, pushes nothing, deploys nothing.
+          </span>
+        </div>
+      )}
+
+      {plan && <Plans plan={plan} />}
+
       {assessed.map((r) => <Machine key={r.vmId || r.name} r={r} labels={verdictLabels} />)}
 
       {/* Kept in their own band on purpose. An unread machine folded in with
@@ -255,6 +283,84 @@ function Results({ result }) {
           </h4>
           {notAssessed.map((r) => <Machine key={r.vmId || r.name} r={r} labels={verdictLabels} />)}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * The proposal. Assumptions are given their own block, above the artefacts
+ * rather than below them — read after the YAML they look like a disclaimer, and
+ * the port being a guess is the single most consequential thing on this screen.
+ */
+function Plans({ plan }) {
+  return (
+    <div style={{ ...card, borderColor: "rgba(61,90,254,.25)" }}>
+      <strong style={{ fontSize: ".95rem" }}>Proposed builds</strong>
+      <p style={{ margin: "6px 0 14px", fontSize: ".84rem", color: "var(--muted,#5a6373)" }}>{plan.note}</p>
+
+      {plan.plans.map((p) => (
+        <div key={p.machine} style={{ marginBottom: 20, paddingBottom: 16, borderBottom: "1px solid var(--border,#eef1f7)" }}>
+          <div style={{ fontWeight: 700, fontSize: ".9rem", marginBottom: 2 }}>{p.machine}</div>
+          <div style={{ fontSize: ".8rem", color: "var(--muted,#5a6373)", marginBottom: 10 }}>
+            namespace {p.namespace} · {p.tiers.length} tier{p.tiers.length === 1 ? "" : "s"}
+          </div>
+
+          <div style={{ ...label, color: "#b45309" }}>Confirm before building</div>
+          <ul style={{ margin: "0 0 14px", paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+            {p.assumptions.map((a) => (
+              <li key={a.id}><strong>{a.field}</strong> = <code>{String(a.value)}</code> — {a.why} <em>{a.confirm}</em></li>
+            ))}
+          </ul>
+
+          {p.containerfiles.map((cf) => <Code key={cf.tier} title={`Containerfile — ${cf.tier} (${cf.runtimeLabel})`} text={cf.containerfile} />)}
+          {p.manifests.map((m) => <Code key={m.kind + m.name} title={`${m.kind} / ${m.name}`} text={m.yaml.trim()} collapsed />)}
+
+          <div style={{ ...label, marginTop: 12 }}>Next</div>
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+            {p.nextSteps.map((n, i) => <li key={i}>{n}</li>)}
+          </ol>
+        </div>
+      ))}
+
+      {plan.refused.length > 0 && (
+        <>
+          <div style={label}>No build proposed — {plan.refused.length}</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: ".82rem", lineHeight: 1.65 }}>
+            {plan.refused.map((r) => <li key={r.machine}><strong>{r.machine}</strong> — {r.message}</li>)}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Code({ title, text, collapsed = false }) {
+  const [open, setOpen] = useState(!collapsed);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+    catch { showToast("Could not copy — select the text instead.", "err"); }
+  };
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+        <button onClick={() => setOpen((v) => !v)}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: ".82rem",
+            fontWeight: 700, color: "#3d5afe", fontFamily: "inherit", textAlign: "left" }}>
+          {open ? "▾" : "▸"} {title}
+        </button>
+        {open && (
+          <button onClick={copy} style={{ ...btn(false), padding: "4px 10px", fontSize: ".74rem" }}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+        )}
+      </div>
+      {open && (
+        <pre style={{ margin: "6px 0 0", padding: 12, borderRadius: 8, overflow: "auto", maxHeight: 340,
+          background: "var(--code-bg,#0f172a)", color: "#e2e8f0", fontSize: ".74rem", lineHeight: 1.55,
+          fontFamily: "SF Mono, Fira Code, monospace" }}>{text}</pre>
       )}
     </div>
   );

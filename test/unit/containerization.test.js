@@ -304,3 +304,116 @@ describe("the funnel", () => {
     assert.equal(out[1].verdict, VERDICTS.UNREADABLE, "a machine with no guest record is unread, not ready");
   });
 });
+
+// ---------------------------------------------------------------------------
+const { proposeContainerBuild, proposeForSelection, planRefusal } =
+  await import("../../src/services/containerization-plan.js");
+const { containerfileFor, CONVENTIONAL_PORT, NO_BASE_IMAGE } =
+  await import("../../src/services/containerfile-templates.js");
+
+describe("build proposal", () => {
+  const tomcat = proc("java", "/usr/lib/jvm/java-17/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap start");
+  const score = (procs, over) => scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith(procs, over) });
+
+  test("a candidate gets a Containerfile and manifests", () => {
+    const p = proposeContainerBuild(score([tomcat]), { appName: "sap-app" });
+    assert.equal(p.ok, true);
+    assert.equal(p.containerfiles.length, 1);
+    assert.match(p.containerfiles[0].containerfile, /^FROM registry\.access\.redhat\.com\/ubi9\/openjdk-17-runtime/m);
+    assert.ok(p.manifests.some((m) => m.kind === "Deployment"));
+    assert.ok(p.manifests.some((m) => m.kind === "Service"));
+    assert.ok(p.manifests.some((m) => m.kind === "Route"), "the primary tier is reachable");
+  });
+
+  test("the image never runs as root, because OpenShift will not let it", () => {
+    const cf = proposeContainerBuild(score([tomcat])).containerfiles[0].containerfile;
+    assert.match(cf, /^USER 1001$/m);
+    assert.doesNotMatch(cf, /systemd|sshd|rsyslog/i, "a container runs one process");
+  });
+
+  test("the assumed port is declared as an assumption, not presented as a finding", () => {
+    const p = proposeContainerBuild(score([tomcat]));
+    assert.equal(p.tiers[0].port, CONVENTIONAL_PORT.tomcat);
+    const a = p.assumptions.find((x) => x.id.startsWith("port-"));
+    assert.ok(a, "the port must be listed as assumed");
+    assert.match(a.why, /never read/i);
+  });
+
+  test("the scaffold says outright that the application files were not seen", () => {
+    const p = proposeContainerBuild(score([tomcat]));
+    const a = p.assumptions.find((x) => x.id === "artifact");
+    assert.match(a.why, /cannot extract/i);
+    assert.match(p.containerfiles[0].containerfile, /THIS IS A SCAFFOLD/);
+  });
+
+  test("resources are left unset rather than copied from the VM's shape", () => {
+    const p = proposeContainerBuild(score([tomcat]));
+    assert.equal(p.tiers[0].resources, undefined);
+    assert.ok(p.assumptions.some((a) => a.id === "resources" && /not set/.test(a.value)));
+  });
+
+  test("a blocked machine is refused, with the blocker as the reason", () => {
+    const p = proposeContainerBuild(score([tomcat, proc("postgres", "/usr/bin/postgres -D /var/lib/pgsql/data")]));
+    assert.equal(p.ok, false);
+    assert.equal(p.refusal.code, "local-datastore");
+    assert.match(p.refusal.message, /PostgreSQL/);
+  });
+
+  test("an unread machine is refused — a scaffold from no data is a guess in YAML", () => {
+    const p = proposeContainerBuild(score(null, { processReason: "No guest credential was supplied." }));
+    assert.equal(p.ok, false);
+    assert.equal(p.refusal.code, "unreadable");
+  });
+
+  test("a powered-off machine and an inconclusive one refuse differently", () => {
+    assert.equal(planRefusal(score(null, { powerState: "poweredOff" })).code, "powered-off");
+    assert.equal(planRefusal(score([proc("acme", "/opt/acme/bin/acmed")])).code, "inconclusive");
+  });
+
+  test("two workloads become two tiers, and only one is exposed", () => {
+    const p = proposeContainerBuild(score([tomcat, proc("node", "/usr/bin/node /srv/api/server.js")]), { appName: "billing" });
+    assert.equal(p.ok, true);
+    assert.equal(p.tiers.length, 2);
+    assert.equal(p.tiers.filter((t) => t.expose).length, 1);
+    assert.ok(p.assumptions.some((a) => a.id === "exposure"));
+    assert.match(p.nextSteps[0], /Resolve first/, "the split comes before the build");
+  });
+
+  test("a reverse proxy does not become a second image", () => {
+    const p = proposeContainerBuild(score([tomcat, proc("nginx", "nginx: master process /usr/sbin/nginx")]));
+    assert.equal(p.tiers.length, 1, "nginx in front of an app is a Route, not an image to build");
+  });
+
+  test("licensed runtimes are refused rather than given a made-up base image", () => {
+    const r = containerfileFor({ id: "weblogic", label: "Oracle WebLogic" }, { machine: "x" });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /licens/i);
+    assert.ok(NO_BASE_IMAGE.websphere);
+  });
+
+  test("a selection keeps its refusals visible beside its proposals", () => {
+    const out = proposeForSelection([
+      score([tomcat]),
+      score([tomcat, proc("postgres", "/usr/bin/postgres -D /var/lib/pgsql")]),
+      score(null, { processReason: "no credential" }),
+    ]);
+    assert.equal(out.plans.length, 1);
+    assert.equal(out.refused.length, 2);
+    assert.match(out.note, /1 of 3/);
+  });
+});
+
+test("the proposed Deployment is hardened, not merely generated", () => {
+  const tomcat = proc("java", "/usr/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap");
+  const p = proposeContainerBuild(scoreContainerisation({ vm: { id: "vm-1" }, guest: guestWith([tomcat]) }));
+  const dep = p.manifests.find((m) => m.kind === "Deployment").json;
+  const pod = dep.spec.template.spec;
+  assert.equal(pod.securityContext.runAsNonRoot, true);
+  const c = pod.containers[0].securityContext;
+  assert.equal(c.allowPrivilegeEscalation, false);
+  assert.equal(c.readOnlyRootFilesystem, true);
+  assert.deepEqual(c.capabilities.drop, ["ALL"]);
+  // A workload lifted off a VM is the likeliest thing in the estate to have
+  // assumed root; taking it away in the proposal makes it a review argument
+  // rather than an audit finding.
+});

@@ -7,13 +7,28 @@
   "icon": "package",
   "color": "#7c3aed",
   "mcpEndpoint": "/mcp/containerization",
-  "protocols": ["mcp", "rest", "a2a"],
-  "requires": ["core"],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
+  "requires": [
+    "core"
+  ],
   "selectable": true,
-  "tags": ["containerization", "modernization", "vmware", "vcenter", "guest-discovery", "assessment", "replatform"],
+  "tags": [
+    "containerization",
+    "modernization",
+    "vmware",
+    "vcenter",
+    "guest-discovery",
+    "assessment",
+    "replatform"
+  ],
   "tools": [
     "containerize_assess",
-    "containerize_inspect_guest"
+    "containerize_inspect_guest",
+    "containerize_plan"
   ],
   "services": [],
   "capabilities": [
@@ -29,13 +44,21 @@
     "Name every fact that could not be read — listening ports, unit files, packages, scheduled jobs, kernel modules, config — and cap confidence because of them",
     "Distinguish a machine that answered with no processes from one that could not be read at all",
     "Tell apart the four reasons guest operations fail: a rejected guest credential, VMware Tools not answering, a missing vCenter privilege, and an unsupported guest",
-    "Report the candidate rate twice — against the whole estate and against the machines that answered — so a pilot is not sold on the second number"
+    "Report the candidate rate twice — against the whole estate and against the machines that answered — so a pilot is not sold on the second number",
+    "Propose a Containerfile per detected runtime on a UBI base — non-root, no systemd, an explicit USER, and a probe wired to the port",
+    "Propose the OpenShift manifests that would run it: Deployment with runAsNonRoot, a read-only root filesystem and all capabilities dropped, plus Service, Route and a default-deny NetworkPolicy",
+    "List every assumption behind the proposal separately from the findings — the port above all, which is a convention rather than a reading",
+    "Refuse to generate anything for a machine that was blocked, powered off, unreadable or inconclusive, and say which of those it was",
+    "Refuse a licensed runtime such as WebLogic or WebSphere rather than inventing a base image for it"
   ],
   "boundaries": [
     "Read-only. Builds no image, writes nothing to any guest, creates nothing on the target cluster.",
     "Executes no command inside a guest. Listening ports, systemd units, installed packages and configuration files are therefore reported as unread rather than as absent.",
     "Never returns high confidence, because the facts that would justify it cannot be read without executing something in the guest.",
     "Guest credentials are supplied per call and never persisted.",
-    "Scores no machine it could not read, and counts no unread machine as a candidate."
+    "Scores no machine it could not read, and counts no unread machine as a candidate.",
+    "Proposes only. Builds no image, tags nothing, pushes nothing, deploys nothing.",
+    "Cannot extract the application's files, because it executes nothing in the guest — the Containerfile is a scaffold with placeholder COPY paths, and says so in its own header.",
+    "Sets no CPU or memory requests. A VM's shape is not a container's requirement, and copying one to the other is the most expensive mistake available here."
   ]
 }

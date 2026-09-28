@@ -3091,6 +3091,23 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
+
+      // The step after the verdict: a Containerfile and the manifests that
+      // would run the result. It PROPOSES — nothing is built, tagged, pushed or
+      // deployed — and it refuses for any machine the assessment did not clear,
+      // because a scaffold generated from no data is a guess wearing YAML.
+      if (url.pathname === "/api/containerize/plan" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const results = body.results || [];
+          if (!results.length) return sendJson(res, 400, { error: "No assessed machines were supplied. Run the assessment first." });
+          const plan = await import("./services/containerization-plan.js");
+          return sendJson(res, 200, plan.proposeForSelection(results, {
+            namespace: body.namespace || null, appName: body.appName || null,
+          }));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
     // ── UC-10 · VM migration on MTV (Forklift) ──────────────────────────────
     // Read-only up to createPlans; a Plan validates without moving anything;
     // only /migrate moves data, and only for a Plan MTV has marked Ready.

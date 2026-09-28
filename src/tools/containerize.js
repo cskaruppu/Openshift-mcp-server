@@ -17,6 +17,7 @@ import { discoverGuests } from "../services/guest-discovery.js";
 import {
   scoreSelection, containerisationFunnel, readinessCoverageNote, VERDICT_LABEL,
 } from "../services/containerization-readiness.js";
+import { proposeContainerBuild } from "../services/containerization-plan.js";
 import { resolveForProvider } from "../services/vcenter-registry.js";
 import { ocpGet } from "../utils/openshift-client.js";
 
@@ -134,6 +135,54 @@ export function registerContainerizeTools(server) {
       }
       out.push("", "Facts no process list can carry, and which were therefore NOT read:");
       for (const u of g.unread || []) out.push(`- ${u.fact}: ${u.reason}`);
+      return text(out.join("\n"));
+    },
+  );
+
+  server.tool(
+    "containerize_plan",
+    "Propose a Containerfile and OpenShift manifests for a VM the assessment cleared. Proposes only — nothing is built, pushed or deployed — and refuses for any machine that was blocked or could not be read.",
+    {
+      provider: z.string().describe("MTV source provider uid or name"),
+      vm: z.string().describe("VM name as the source inventory reports it"),
+      namespace: z.string().optional().describe("Target namespace for the proposal"),
+      ...credShape,
+    },
+    async ({ provider, vm, namespace, guestUsername, guestPassword }) => {
+      let vms;
+      try { vms = await discoverVMs(provider, { search: vm }); }
+      catch (e) { return text(`Could not read the VM inventory: ${e.message}`); }
+      const match = (vms || []).find((v) => v.name === vm) || (vms || [])[0];
+      if (!match) return text(`No VM named "${vm}" was found on provider "${provider}".`);
+
+      const cfg = await resolveVcenterFor(provider);
+      const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
+      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+      const [result] = scoreSelection([match], guests);
+      const plan = proposeContainerBuild(result, { namespace, appName: match.name });
+
+      if (!plan.ok) {
+        return text([
+          `# ${match.name} — no build proposed`, "",
+          plan.refusal.message, "",
+          "Nothing was generated. A scaffold built from a machine that was blocked, or that could not be read, is a guess wearing YAML.",
+        ].join("\n"));
+      }
+
+      const out = [
+        `# ${plan.machine} — proposed build`, "",
+        `Namespace \`${plan.namespace}\` · ${plan.tiers.length} tier${plan.tiers.length === 1 ? "" : "s"} · verdict ${plan.verdict}`,
+        "", "**Nothing has been built, pushed or deployed.**", "",
+      ];
+      for (const cf of plan.containerfiles) {
+        out.push(`## Containerfile — ${cf.tier} (${cf.runtimeLabel})`, "", "```dockerfile", cf.containerfile, "```", "");
+      }
+      out.push("## Manifests", "");
+      for (const m of plan.manifests) out.push(`### ${m.kind} / ${m.name}`, "", "```yaml", m.yaml.trim(), "```", "");
+      out.push("## Assumptions — every one of these needs confirming", "");
+      for (const a of plan.assumptions) out.push(`- **${a.field}** = \`${a.value}\`. ${a.why} _${a.confirm}_`);
+      out.push("", "## Next", "");
+      plan.nextSteps.forEach((n, i) => out.push(`${i + 1}. ${n}`));
       return text(out.join("\n"));
     },
   );
