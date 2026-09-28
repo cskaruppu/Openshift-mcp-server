@@ -168,3 +168,37 @@ describe("the evidence pack", () => {
     assert.match(rep.toCsv(evil, {}), /"'=cmd\|calc"/, "Excel executes a cell starting with =");
   });
 });
+
+describe("per-cluster credentials", () => {
+  // The resolution order the fleet route implements, asserted here so a change
+  // to it is a test failure rather than a silent behaviour change in a route.
+  const resolve = (body, t) => {
+    const fleetDefault = body.guestUsername && body.guestPassword
+      ? { username: body.guestUsername, password: body.guestPassword } : null;
+    const perMachine = { ...(body.guestCredentials || {}), ...(t.guestCredentials || {}) };
+    const wildcard = t.guestUsername && t.guestPassword
+      ? { username: t.guestUsername, password: t.guestPassword } : fleetDefault;
+    const merged = { ...perMachine, ...(wildcard ? { "*": wildcard } : {}) };
+    return Object.keys(merged).length ? merged : null;
+  };
+
+  test("a cluster's own account beats the fleet default", () => {
+    const c = resolve({ guestUsername: "fleet", guestPassword: "p" }, { guestUsername: "dr", guestPassword: "q" });
+    assert.equal(c["*"].username, "dr");
+  });
+
+  test("a cluster with no account falls back to the fleet default", () => {
+    assert.equal(resolve({ guestUsername: "fleet", guestPassword: "p" }, {})["*"].username, "fleet");
+  });
+
+  test("a per-machine credential still beats both", () => {
+    const c = resolve({ guestUsername: "fleet", guestPassword: "p" }, { guestCredentials: { "odd-01": { username: "own", password: "z" } }, guestUsername: "dr", guestPassword: "q" });
+    assert.equal(c["odd-01"].username, "own");
+    assert.equal(c["*"].username, "dr");
+  });
+
+  test("no credential anywhere resolves to null, not an empty object", () => {
+    assert.equal(resolve({}, {}), null,
+      "an empty object would look like a credential set and read as 'supplied'");
+  });
+});

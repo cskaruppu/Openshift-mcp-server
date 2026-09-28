@@ -284,23 +284,37 @@ function ScopeSwitch({ scope, setScope, clusters, cluster }) {
  */
 function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
   const [busy, setBusy] = useState(false);
+  const names = clusters.map((c) => c.name || c.id || c);
+  // Per cluster: whether it is in this run, and the account to use inside its
+  // guests. A fleet where production, DR and a lab each have their own service
+  // account is the ordinary case, and one credential for the estate means the
+  // run silently fails on every cluster but one.
+  const [rows, setRows] = useState(() => Object.fromEntries(names.map((n) => [n, { include: true, username: "", password: "" }])));
+  const [showCreds, setShowCreds] = useState(false);
+  const set = (n, patch) => setRows((r) => ({ ...r, [n]: { ...r[n], ...patch } }));
+  const inScope = names.filter((n) => rows[n]?.include);
+
   const run = async () => {
     setBusy(true);
     try {
       const d = await post("/api/containerize/fleet", {
-        clusters: clusters.map((c) => ({ cluster: c.name || c.id || c })),
+        clusters: inScope.map((n) => ({
+          cluster: n,
+          ...(rows[n].username && rows[n].password
+            ? { guestUsername: rows[n].username, guestPassword: rows[n].password } : {}),
+        })),
         guestUsername: creds.username || undefined,
         guestPassword: creds.password || undefined,
       });
       if (d.error) { showToast(d.error, "err"); return; }
-      setFleet(d);
+      setFleet({ ...d, scope: inScope });
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(false); }
   };
 
   const download = (format) => {
-    const body = JSON.stringify({ fleet, format, clusters: clusters.map((c) => c.name || c.id || c),
-      credentialSupplied: Boolean(creds.username && creds.password) });
+    const body = JSON.stringify({ fleet, format, clusters: fleet?.scope || inScope,
+      credentialSupplied: Boolean(creds.username && creds.password) || inScope.some((n) => rows[n].username) });
     fetch("/api/containerize/export", { method: "POST", headers: { "Content-Type": "application/json" }, body })
       .then((r) => r.blob())
       .then((blob) => {
@@ -313,23 +327,77 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
       .catch((e) => showToast(e.message, "err"));
   };
 
+  const partial = fleet && fleet.scope && fleet.scope.length < names.length;
+
   return (
     <>
       <GuestCredential creds={creds} setCreds={setCreds} />
+
+      <div style={card}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={label}>Clusters in this run — {inScope.length} of {names.length}</div>
+          <button onClick={() => setShowCreds((v) => !v)} style={{ background: "none", border: "none", padding: 0,
+            cursor: "pointer", fontSize: ".8rem", fontWeight: 600, color: "#3d5afe", fontFamily: "inherit" }}>
+            {showCreds ? "Hide" : "Set"} a different account per cluster
+          </button>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem", marginTop: 8 }}>
+          <tbody>
+            {names.map((n) => (
+              <tr key={n} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
+                <td style={{ padding: "7px 8px 7px 0", width: 26 }}>
+                  <input type="checkbox" checked={!!rows[n]?.include} onChange={(e) => set(n, { include: e.target.checked })} />
+                </td>
+                <td style={{ padding: "7px 8px", fontWeight: 600, whiteSpace: "nowrap" }}>{n}</td>
+                {showCreds ? (
+                  <td style={{ padding: "5px 0" }}>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input style={{ ...input, padding: "6px 10px", fontSize: ".8rem" }} placeholder="username in these guests"
+                        value={rows[n]?.username || ""} onChange={(e) => set(n, { username: e.target.value })} autoComplete="off" />
+                      <input style={{ ...input, padding: "6px 10px", fontSize: ".8rem" }} type="password" placeholder="password"
+                        value={rows[n]?.password || ""} onChange={(e) => set(n, { password: e.target.value })} autoComplete="new-password" />
+                    </div>
+                  </td>
+                ) : (
+                  <td style={{ padding: "7px 0", color: "var(--muted,#5a6373)" }}>
+                    {rows[n]?.username ? "its own account" : creds.username ? "the account above" : "no credential — nothing inside will be read"}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ margin: "10px 0 0", fontSize: ".79rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
+          A cluster with its own account uses it; the rest fall back to the account above. Untick a cluster to
+          leave it out — useful for re-reading just the one whose credential was wrong, though the result is then
+          a view of those clusters and not of the estate.
+        </p>
+      </div>
+
       <div style={{ marginBottom: 16 }}>
-        <button style={btn(true)} onClick={run} disabled={busy}>
-          {busy ? `Reading ${clusters.length} clusters…` : `Assess the whole estate`}
+        <button style={btn(true)} onClick={run} disabled={busy || !inScope.length}>
+          {busy ? `Reading ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}…`
+            : inScope.length === names.length ? "Assess the whole estate" : `Assess ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}`}
         </button>
         <span style={{ marginLeft: 12, fontSize: ".8rem", color: "var(--muted,#5a6373)" }}>
-          Reads every cluster's vCenter. Slower than one cluster, and the only number worth quoting.
+          Reads each cluster's vCenter in turn. Slower than one cluster, and the only number worth quoting.
         </span>
       </div>
 
       {fleet && (
         <>
+          {partial && (
+            <div style={{ ...card, borderColor: "rgba(217,119,6,.3)" }}>
+              <p style={{ margin: 0, fontSize: ".83rem", lineHeight: 1.6, color: "#b45309" }}>
+                <strong>This is {fleet.scope.length} of {names.length} clusters, not the estate.</strong> The percentages
+                below describe {fleet.scope.join(", ")} only. Re-run with every cluster ticked before quoting them.
+              </p>
+            </div>
+          )}
+
           <div style={{ ...card, borderColor: "rgba(61,90,254,.25)" }}>
             <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "baseline" }}>
-              <Figure n={fleet.funnel.candidates} of={fleet.funnel.total} pct={fleet.funnel.candidatePctOfEstate} title="of the estate" strong />
+              <Figure n={fleet.funnel.candidates} of={fleet.funnel.total} pct={fleet.funnel.candidatePctOfEstate} title={partial ? "of the clusters read" : "of the estate"} strong />
               <Figure n={fleet.funnel.candidates} of={fleet.funnel.assessed} pct={fleet.funnel.candidatePctOfAssessed} title="of what answered" />
               <Figure n={fleet.distinct} of={fleet.observations} pct={Math.round((fleet.distinct / Math.max(1, fleet.observations)) * 100)} title="distinct machines, after de-duplication" />
             </div>
@@ -363,7 +431,7 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
               <div style={{ ...label, color: "#b45309" }}>The same machine scored differently in two clusters — {fleet.conflicts.length}</div>
               {fleet.conflicts.map((c) => (
                 <p key={c.key} style={{ margin: "0 0 8px", fontSize: ".83rem", lineHeight: 1.6 }}>
-                  <strong>{c.name}</strong> — {c.seenIn.map((s) => `${s.cluster}: ${s.verdict}`).join(" · ")}.
+                  <strong>{c.name}</strong> — {c.seenIn.map((x) => `${x.cluster}: ${x.verdict}`).join(" · ")}.
                   <br /><span style={{ color: "var(--muted,#5a6373)" }}>{c.why}</span>
                 </p>
               ))}
@@ -375,7 +443,7 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
               <div style={label}>Possible duplicates — confirm before trusting the count</div>
               {fleet.possible.map((x) => (
                 <p key={x.name} style={{ margin: "0 0 6px", fontSize: ".82rem" }}>
-                  <strong>{x.name}</strong> matched on {x.basis} ({x.confidence}) across {x.seenIn.map((s) => s.cluster).join(", ")}. {x.note}
+                  <strong>{x.name}</strong> matched on {x.basis} ({x.confidence}) across {x.seenIn.map((y) => y.cluster).join(", ")}. {x.note}
                 </p>
               ))}
             </div>
@@ -383,9 +451,7 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
 
           <div style={{ ...card, background: "var(--card-bg,#f7f9fc)" }}>
             <div style={label}>Dependencies</div>
-            <p style={{ margin: 0, fontSize: ".83rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>
-              {fleet.dependencies.note}
-            </p>
+            <p style={{ margin: 0, fontSize: ".83rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>{fleet.dependencies.note}</p>
           </div>
 
           <div style={card}>
@@ -394,10 +460,21 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
               <tbody>
                 {fleet.perCluster.map((c) => (
                   <tr key={c.cluster} style={{ borderTop: "1px solid var(--border,#eef1f7)" }}>
-                    <td style={{ padding: "6px 8px 6px 0", fontWeight: 600 }}>{c.cluster}</td>
-                    <td style={{ padding: "6px 8px", color: "var(--muted,#5a6373)" }}>{c.provider || "—"}{c.vcenter ? ` · ${c.vcenter}` : ""}</td>
+                    <td style={{ padding: "6px 8px 6px 0", fontWeight: 600, whiteSpace: "nowrap" }}>{c.cluster}</td>
+                    <td style={{ padding: "6px 8px", color: "var(--muted,#5a6373)" }}>
+                      {c.provider || "—"}{c.vcenter ? ` · ${c.vcenter}` : ""}
+                      {c.credential ? <span style={{ display: "block", fontSize: ".76rem" }}>credential: {c.credential}</span> : null}
+                    </td>
                     <td style={{ padding: "6px 0", color: c.reason ? "#b45309" : "var(--muted,#5a6373)" }}>
-                      {c.reason || `${c.machines} machine${c.machines === 1 ? "" : "s"} read`}
+                      {c.reason || `${c.machines} machine${c.machines === 1 ? "" : "s"} read${c.read != null ? `, ${c.read} answered inside` : ""}`}
+                      {/* Which cluster's credential was wrong, named, so one is
+                          fixed rather than the estate re-run blindly. */}
+                      {(c.rejected || []).length > 0 && (
+                        <span style={{ display: "block", color: "#b45309", fontWeight: 600 }}>
+                          {c.rejected.length} rejected this cluster's credential: {c.rejected.slice(0, 6).join(", ")}
+                          {c.rejected.length > 6 ? ` +${c.rejected.length - 6} more` : ""}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -409,6 +486,7 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
     </>
   );
 }
+
 
 
 /**

@@ -3165,15 +3165,33 @@ async function startSSE() {
           // exists to catch.
           const mig = await import("./services/vm-migration.js");
           const vcStore = await vcSettingsStore().catch(() => ({}));
-          const creds = body.guestUsername && body.guestPassword
-            ? { "*": { username: body.guestUsername, password: body.guestPassword } }
-            : (body.guestCredentials || null);
+
+          // Credentials resolve per machine, then per cluster, then fleet-wide.
+          // A fleet where every cluster is a different environment — production
+          // under one service account, DR under another, a lab under a third —
+          // is the ordinary case, and one credential for the estate means the
+          // run silently fails on every cluster but one.
+          const fleetDefault = body.guestUsername && body.guestPassword
+            ? { username: body.guestUsername, password: body.guestPassword } : null;
+          const credsFor = (t) => {
+            const perMachine = { ...(body.guestCredentials || {}), ...(t.guestCredentials || {}) };
+            const wildcard = t.guestUsername && t.guestPassword
+              ? { username: t.guestUsername, password: t.guestPassword }
+              : fleetDefault;
+            const merged = { ...perMachine, ...(wildcard ? { "*": wildcard } : {}) };
+            return {
+              creds: Object.keys(merged).length ? merged : null,
+              source: t.guestUsername && t.guestPassword ? "this cluster" : fleetDefault ? "the fleet default" : null,
+            };
+          };
 
           const observations = [], perCluster = [];
           for (const t of targets) {
             const cUrl = new URL(url.href);
             cUrl.searchParams.set("cluster", t.cluster);
-            const one = { cluster: t.cluster, provider: t.provider || null, machines: 0, reason: null };
+            const { creds, source: credSource } = credsFor(t);
+            const one = { cluster: t.cluster, provider: t.provider || null, machines: 0, reason: null,
+              credential: credSource, failures: {}, rejected: [] };
             try {
               const mtv = await withClusterContext(cUrl, async () => mig.checkMtvReadiness());
               const sp = (mtv?.sources || []).find((x) => x.uid === t.provider || x.name === t.provider) || (mtv?.sources || [])[0] || null;
@@ -3188,8 +3206,15 @@ async function startSSE() {
               const cfg = await withClusterContext(cUrl, async () => registry.resolveForProvider(
                 sp, vcStore, async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
               ));
-              const { guests } = await gd.discoverGuests(selection, { cfg, guestCredentials: creds });
+              const { guests, coverage } = await gd.discoverGuests(selection, { cfg, guestCredentials: creds });
               const results = cr.scoreSelection(selection, guests);
+              one.failures = coverage?.failures || {};
+              // Which machines this cluster's credential was wrong for, so the
+              // operator can fix ONE cluster rather than re-running the estate.
+              one.rejected = selection
+                .filter((vm) => guests.get(vm.id || vm.name)?.processFailure === "credential-rejected")
+                .map((vm) => vm.name);
+              one.read = coverage?.processes || 0;
               for (const [i, vm] of selection.entries()) {
                 observations.push({
                   cluster: t.cluster, provider: sp.name, vcenterUrl: sp.url || cfg?.url || null,
