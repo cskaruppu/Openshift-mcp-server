@@ -359,3 +359,127 @@ export async function applicationIssues(hubUrl, appId, opts = {}) {
   const issues = normaliseIssues(raw);
   return { issues, effort: effortSummary(issues) };
 }
+
+// ---------------------------------------------------------------------------
+// Pushing what we discovered into MTA's inventory
+// ---------------------------------------------------------------------------
+/**
+ * The handoff, made real.
+ *
+ * MTA analyses an artefact — a repository or a binary — and it has no way to
+ * discover a vSphere estate. Its inventory is populated manually, by CSV, or
+ * by platform discovery, and in MTA 8 the only source platform implemented is
+ * Cloud Foundry. So the join between "which machines run Java" and "analyse
+ * that Java" has to be ours to make, and until now it was a sentence in the
+ * UI rather than a thing the product did.
+ *
+ * What this creates is an application record per candidate machine, carrying
+ * the machine's coordinates and what we observed. What it CANNOT supply is the
+ * repository or binary, because this agent never executes anything inside a
+ * guest and therefore has never seen the application's files. That is stated
+ * on every record rather than left for someone to discover when analysis
+ * returns nothing.
+ */
+
+/**
+ * One MTA application from one assessed machine. Pure.
+ *
+ * Field names follow the Hub's documented shape. Versions differ in what they
+ * accept, so anything optional that the Hub rejects should be droppable
+ * without losing the record — which is why the repository block is only
+ * included when a caller actually supplies one.
+ */
+export function applicationPayload({ result = {}, coordinates = null, repository = null, binary = null, actor = "tcs-agentic-ai" } = {}) {
+  const runtimes = (result.runtimes || []).map((r) => r.label).filter(Boolean);
+  const lines = [
+    result.summary || null,
+    runtimes.length ? `Detected runtime: ${runtimes.join(", ")}.` : null,
+    coordinates?.instance ? `Discovered on ${coordinates.instance}.` : null,
+    coordinates?.machineUuid ? `Machine UUID ${coordinates.machineUuid}.` : null,
+    !repository && !binary
+      ? "No repository or binary is attached: this record was created from a running machine, and the agent does not read application files out of a guest. Attach one before running an analysis."
+      : null,
+  ].filter(Boolean);
+
+  const payload = {
+    createUser: actor,
+    name: result.name || coordinates?.name || "unnamed-machine",
+    // MTA's description is where a human looks first, so the caveat goes here
+    // rather than in a tag nobody expands.
+    description: lines.join(" ").slice(0, 900),
+    tags: [],
+  };
+  if (repository?.url) {
+    payload.repository = {
+      kind: repository.kind || "git",
+      url: repository.url,
+      branch: repository.branch || "main",
+      ...(repository.path ? { path: repository.path } : {}),
+    };
+  }
+  if (binary) payload.binary = binary;
+  if (result.businessServiceId) payload.businessService = { id: result.businessServiceId };
+  return payload;
+}
+
+/**
+ * Build the records for a selection, and say which machines get none.
+ *
+ * Only candidates are pushed. Creating an application in MTA for a machine
+ * this assessment said to keep as a VM would put a thing in somebody's
+ * modernisation backlog that the assessment had just ruled out.
+ */
+export function applicationsFor(results = [], { coordinatesByName = {}, repositories = {}, actor } = {}) {
+  const CANDIDATE = new Set(["container-ready", "container-with-work"]);
+  const payloads = [], skipped = [];
+  for (const r of results) {
+    if (!CANDIDATE.has(r.verdict)) {
+      skipped.push({ name: r.name, verdict: r.verdict,
+        reason: "Not a containerisation candidate. Creating an application for it would put a machine in a modernisation backlog that this assessment ruled out." });
+      continue;
+    }
+    payloads.push(applicationPayload({
+      result: r, coordinates: coordinatesByName[r.name] || null,
+      repository: repositories[r.name] || null, actor,
+    }));
+  }
+  return { payloads, skipped };
+}
+
+/**
+ * Create them. PROPOSES BY DEFAULT — `confirm` has to be true to write.
+ *
+ * Writing into somebody else's system is the one thing in this agent that
+ * changes state outside this product, so it is the one thing that asks twice.
+ * Without confirm it returns exactly what it would have sent.
+ */
+export async function pushApplications(hubUrl, payloads = [], { confirm = false, token = null, prefix = null } = {}) {
+  if (!confirm) {
+    return {
+      created: [], failed: [], proposed: payloads, wrote: false,
+      note: `${payloads.length} application record${payloads.length === 1 ? "" : "s"} would be created in MTA. Nothing has been written — review them and confirm.`,
+    };
+  }
+
+  const created = [], failed = [];
+  // Serially, not in parallel: a Hub that starts refusing should be noticed on
+  // the second record rather than after fifty, and the ones already created
+  // are named so a retry does not duplicate them.
+  for (const p of payloads) {
+    try {
+      const r = await hubFetch(hubUrl, "/applications", { method: "POST", body: p, token, prefix });
+      created.push({ name: p.name, id: r?.id ?? null });
+    } catch (e) {
+      failed.push({ name: p.name, reason: e.message });
+      if (/401|403/.test(e.message)) {
+        failed.push({ name: "(stopped)", reason: "The Hub is refusing this credential, so the remaining records were not attempted." });
+        break;
+      }
+    }
+  }
+  return {
+    created, failed, proposed: [], wrote: true,
+    note: `${created.length} created in MTA${failed.length ? `, ${failed.length} failed` : ""}.`
+      + (created.length ? " Each needs a repository or binary attaching before an analysis will return anything." : ""),
+  };
+}

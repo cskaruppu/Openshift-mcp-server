@@ -3188,6 +3188,73 @@ async function startSSE() {
         } catch (err) { return sendJson(res, 400, { error: err.message }); }
       }
 
+      // ── CSV in and out ───────────────────────────────────────────────
+      // How half of this work actually arrives: an estate that is not VMware,
+      // a vCenter nobody will hand over credentials for this quarter, or a
+      // list a customer has maintained in Excel for nine years.
+      if (url.pathname === "/api/containerize/machines.csv" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const csv = await import("./services/machine-csv.js");
+          const out = body.template
+            ? csv.csvTemplate()
+            : csv.toMachineCsv(body.vms || [], {
+              note: "Machines to assess. Edit and import this file back.",
+              source: body.source || null, at: new Date().toISOString().slice(0, 16).replace("T", " "),
+            });
+          res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="machines.csv"` });
+          return res.end(out);
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      if (url.pathname === "/api/containerize/machines/import" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          if (!body.csv) return sendJson(res, 400, { error: "Send the file contents as `csv`." });
+          const csv = await import("./services/machine-csv.js");
+          return sendJson(res, 200, { ...csv.parseMachineCsv(body.csv), source: "csv" });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // ── The discovery manifest, in MTA's shape ───────────────────────
+      if (url.pathname === "/api/containerize/manifest" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const dm = await import("./services/discovery-manifest.js");
+          const entries = (body.entries || []).length ? body.entries
+            : (body.results || []).map((r) => ({ vcenter: body.vcenter || null, vm: { name: r.name }, guest: {}, result: r }));
+          if (!entries.length) return sendJson(res, 400, { error: "Nothing has been assessed yet." });
+          return sendJson(res, 200, dm.discoveryManifest(entries, { actor: req.user?.name || "operator" }));
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
+      // ── Into MTA's application inventory ─────────────────────────────
+      // The only thing this agent does that changes state in somebody else's
+      // system, so it is the only thing that asks twice: without confirm it
+      // returns exactly what it would have sent.
+      if (url.pathname === "/api/containerize/mta/applications" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+          const mta = await import("./services/mta-client.js");
+          const { payloads, skipped } = mta.applicationsFor(body.results || [], {
+            coordinatesByName: body.coordinatesByName || {},
+            repositories: body.repositories || {},
+            actor: req.user?.name || "tcs-agentic-ai",
+          });
+          if (!payloads.length) return sendJson(res, 200, { wrote: false, created: [], failed: [], proposed: [], skipped,
+            note: "No machine in this assessment is a containerisation candidate, so there is nothing to put in MTA." });
+
+          const ready = await withClusterContext(url, async () => mta.mtaReadiness());
+          if (!ready.ok) {
+            return sendJson(res, 200, { wrote: false, created: [], failed: [], proposed: payloads, skipped, readiness: ready,
+              reason: (ready.blocking || [])[0]?.message || "MTA is not usable on this cluster, so nothing could be written." });
+          }
+          const out = await mta.pushApplications(ready.hubUrl, payloads, { confirm: body.confirm === true, token: body.token || null });
+          return sendJson(res, 200, { ...out, skipped, hubUrl: ready.hubUrl, flavour: ready.flavour });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       if (url.pathname === "/api/containerize/toolchain" && req.method === "GET") {
         try {
           const tc = await import("./services/toolchain-status.js");

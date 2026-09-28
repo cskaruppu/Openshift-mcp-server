@@ -289,6 +289,8 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         )}
       </div>
 
+      <CsvIn onLoaded={(d) => { setVms(d.vms); setInventorySource({ ...d, vcenter: null, via: "a CSV you supplied" }); }} />
+
       {vms && (
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -494,6 +496,146 @@ function ReportStep({ fleetMode, fleet, result, cluster, clusters, creds, onRest
         <button style={btn(false)} onClick={() => download("csv")}>Download the register (CSV)</button>
         <button style={{ ...btn(false), marginLeft: "auto" }} onClick={onRestart}>Start another assessment</button>
       </div>
+
+      <Handoffs payload={payload} cluster={cluster} />
+    </div>
+  );
+}
+
+/**
+ * Import a machine list rather than discovering one.
+ *
+ * Not a fallback: it is how a good deal of this work arrives — an estate that
+ * is not VMware, a vCenter nobody will hand credentials over for this quarter,
+ * or a list a customer has kept in a spreadsheet for nine years. Refusing
+ * those and insisting on a live connection is how an assessment tool never
+ * gets run at all.
+ */
+function CsvIn({ onLoaded }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+
+  const read = async (file) => {
+    if (!file) return;
+    setBusy(true); setNote(null);
+    try {
+      const text = await file.text();
+      const r = await fetch("/api/containerize/machines/import", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ csv: text }),
+      });
+      const d = await r.json();
+      if (d.error) { showToast(d.error, "err"); return; }
+      setNote(d.note + (d.rejected?.length ? ` Rejected: ${d.rejected.map((x) => `line ${x.line}`).join(", ")}.` : ""));
+      if (d.vms?.length) onLoaded(d);
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(false); }
+  };
+
+  const template = () => {
+    fetch("/api/containerize/machines.csv", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ template: true }) })
+      .then((r) => r.blob()).then((b) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(b); a.download = "machines-template.csv"; a.click(); URL.revokeObjectURL(a.href);
+      }).catch((e) => showToast(e.message, "err"));
+  };
+
+  return (
+    <div style={card}>
+      <div style={label}>Or import a list</div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input type="file" accept=".csv,text/csv" disabled={busy}
+          onChange={(e) => read(e.target.files?.[0])} style={{ fontSize: ".82rem" }} />
+        <button style={btn(false)} onClick={template}>Download the template</button>
+      </div>
+      <p style={{ margin: "8px 0 0", fontSize: ".79rem", lineHeight: 1.55, color: note ? "var(--fg,#1a1f2b)" : "var(--muted,#5a6373)" }}>
+        {note || "For an estate that is not VMware, or a vCenter this product has no credential for. Column order does not matter and headers are matched by meaning. A machine with no managed object id or BIOS UUID cannot be read inside."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * What leaves this product, and where it goes.
+ *
+ * The MTA push is the only thing in this agent that changes state in somebody
+ * else's system, so it is the only thing that asks twice — the first press
+ * shows exactly what would be sent.
+ */
+function Handoffs({ payload, cluster }) {
+  const [mta, setMta] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const results = (payload?.machines || []).map((m) => m.result).filter(Boolean);
+
+  const dl = (path, body, filename) =>
+    fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then((r) => (filename.endsWith(".json") ? r.json().then((j) => new Blob([JSON.stringify(j, null, 2)], { type: "application/json" })) : r.blob()))
+      .then((b) => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = filename; a.click(); URL.revokeObjectURL(a.href); })
+      .catch((e) => showToast(e.message, "err"));
+
+  const push = async (confirm) => {
+    setBusy(true);
+    try {
+      const r = await fetch(clusterUrl("/api/containerize/mta/applications", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results, confirm }),
+      });
+      setMta(await r.json());
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border,#eef1f7)" }}>
+      <div style={label}>Hand it on</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <button style={btn(false)} onClick={() => dl("/api/containerize/manifest", { results }, "discovery-manifest.json")}>
+          Discovery manifest (JSON)
+        </button>
+        <button style={btn(false)} onClick={() => dl("/api/containerize/machines.csv", { vms: (payload?.machines || []).map((m) => ({ name: m.name })) }, "machines.csv")}>
+          Machine list (CSV)
+        </button>
+        <button style={btn(false)} onClick={() => push(false)} disabled={busy || !results.length}>
+          {busy ? "Checking…" : "Put the candidates in MTA"}
+        </button>
+      </div>
+      <p style={{ margin: "0 0 10px", fontSize: ".79rem", lineHeight: 1.55, color: "var(--muted,#5a6373)" }}>
+        The manifest follows MTA's platform-awareness shape — source platform, coordinates, observed configuration —
+        so a vSphere estate is described the way MTA describes a Cloud Foundry one. MTA implements Cloud Foundry and
+        not vSphere, which is the gap this fills.
+      </p>
+
+      {mta && (
+        <div style={{ ...card, borderColor: mta.wrote ? "rgba(22,163,74,.3)" : "rgba(61,90,254,.25)" }}>
+          <p style={{ margin: "0 0 8px", fontSize: ".84rem", lineHeight: 1.6 }}>{mta.note || mta.reason}</p>
+          {(mta.proposed || []).length > 0 && (
+            <>
+              <div style={label}>Would be created</div>
+              <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: ".81rem", lineHeight: 1.6 }}>
+                {mta.proposed.map((p) => <li key={p.name}><strong>{p.name}</strong> — {p.description}</li>)}
+              </ul>
+              {mta.hubUrl && (
+                <button style={btn(true)} onClick={() => push(true)} disabled={busy}>
+                  Create {mta.proposed.length} in MTA
+                </button>
+              )}
+            </>
+          )}
+          {(mta.skipped || []).length > 0 && (
+            <p style={{ margin: "8px 0 0", fontSize: ".79rem", color: "var(--muted,#5a6373)" }}>
+              Not sent: {mta.skipped.map((x) => x.name).join(", ")} — not containerisation candidates.
+            </p>
+          )}
+          {(mta.created || []).length > 0 && (
+            <p style={{ margin: "8px 0 0", fontSize: ".81rem", color: "#15803d", fontWeight: 600 }}>
+              Created: {mta.created.map((c) => c.name).join(", ")}. Each needs a repository or binary attaching in MTA before an analysis will return anything.
+            </p>
+          )}
+          {(mta.failed || []).length > 0 && (
+            <p style={{ margin: "8px 0 0", fontSize: ".81rem", color: "#b91c1c" }}>
+              {mta.failed.map((f) => `${f.name}: ${f.reason}`).join(" · ")}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
