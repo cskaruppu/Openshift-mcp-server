@@ -157,15 +157,85 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
     finally { setBusy(null); }
   };
 
+  // ── The wizard ───────────────────────────────────────────────────────────
+  // This screen used to be one long scroll: toolchain, scope, source, machines,
+  // credential, results, proposal, build. Everything was visible at once, which
+  // reads as a settings page rather than a procedure, and left no way to tell
+  // what had been done from what was merely available. An assessment IS a
+  // procedure — each step is a decision the next one depends on — so it is
+  // presented as one, with the same step rail the migration agent uses.
+  //
+  // Steps go backwards freely and forwards only by doing the work, which is
+  // what makes the rail an honest record of progress rather than navigation.
+  const [step, setStep] = useState(1);
+  const [plan, setPlan] = useState(null);
+  const [planning, setPlanning] = useState(false);
+
+  const fleetMode = scope === "fleet";
+  // What the propose and report steps operate on, whichever scope produced it.
+  const assessedResults = fleetMode ? (fleet?.machines || []).map((m) => m.result).filter(Boolean) : (result?.results || []);
+  const candidateCount = assessedResults.filter((r) => ["container-ready", "container-with-work"].includes(r.verdict)).length;
+  const hasAssessment = fleetMode ? Boolean(fleet) : Boolean(result);
+
+  // Proposing is a separate, explicit act. The assessment is the thing a
+  // customer argues with; generating a scaffold before they have agreed the
+  // verdict puts YAML in front of a decision nobody has made yet.
+  const propose = async () => {
+    setPlanning(true);
+    try {
+      const d = await post("/api/containerize/plan", { results: assessedResults });
+      if (d.error) { showToast(d.error, "err"); return; }
+      setPlan(d);
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setPlanning(false); }
+  };
+
+  const restart = () => {
+    setStep(1); setVms(null); setSel({}); setResult(null); setPosture(null);
+    setFleet(null); setPlan(null); setCreds({ username: "", password: "" });
+  };
+
+  // A step is reachable once the work it depends on exists. Nothing is gated on
+  // a step being "visited" — walking back and forth must not lose a result.
+  const done = {
+    1: canDiscover,
+    2: fleetMode ? Boolean(fleet) || Boolean(clusters.length) : selection.length > 0,
+    3: hasAssessment,
+    4: Boolean(plan),
+    5: false,
+  };
+  const furthest = hasAssessment ? (plan ? 5 : 4) : (fleetMode ? 3 : (vms ? 3 : (canDiscover ? 2 : 1)));
+
   return (
     <div>
       <Intro />
-      {scope === "fleet" && tc?.perCluster ? <ToolchainMatrix tc={tc} /> : <Toolchain tc={tc} />}
-      <ScopeSwitch scope={scope} setScope={setScope} clusters={clusters} cluster={cluster} />
-      {scope === "fleet" && (
-        <FleetView clusters={clusters} fleet={fleet} setFleet={setFleet} post={post} creds={creds} setCreds={setCreds} />
+
+      <Steps step={step} setStep={setStep} furthest={furthest} onRestart={restart} />
+
+      {/* ── 1 · Prerequisites ───────────────────────────────────────────── */}
+      {step === 1 && (
+        <>
+          {fleetMode && tc?.perCluster ? <ToolchainMatrix tc={tc} /> : <Toolchain tc={tc} />}
+          <ScopeSwitch scope={scope} setScope={setScope} clusters={clusters} cluster={cluster} />
+          <StepFooter
+            ready={canDiscover}
+            blockedBy={discoverBlockers.map((b) => `${b.tool} — ${b.reason}`)}
+            next="Choose what to assess"
+            onNext={() => setStep(2)}
+          />
+        </>
       )}
-      {scope === "fleet" ? null : (<>
+
+      {/* ── 2 · Discover · 3 · Assess (estate) ──────────────────────────
+          Rendered unconditionally in fleet mode and gated INSIDE, so stepping
+          back and forth does not unmount it and lose the per-cluster
+          credentials somebody has just typed. */}
+      {fleetMode && (step === 2 || step === 3) && (
+        <FleetView clusters={clusters} fleet={fleet} setFleet={setFleet} post={post}
+          creds={creds} setCreds={setCreds} step={step} setStep={setStep} />
+      )}
+
+      {step === 2 && !fleetMode && (<>
 
       {/* ── Pick the machines ─────────────────────────────────────────── */}
       <div style={card}>
@@ -227,20 +297,180 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         </div>
       )}
 
-      {/* ── The credential ────────────────────────────────────────────── */}
-      {vms && <GuestCredential creds={creds} setCreds={setCreds} />}
+      <StepFooter
+        ready={selection.length > 0}
+        blockedBy={selection.length ? [] : ["Select at least one machine."]}
+        next={`Read inside ${selection.length || ""} machine${selection.length === 1 ? "" : "s"}`}
+        onNext={() => setStep(3)}
+      />
+      </>)}
 
-      {vms && (
-        <div style={{ marginBottom: 16 }}>
-          <button style={btn(true)} onClick={assess} disabled={!selection.length || busy === "assess"}>
-            {busy === "assess" ? "Reading inside the guests…" : `Assess ${selection.length || ""} machine${selection.length === 1 ? "" : "s"}`}
-          </button>
-        </div>
+      {/* ── 3 · Assess ──────────────────────────────────────────────────── */}
+      {step === 3 && !fleetMode && (
+        <>
+          <GuestCredential creds={creds} setCreds={setCreds} />
+          <div style={{ marginBottom: 16 }}>
+            <button style={btn(true)} onClick={assess} disabled={!selection.length || busy === "assess"}>
+              {busy === "assess" ? "Reading inside the guests…"
+                : result ? "Read them again" : `Assess ${selection.length || ""} machine${selection.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+          {posture && <OsSupport posture={posture} />}
+          {result && <Results result={result} onRetry={retryRejected} />}
+          {result && (
+            <StepFooter
+              ready={candidateCount > 0}
+              blockedBy={candidateCount ? [] : ["No machine was assessed as a containerisation candidate, so there is nothing to propose a build for."]}
+              next={`Propose a build for ${candidateCount} candidate${candidateCount === 1 ? "" : "s"}`}
+              onNext={() => setStep(4)}
+            />
+          )}
+        </>
       )}
 
-      {posture && <OsSupport posture={posture} />}
-      {result && <Results result={result} post={post} caps={tc?.capabilities} onRetry={retryRejected} />}
-      </>)}
+      {/* ── 4 · Propose ─────────────────────────────────────────────────── */}
+      {step === 4 && (
+        <>
+          <div style={card}>
+            <strong style={{ fontSize: ".93rem" }}>A Containerfile and the manifests that would run it</strong>
+            <p style={{ margin: "8px 0 12px", fontSize: ".85rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>
+              For the {candidateCount} machine{candidateCount === 1 ? "" : "s"} the assessment cleared. Nothing is
+              built, tagged, pushed or deployed — every artefact here is a proposal for a human to read.
+            </p>
+            <button style={btn(true)} onClick={propose} disabled={planning || !candidateCount}>
+              {planning ? "Proposing…" : plan ? "Propose again" : "Propose the build"}
+            </button>
+          </div>
+          {plan && <Plans plan={plan} caps={tc?.capabilities} />}
+          {plan && (
+            <StepFooter ready blockedBy={[]} next="Take the evidence pack" onNext={() => setStep(5)} />
+          )}
+        </>
+      )}
+
+      {/* ── 5 · Report ──────────────────────────────────────────────────── */}
+      {step === 5 && (
+        <ReportStep fleetMode={fleetMode} fleet={fleet} result={result} cluster={cluster}
+          clusters={clusters} creds={creds} onRestart={restart} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The step rail.
+ *
+ * Backwards is free, forwards is earned: you reach the assessment by assessing.
+ * That is what makes the rail a record of what has happened rather than a menu,
+ * and it is the same contract the migration agent's rail keeps.
+ */
+function Steps({ step, setStep, furthest, onRestart }) {
+  const STEPS = [[1, "Prerequisites"], [2, "Discover"], [3, "Assess"], [4, "Propose"], [5, "Report"]];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+      {STEPS.map(([n, lbl], i) => {
+        const reachable = n <= Math.max(step, furthest);
+        return (
+          <span key={n} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {i > 0 && <span style={{ color: "var(--muted,#5a6373)", opacity: 0.5 }}>→</span>}
+            <button onClick={() => { if (reachable) setStep(n); }} disabled={!reachable}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999,
+                fontFamily: "inherit", fontSize: ".78rem", fontWeight: 700,
+                border: `1px solid ${n === step ? "rgba(61,90,254,.55)" : "var(--border,#e4e8f1)"}`,
+                background: n === step ? "rgba(61,90,254,.12)" : "transparent",
+                color: n === step ? "#3d5afe" : "var(--muted,#5a6373)",
+                cursor: reachable && n !== step ? "pointer" : "default", opacity: reachable ? 1 : 0.45 }}>
+              <span style={{ width: 17, height: 17, borderRadius: 999, display: "inline-flex", alignItems: "center",
+                justifyContent: "center", fontSize: ".72rem", fontWeight: 800,
+                background: n < step ? "#16a34a" : n === step ? "#3d5afe" : "var(--border,#e4e8f1)",
+                color: n <= step ? "#fff" : "var(--muted,#5a6373)" }}>{n < step ? "✓" : n}</span>
+              {lbl}
+            </button>
+          </span>
+        );
+      })}
+      {step > 1 && (
+        <button onClick={onRestart} title="Clear this assessment and start again from Prerequisites."
+          style={{ ...btn(false), marginLeft: "auto", padding: "5px 12px", fontSize: ".77rem" }}>
+          + New assessment
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The bottom of a step: what it is waiting for, or the way on.
+ *
+ * The reason a step cannot advance is printed rather than left to a disabled
+ * button, because a control that is grey for an unstated reason is the single
+ * most common way a wizard wastes somebody's afternoon.
+ */
+function StepFooter({ ready, blockedBy = [], next, onNext }) {
+  return (
+    <div style={{ ...card, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <button style={btn(true)} onClick={onNext} disabled={!ready}>{next} →</button>
+      {!ready && blockedBy.map((b, i) => (
+        <span key={i} style={{ fontSize: ".82rem", lineHeight: 1.55, color: "#b45309" }}>{b}</span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The document the assessment ends in — available from either scope.
+ *
+ * A single-cluster run is shaped into the same record the fleet export expects,
+ * so one cluster and an estate produce the same document rather than one of
+ * them producing nothing.
+ */
+function ReportStep({ fleetMode, fleet, result, cluster, clusters, creds, onRestart }) {
+  const payload = fleetMode ? fleet : result && {
+    machines: (result.results || []).map((r) => ({
+      name: r.name, result: r, clusters: [cluster], seenIn: [{ cluster, verdict: r.verdict }],
+      duplicated: false, conflicting: false, identity: { basis: "single cluster", confidence: "certain" },
+    })),
+    funnel: result.funnel, portfolio: null, conflicts: [], possible: [], duplicates: [],
+    dependencies: { supplied: false, crossings: [], note: "No dependency data was supplied." },
+    observations: (result.results || []).length, distinct: (result.results || []).length,
+    note: `Assessed on cluster ${cluster}.`,
+  };
+
+  const download = (format) => {
+    fetch("/api/containerize/export", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fleet: payload, format,
+        clusters: fleetMode ? (fleet?.scope || clusters.map((c) => c.name || c)) : [cluster],
+        credentialSupplied: Boolean(creds.username && creds.password) }),
+    })
+      .then((r) => r.blob())
+      .then((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `containerisation-assessment.${format}`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch((e) => showToast(e.message, "err"));
+  };
+
+  if (!payload) {
+    return <div style={card}><p style={{ margin: 0, fontSize: ".85rem" }}>Nothing has been assessed yet.</p></div>;
+  }
+
+  return (
+    <div style={card}>
+      <strong style={{ fontSize: ".93rem" }}>Take the evidence pack</strong>
+      <p style={{ margin: "8px 0 12px", fontSize: ".85rem", lineHeight: 1.6, color: "var(--muted,#5a6373)" }}>
+        {payload.distinct} machine{payload.distinct === 1 ? "" : "s"}, with the ones that could not be read
+        included rather than omitted. The pack states how everything was read and what was not read, so it
+        survives being opened a year later by somebody asking why a machine stayed a VM.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={btn(true)} onClick={() => download("html")}>Download the pack (HTML / print to PDF)</button>
+        <button style={btn(false)} onClick={() => download("csv")}>Download the register (CSV)</button>
+        <button style={{ ...btn(false), marginLeft: "auto" }} onClick={onRestart}>Start another assessment</button>
+      </div>
     </div>
   );
 }
@@ -283,7 +513,7 @@ function ScopeSwitch({ scope, setScope, clusters, cluster }) {
  * are computed over de-duplicated machines and why disagreements between
  * clusters are shown rather than resolved quietly.
  */
-function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
+function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, setStep }) {
   const [busy, setBusy] = useState(false);
   const names = clusters.map((c) => c.name || c.id || c);
   // Per cluster: whether it is in this run, and the account to use inside its
@@ -332,9 +562,9 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
 
   return (
     <>
-      <GuestCredential creds={creds} setCreds={setCreds} />
+      {step === 2 && <GuestCredential creds={creds} setCreds={setCreds} />}
 
-      <div style={card}>
+      <div style={{ ...card, display: step === 2 ? "block" : "none" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={label}>Clusters in this run — {inScope.length} of {names.length}</div>
           <button onClick={() => setShowCreds((v) => !v)} style={{ background: "none", border: "none", padding: 0,
@@ -375,8 +605,8 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
         </p>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <button style={btn(true)} onClick={run} disabled={busy || !inScope.length}>
+      <div style={{ marginBottom: 16, display: step === 2 ? "block" : "none" }}>
+        <button style={btn(true)} onClick={async () => { await run(); setStep(3); }} disabled={busy || !inScope.length}>
           {busy ? `Reading ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}…`
             : inScope.length === names.length ? "Assess the whole estate" : `Assess ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}`}
         </button>
@@ -385,7 +615,7 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds }) {
         </span>
       </div>
 
-      {fleet && (
+      {fleet && step === 3 && (
         <>
           {partial && (
             <div style={{ ...card, borderColor: "rgba(217,119,6,.3)" }}>
@@ -676,23 +906,8 @@ function GuestCredential({ creds, setCreds }) {
   );
 }
 
-function Results({ result, post, caps, onRetry }) {
+function Results({ result, onRetry }) {
   const { funnel, results, discovery, verdictLabels = {} } = result;
-  const [plan, setPlan] = useState(null);
-  const [planning, setPlanning] = useState(false);
-
-  // Proposing is a second, explicit act. The assessment is the thing a customer
-  // argues with; generating a scaffold before they have agreed the verdict puts
-  // YAML in front of a decision nobody has made yet.
-  const propose = async () => {
-    setPlanning(true);
-    try {
-      const d = await post("/api/containerize/plan", { results });
-      if (d.error) { showToast(d.error, "err"); return; }
-      setPlan(d);
-    } catch (e) { showToast(e.message, "err"); }
-    finally { setPlanning(false); }
-  };
   const assessed = results.filter((r) => !NOT_ASSESSED.has(r.verdict));
   const notAssessed = results.filter((r) => NOT_ASSESSED.has(r.verdict));
 
@@ -726,19 +941,6 @@ function Results({ result, post, caps, onRetry }) {
           </p>
         )}
       </div>
-
-      {funnel.candidates > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <button style={btn(true)} onClick={propose} disabled={planning}>
-            {planning ? "Proposing…" : `Propose a build for the ${funnel.candidates} candidate${funnel.candidates === 1 ? "" : "s"}`}
-          </button>
-          <span style={{ marginLeft: 12, fontSize: ".8rem", color: "var(--muted,#5a6373)" }}>
-            Proposes a Containerfile and manifests. Builds nothing, pushes nothing, deploys nothing.
-          </span>
-        </div>
-      )}
-
-      {plan && <Plans plan={plan} caps={caps} />}
 
       {(discovery.retryable || []).length > 0 && <RetryRejected names={discovery.retryable} onRetry={onRetry} />}
 
