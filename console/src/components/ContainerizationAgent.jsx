@@ -98,25 +98,35 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
     if (!provider) return;
     setBusy("discover"); setVms(null); setResult(null);
     try {
-      const d = await get(`/api/migration/vms?provider=${encodeURIComponent(provider)}&search=${encodeURIComponent(search)}`);
+      const d = await post("/api/containerize/inventory", { provider: provider || undefined, search });
       setVms(d.vms || []);
+      setInventorySource(d);
       if (d.error) showToast(d.error, "err");
+      else if (!d.vms?.length && d.reason) showToast(d.reason, "err");
     } catch (e) { showToast(e.message, "err"); }
     finally { setBusy(null); }
   };
 
   const selection = (vms || []).filter((v) => sel[v.id || v.name]);
 
+  const [assessError, setAssessError] = useState(null);
+  const [inventorySource, setInventorySource] = useState(null);
   const assess = async () => {
     if (!selection.length) return;
-    setBusy("assess");
+    setBusy("assess"); setAssessError(null);
     try {
       const d = await post("/api/containerize/assess", {
         vms: selection, provider,
         guestUsername: creds.username || undefined,
         guestPassword: creds.password || undefined,
       });
-      if (d.error) { showToast(d.error, "err"); return; }
+      if (d.error) {
+        setAssessError(/unknown api endpoint/i.test(d.error)
+          ? "This server build does not have the assessment endpoint. The console is newer than the server serving it — redeploy the server image."
+          : d.error);
+        showToast(d.error, "err");
+        return;
+      }
       setResult(d);
       // The OS and platform picture for the same machines. Separate call so a
       // slow cluster read cannot delay the verdicts, and a failure here loses
@@ -243,8 +253,8 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
           <div style={{ minWidth: 240, flex: "1 1 240px" }}>
             <label style={label}>Source</label>
             <select style={input} value={provider} onChange={(e) => setProvider(e.target.value)}>
-              {!providers.length && <option value="">No source provider found</option>}
-              {providers.map((p) => <option key={p.uid} value={p.uid}>{p.name}</option>)}
+              <option value="">vCenter configured on this product</option>
+              {providers.map((p) => <option key={p.uid} value={p.uid}>{p.name} (via MTV)</option>)}
             </select>
           </div>
           <div style={{ minWidth: 200, flex: "1 1 200px" }}>
@@ -253,7 +263,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
               placeholder="optional" onKeyDown={(e) => e.key === "Enter" && discover()} />
           </div>
           <button style={btn(true)} onClick={discover}
-            disabled={!provider || !canDiscover || busy === "discover"}
+            disabled={busy === "discover"}
             title={canDiscover ? "" : discoverBlockers.map((b) => b.tool).join(", ") + " is not usable on this cluster"}>
             {busy === "discover" ? "Reading inventory…" : "Discover"}
           </button>
@@ -270,6 +280,13 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         )}
 
         <ProviderScope providers={providers} provider={provider} cluster={cluster} />
+        {inventorySource && (
+          <p style={{ margin: "8px 0 0", fontSize: ".79rem", lineHeight: 1.55, color: inventorySource.vms?.length ? "var(--muted,#5a6373)" : "#b45309" }}>
+            {inventorySource.vms?.length
+              ? `${inventorySource.total ?? inventorySource.vms.length} machines read from ${inventorySource.vcenter || "vCenter"}${inventorySource.via ? ` via ${inventorySource.via}` : ""}. Templates are excluded.`
+              : inventorySource.reason}
+          </p>
+        )}
       </div>
 
       {vms && (
@@ -315,6 +332,12 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
                 : result ? "Read them again" : `Assess ${selection.length || ""} machine${selection.length === 1 ? "" : "s"}`}
             </button>
           </div>
+          {assessError && (
+            <div style={{ ...card, borderColor: "rgba(185,28,28,.35)" }}>
+              <div style={{ ...label, color: "#b91c1c" }}>The machines could not be read</div>
+              <p style={{ margin: 0, fontSize: ".84rem", lineHeight: 1.6 }}>{assessError}</p>
+            </div>
+          )}
           {posture && <OsSupport posture={posture} />}
           {result && <Results result={result} onRetry={retryRejected} />}
           {result && (
@@ -525,8 +548,9 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, set
   const set = (n, patch) => setRows((r) => ({ ...r, [n]: { ...r[n], ...patch } }));
   const inScope = names.filter((n) => rows[n]?.include);
 
+  const [failure, setFailure] = useState(null);
   const run = async () => {
-    setBusy(true);
+    setBusy(true); setFailure(null);
     try {
       const d = await post("/api/containerize/fleet", {
         clusters: inScope.map((n) => ({
@@ -537,9 +561,20 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, set
         guestUsername: creds.username || undefined,
         guestPassword: creds.password || undefined,
       });
-      if (d.error) { showToast(d.error, "err"); return; }
+      if (d.error) {
+        // "Unknown API endpoint" is not a user error: it means the server
+        // serving this console is older than the console itself, which a toast
+        // that vanishes in three seconds will never communicate.
+        const stale = /unknown api endpoint/i.test(d.error);
+        setFailure(stale
+          ? "This server build does not have the estate endpoint. The console is newer than the server it is being served by — redeploy the server image, then try again."
+          : d.error);
+        showToast(d.error, "err");
+        return false;
+      }
       setFleet({ ...d, scope: inScope });
-    } catch (e) { showToast(e.message, "err"); }
+      return true;
+    } catch (e) { setFailure(e.message); showToast(e.message, "err"); return false; }
     finally { setBusy(false); }
   };
 
@@ -605,8 +640,15 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, set
         </p>
       </div>
 
+      {failure && step === 2 && (
+        <div style={{ ...card, borderColor: "rgba(185,28,28,.35)" }}>
+          <div style={{ ...label, color: "#b91c1c" }}>The estate could not be read</div>
+          <p style={{ margin: 0, fontSize: ".84rem", lineHeight: 1.6 }}>{failure}</p>
+        </div>
+      )}
+
       <div style={{ marginBottom: 16, display: step === 2 ? "block" : "none" }}>
-        <button style={btn(true)} onClick={async () => { await run(); setStep(3); }} disabled={busy || !inScope.length}>
+        <button style={btn(true)} onClick={async () => { if (await run()) setStep(3); }} disabled={busy || !inScope.length}>
           {busy ? `Reading ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}…`
             : inScope.length === names.length ? "Assess the whole estate" : `Assess ${inScope.length} cluster${inScope.length === 1 ? "" : "s"}`}
         </button>
@@ -614,6 +656,16 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, set
           Reads each cluster's vCenter in turn. Slower than one cluster, and the only number worth quoting.
         </span>
       </div>
+
+      {!fleet && step === 3 && (
+        <div style={card}>
+          <div style={label}>Nothing to show yet</div>
+          <p style={{ margin: "0 0 12px", fontSize: ".84rem", lineHeight: 1.6 }}>
+            {failure || "The estate has not been read yet. Go back to Discover, choose the clusters and run the assessment."}
+          </p>
+          <button style={btn(true)} onClick={() => setStep(2)}>← Back to Discover</button>
+        </div>
+      )}
 
       {fleet && step === 3 && (
         <>

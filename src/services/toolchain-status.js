@@ -35,15 +35,21 @@ export const CAPABILITIES = Object.freeze({
   BUILD: "build",           // BuildConfig / ImageStream
   PIPELINE: "pipeline",     // Tekton
   RUN_VM: "run-vm",         // the VM destination, for machines that stay machines
+  MIGRATE_VM: "migrate-vm", // moving them there — MTV's job, not the assessment's
 });
 
 const COMPONENTS = [
   {
     id: "mtv", group: "forklift.konveyor.io", version: "v1beta1", layer: "VM migration", tool: "MTV / Konveyor Forklift",
     provenance: "Red Hat, in your subscription",
-    gates: [CAPABILITIES.DISCOVER],
+    // NOT a discovery gate any more. MTV is a migration tool, and requiring it
+    // before a customer may be told which of their machines are Tomcats is the
+    // wrong dependency — vCenter is read directly. MTV remains useful because
+    // it already holds a working vCenter credential, and it is what the
+    // machines this assessment says to keep as VMs will eventually move on.
+    gates: [CAPABILITIES.MIGRATE_VM],
     probe: "/apis/forklift.konveyor.io/v1beta1/providers",
-    absent: "MTV is not installed. The Containerization Agent reads its VM inventory and its vCenter credential from MTV, so discovery cannot run without it. Install the Migration Toolkit for Virtualization from OperatorHub.",
+    absent: "MTV is not installed. Assessment does not need it — vCenter is read directly — but the machines this assessment says to keep as VMs have no way to move without it.",
   },
   {
     id: "build", group: "build.openshift.io", version: "v1", layer: "Build", tool: "OpenShift BuildConfig · Buildah",

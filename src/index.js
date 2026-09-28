@@ -3136,6 +3136,58 @@ async function startSSE() {
       // toolchain table drew four of its five rows green from a literal, which
       // is worse than omitting them: a green dot on the one panel whose whole
       // purpose is to be checkable.
+      // Where the machines come from. MTV is no longer required for an
+      // ASSESSMENT — requiring a migration operator before a customer may be
+      // told which of their machines are Tomcats is the wrong dependency, and
+      // Red Hat's own MTA models this as a "source platform" rather than as a
+      // dependency on a migration product.
+      //
+      // Order: a configured vCenter directly, then MTV's inventory when the
+      // operator happens to be installed, then a supplied list.
+      if (url.pathname === "/api/containerize/inventory" && req.method === "POST") {
+        try {
+          const body = await readJsonBody(req);
+
+          // 3. Supplied outright — an estate that is neither, or not VMware.
+          if (Array.isArray(body.vms) && body.vms.length) {
+            return sendJson(res, 200, { vms: body.vms, source: "supplied", reason: null,
+              note: "Machines were supplied by the caller. Nothing was discovered." });
+          }
+
+          const registry = await import("./services/vcenter-registry.js");
+          const inv = await import("./services/vcenter-inventory.js");
+          const vcStore = await vcSettingsStore().catch(() => ({}));
+
+          // 2. MTV, when present — only to borrow the credential it holds.
+          let cfg = null, via = null;
+          if (body.provider) {
+            const mig = await import("./services/vm-migration.js");
+            const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
+            const sp = (mtv?.sources || []).find((x) => x.uid === body.provider || x.name === body.provider) || null;
+            if (sp) {
+              cfg = await withClusterContext(url, async () => registry.resolveForProvider(
+                sp, vcStore, async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
+              )).catch(() => null);
+              via = `MTV provider ${sp.name}`;
+            }
+          }
+          // 1. A vCenter configured on this product, needing no operator at all.
+          if (!cfg?.configured) {
+            cfg = registry.resolveVcenter(null, vcStore);
+            via = cfg?.configured ? "a vCenter configured on this product" : via;
+          }
+          if (!cfg?.configured) {
+            return sendJson(res, 200, {
+              vms: [], source: "none",
+              reason: "No vCenter is configured and no MTV provider was named. Configure a vCenter, or install MTV and pick its provider, or supply the machine list.",
+            });
+          }
+
+          const out = await inv.listVcenterInventory({ cfg, search: body.search || "", limit: body.limit || 2000 });
+          return sendJson(res, 200, { ...out, via });
+        } catch (err) { return sendJson(res, 400, { error: err.message }); }
+      }
+
       if (url.pathname === "/api/containerize/toolchain" && req.method === "GET") {
         try {
           const tc = await import("./services/toolchain-status.js");
