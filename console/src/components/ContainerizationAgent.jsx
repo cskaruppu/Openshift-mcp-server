@@ -107,7 +107,8 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
     // Coerced rather than trusted. A caller that forwards an event here must
     // not be able to put a DOM node in a request body — the failure is a
     // circular-structure error a long way from the mistake.
-    const accept = acceptCertificate === true;
+    const accept = acceptCertificate === true || acceptCert;
+    if (accept) setAcceptCert(true);
     setBusy("discover"); setVms(null); setResult(null);
     try {
       const d = await post("/api/containerize/inventory", { provider: provider || undefined, search, acceptCertificate: accept });
@@ -123,6 +124,9 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
 
   const [assessError, setAssessError] = useState(null);
   const [inventorySource, setInventorySource] = useState(null);
+  // Held for the whole assessment, not one request — an assessment is several
+  // calls and the operator made the decision once.
+  const [acceptCert, setAcceptCert] = useState(false);
   const assess = async () => {
     if (!selection.length) return;
     setBusy("assess"); setAssessError(null);
@@ -131,6 +135,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         vms: selection, provider,
         guestUsername: creds.username || undefined,
         guestPassword: creds.password || undefined,
+        acceptCertificate: acceptCert,
       });
       if (d.error) {
         setAssessError(/unknown api endpoint/i.test(d.error)
@@ -143,7 +148,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
       // The OS and platform picture for the same machines. Separate call so a
       // slow cluster read cannot delay the verdicts, and a failure here loses
       // a panel rather than the assessment.
-      post("/api/containerize/os-support", { vms: selection, advise: true })
+      post("/api/containerize/os-support", { vms: selection, advise: true, acceptCertificate: acceptCert })
         .then((o) => { if (!o.error) setPosture(o); })
         .catch(() => { /* the panel simply does not appear */ });
     } catch (e) { showToast(e.message, "err"); }
@@ -167,6 +172,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
         vms: selection.filter((v) => names.includes(v.name)),
         provider,
         guestCredentials: perMachine,
+        acceptCertificate: acceptCert,
       });
       if (d.error) { showToast(d.error, "err"); return; }
       // Merge: the retried machines replace their old rows, everything else stands.
@@ -254,7 +260,7 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
           credentials somebody has just typed. */}
       {fleetMode && (step === 2 || step === 3) && (
         <FleetView clusters={clusters} fleet={fleet} setFleet={setFleet} post={post}
-          creds={creds} setCreds={setCreds} step={step} setStep={setStep} />
+          creds={creds} setCreds={setCreds} step={step} setStep={setStep} acceptCert={acceptCert} />
       )}
 
       {step === 2 && !fleetMode && (<>
@@ -366,6 +372,22 @@ export default function ContainerizationAgent({ cluster, clusters = [] }) {
                 : result ? "Read them again" : `Assess ${selection.length || ""} machine${selection.length === 1 ? "" : "s"}`}
             </button>
           </div>
+          {result?.discovery?.certificateProblem && (
+            <div style={{ ...card, borderColor: "rgba(217,119,6,.3)" }}>
+              <div style={{ ...label, color: "#b45309" }}>Nothing inside could be read — the certificate</div>
+              <p style={{ margin: "0 0 10px", fontSize: ".83rem", lineHeight: 1.6 }}>
+                The machines were listed, but reading inside them needs the same connection and this pod
+                cannot verify that certificate. The credential is not the problem.
+              </p>
+              <button style={btn(true)} onClick={() => { setAcceptCert(true); setTimeout(assess, 0); }} disabled={busy === "assess"}>
+                Accept this certificate and read them
+              </button>
+              <span style={{ marginLeft: 10, fontSize: ".78rem", color: "var(--muted,#5a6373)" }}>
+                Applies to this assessment only and is not stored.
+              </span>
+            </div>
+          )}
+
           {assessError && (
             <div style={{ ...card, borderColor: "rgba(185,28,28,.35)" }}>
               <div style={{ ...label, color: "#b91c1c" }}>The machines could not be read</div>
@@ -710,7 +732,7 @@ function ScopeSwitch({ scope, setScope, clusters, cluster }) {
  * are computed over de-duplicated machines and why disagreements between
  * clusters are shown rather than resolved quietly.
  */
-function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, setStep }) {
+function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, setStep, acceptCert = false }) {
   const [busy, setBusy] = useState(false);
   const names = clusters.map((c) => c.name || c.id || c);
   // Per cluster: whether it is in this run, and the account to use inside its
@@ -734,6 +756,10 @@ function FleetView({ clusters, fleet, setFleet, post, creds, setCreds, step, set
         })),
         guestUsername: creds.username || undefined,
         guestPassword: creds.password || undefined,
+        // The operator's decision, never a default. Hardcoding this true would
+        // turn off certificate verification for every estate run in the
+        // product, which is not a thing a wizard gets to decide.
+        acceptCertificate: acceptCert === true,
       });
       if (d.error) {
         // "Unknown API endpoint" is not a user error: it means the server

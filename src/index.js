@@ -3062,7 +3062,7 @@ async function startSSE() {
           const vcStore = await vcSettingsStore().catch(() => ({}));
           const mtv = await withClusterContext(url, async () => mig.checkMtvReadiness()).catch(() => null);
           const sourceProvider = (mtv?.sources || []).find((sp) => sp.uid === body.provider || sp.name === body.provider) || null;
-          const vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
+          let vcCfg = await withClusterContext(url, async () => registry.resolveForProvider(
             sourceProvider, vcStore,
             async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
           )).catch(() => ({ configured: false, source: "error", reason: null }));
@@ -3080,6 +3080,14 @@ async function startSSE() {
           };
           const haveCreds = Object.keys(creds).length > 0;
 
+          // The button says "accept this certificate for this assessment", and
+          // an assessment is more than one request: discovery lists the
+          // machines, this reads inside them, and the OS panel reads the
+          // cluster. Applying it to only the first left the operator having
+          // accepted a certificate and then being refused by it — the worst of
+          // both, because they had already made the decision.
+          if (body.acceptCertificate === true && vcCfg?.configured) vcCfg = { ...vcCfg, insecure: true };
+
           const discovery = await gd.discoverGuests(vms, { cfg: vcCfg, guestCredentials: haveCreds ? creds : null });
           const results = cr.scoreSelection(vms, discovery.guests);
 
@@ -3092,6 +3100,12 @@ async function startSSE() {
               reason: discovery.reason,
               coverage: discovery.coverage,
               credentialSupplied: haveCreds,
+              certificateAccepted: body.acceptCertificate === true,
+              // Set when the guest read failed on trust, so the console can
+              // offer the decision where it is needed rather than making
+              // somebody go back a step to find it.
+              certificateProblem: Object.values(Object.fromEntries(discovery.guests))
+                .some((g) => /certificate|self-signed|verify/i.test(g?.processReason || "")) && body.acceptCertificate !== true,
               // What went wrong, grouped. The console offers a retry for the
               // machines whose credential was rejected without re-reading the
               // ones that answered.
@@ -3355,9 +3369,14 @@ async function startSSE() {
               const selection = (vms || []).slice(0, Math.max(1, body.limit || 200));
               if (!selection.length) { one.reason = "No machines were returned by this provider."; perCluster.push(one); continue; }
 
-              const cfg = await withClusterContext(cUrl, async () => registry.resolveForProvider(
+              let cfg = await withClusterContext(cUrl, async () => registry.resolveForProvider(
                 sp, vcStore, async (name, ns) => ocpGet(`/api/v1/namespaces/${ns}/secrets/${name}`),
               ));
+              // Accepted per cluster, or once for the whole run.
+              if ((t.acceptCertificate === true || body.acceptCertificate === true) && cfg?.configured) {
+                cfg = { ...cfg, insecure: true };
+                one.certificateAccepted = true;
+              }
               const { guests, coverage } = await gd.discoverGuests(selection, { cfg, guestCredentials: creds });
               const results = cr.scoreSelection(selection, guests);
               one.failures = coverage?.failures || {};

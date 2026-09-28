@@ -47,3 +47,29 @@ test("an unreachable cluster still reports MTA as unknown, never absent", async 
   assert.equal(r.installed, null);
   assert.equal(r.blocking[0].code, "cluster-unreachable");
 });
+
+describe("the certificate decision travels with the assessment", () => {
+  // The button says "accept this certificate for this assessment", and an
+  // assessment is several calls: discovery lists the machines, the guest read
+  // reads inside them, the OS panel reads the cluster. Applied to only the
+  // first, the operator accepted a certificate and was then refused by it —
+  // the worst of both, because the decision had already been made.
+  test("every call that touches vCenter takes the flag", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../../src/index.js", import.meta.url), "utf8");
+    for (const route of ["/api/containerize/inventory", "/api/containerize/assess", "/api/containerize/fleet"]) {
+      const at = src.indexOf(route);
+      assert.ok(at > 0, `${route} is missing`);
+      const block = src.slice(at, at + 4500);
+      assert.match(block, /acceptCertificate/, `${route} ignores the operator's certificate decision`);
+    }
+  });
+
+  test("the console never hardcodes the flag true", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const ui = await readFile(new URL("../../console/src/components/ContainerizationAgent.jsx", import.meta.url), "utf8");
+    // Turning verification off for everyone is not a decision a wizard makes.
+    assert.doesNotMatch(ui, /acceptCertificate:\s*true\b/,
+      "the flag must carry the operator's decision, never a literal");
+  });
+});
