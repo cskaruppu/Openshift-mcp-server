@@ -130,7 +130,7 @@ export function discoveryManifest(entries = [], meta = {}) {
     // claimed in a slide.
     kind: "DiscoveryManifest",
     generatedAt: meta.at || new Date().toISOString(),
-    generatedBy: { product: "TCS Agentic AI — Containerization Agent", actor: meta.actor || null },
+    generatedBy: { product: "TCS Agentic AI — Workload Modernization Agent", actor: meta.actor || null },
     sourcePlatform: {
       type: PLATFORM_VSPHERE,
       instances: [...new Set(apps.map((a) => a.coordinates.instance).filter(Boolean))],

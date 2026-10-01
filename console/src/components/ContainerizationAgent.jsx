@@ -3,7 +3,13 @@ import { clusterUrl } from "../api/client";
 import { showToast } from "../store/toastStore";
 
 /**
- * Containerization Agent — should this machine still be a machine?
+ * Workload Modernization Agent — should this machine still be a machine?
+ *
+ * Named for the decision rather than for one of its two answers. A tool called
+ * "containerization" promises the thing this one refuses to do: roughly half of
+ * its verdicts are vm-only, and that is the capability no competitor has. The
+ * file, the registry id and the containerize_* tools keep their names — those
+ * are identifiers, and renaming one breaks every client bound to it.
  *
  * The deliberate difference from the Migration Agent, which sits beside it:
  * that one answers whether a VM can move, this one answers whether it should

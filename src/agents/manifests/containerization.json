@@ -1,8 +1,8 @@
 {
   "id": "containerization",
-  "name": "Containerization Agent",
+  "name": "Workload Modernization Agent",
   "version": "1.0.0",
-  "description": "Decides which virtual machines should become containers rather than being migrated as virtual machines. Reads what is actually running inside each guest through VMware Tools — guest OS, power state and the process list with command lines — scores each machine against the things that make a container the wrong answer, and reports the candidate rate against the whole estate as well as against the machines that answered. Refuses to score a machine it could not read: an unread machine is reported as unread, never as having no blockers.",
+  "description": "Decides what should happen to each workload running on a virtual machine: become a container, or stay a virtual machine. Reads what is actually running inside each guest through VMware Tools — guest OS, power state and the process list with command lines — scores it against the things that make a container the wrong answer, and reports the candidate rate against the whole estate as well as against the machines that answered. Refuses to score a machine it could not read: an unread machine is reported as unread, never as having no blockers. The disposition it can reach that a containerisation tool cannot is “keep this as a virtual machine”, with the reason.",
   "category": "Lifecycle",
   "icon": "package",
   "color": "#7c3aed",

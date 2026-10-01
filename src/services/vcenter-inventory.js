@@ -4,7 +4,7 @@
 /**
  * Why this exists: MTV should never have been a prerequisite for an ASSESSMENT.
  *
- * The Containerization Agent read its VM list from MTV's inventory service,
+ * The Workload Modernization Agent read its VM list from MTV's inventory service,
  * which was convenient — MTV already holds the vCenter URL and credential, so
  * nothing had to be configured twice. But convenience became a dependency, and
  * the dependency is wrong in a way a customer will notice immediately:

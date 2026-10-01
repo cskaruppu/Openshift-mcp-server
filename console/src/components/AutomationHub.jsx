@@ -269,7 +269,7 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Containerization Agent", IconContainer]].map(([k, label, Icon]) => (
+            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Workload Modernization Agent", IconContainer]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ display: "inline-flex", alignItems: "center", gap: 8,
                 padding: "8px 16px", borderRadius: 8, border: "none",
                 background: agent === k ? "#3d5afe" : "transparent",
