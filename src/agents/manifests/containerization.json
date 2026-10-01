@@ -71,5 +71,14 @@
     "Sets no CPU or memory requests. A VM's shape is not a container's requirement, and copying one to the other is the most expensive mistake available here.",
     "Submits no artefact to MTA. MTA analyses a war, jar or repository; this agent executes nothing in a guest and cannot extract one, so a human or a pipeline supplies it.",
     "Starts no build and runs no pipeline. Every manifest is proposed for a human to apply."
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "read-only",
+    "autonomyLevel": "advisory",
+    "egress": [
+      "vcenter",
+      "mta-hub"
+    ]
+  }
 }

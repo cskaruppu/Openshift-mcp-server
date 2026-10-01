@@ -52,5 +52,10 @@
     "cnv",
     "datavolume",
     "cloud-init"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "mutating",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

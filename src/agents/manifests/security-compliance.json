@@ -57,5 +57,10 @@
     "compliance",
     "scc",
     "policy"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "read-only",
+    "autonomyLevel": "advisory"
+  }
 }

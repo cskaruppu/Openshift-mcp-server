@@ -473,3 +473,45 @@ describe("partial process views", () => {
     assert.ok(!r.concerns.some((x) => x.id === "partial-process-view"));
   });
 });
+
+describe("every agent declares what it can do to the estate", () => {
+  // The governance lens exists, the scorecard exists, and both were scoring
+  // seventeen agents on defaults because no manifest carried a governance
+  // block. Blast radius and autonomy are facts about an agent's tools, so they
+  // are declared and asserted; owner and certification are claims only a person
+  // can make, so they stay absent and the scorecard rightly deducts for them.
+  test("blast radius, trust tier and autonomy are declared on all of them", async () => {
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    const dir = resolve(import.meta.dirname, "../../src/agents/manifests");
+    const RADII = ["read-only", "mutating", "irreversible"];
+    const AUTONOMY = ["advisory", "propose-and-wait", "act-within-policy"];
+
+    const missing = [];
+    for (const f of (await readdir(dir)).filter((x) => x.endsWith(".json"))) {
+      const d = JSON.parse(await readFile(resolve(dir, f), "utf8"));
+      const g = d.governance || {};
+      if (!RADII.includes(g.blastRadius)) missing.push(`${d.id}: blastRadius`);
+      if (!AUTONOMY.includes(g.autonomyLevel)) missing.push(`${d.id}: autonomyLevel`);
+      if (!g.trustTier) missing.push(`${d.id}: trustTier`);
+      // An owner that nobody agreed to is worse than none — the governance
+      // module reports an undeclared field as undeclared on purpose.
+      if (g.owner) missing.push(`${d.id}: declares an owner nobody claimed`);
+    }
+    assert.deepEqual(missing, []);
+  });
+
+  test("an agent that can destroy never claims it may act alone", async () => {
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    const dir = resolve(import.meta.dirname, "../../src/agents/manifests");
+    for (const f of (await readdir(dir)).filter((x) => x.endsWith(".json"))) {
+      const d = JSON.parse(await readFile(resolve(dir, f), "utf8"));
+      const g = d.governance || {};
+      if (g.blastRadius === "irreversible") {
+        assert.notEqual(g.autonomyLevel, "act-within-policy",
+          `${d.id} can destroy and claims it may act without a person`);
+      }
+    }
+  });
+});

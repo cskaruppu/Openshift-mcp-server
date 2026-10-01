@@ -38,5 +38,10 @@
     "history",
     "rollback",
     "application"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

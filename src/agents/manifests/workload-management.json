@@ -63,5 +63,10 @@
     "helm",
     "workloads",
     "provisioning"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

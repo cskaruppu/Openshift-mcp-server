@@ -13,7 +13,10 @@
     "query_servicenow",
     "update_servicenow_record"
   ],
-  "services": ["cr-tracker", "action-workflow"],
+  "services": [
+    "cr-tracker",
+    "action-workflow"
+  ],
   "capabilities": [
     "Auto-create ServiceNow change requests for upgrades and remediations",
     "Auto-create ServiceNow incidents from proactive alerts",
@@ -24,9 +27,29 @@
     "Pending CR panel with dismiss, sync-all, last-synced indicator",
     "ServiceNow record query and update via natural language"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/itsm-change-management",
-  "tags": ["servicenow", "itsm", "change-request", "approval", "itil"]
+  "tags": [
+    "servicenow",
+    "itsm",
+    "change-request",
+    "approval",
+    "itil"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "mutating",
+    "autonomyLevel": "propose-and-wait",
+    "egress": [
+      "servicenow"
+    ]
+  }
 }

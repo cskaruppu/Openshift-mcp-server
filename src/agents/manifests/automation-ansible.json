@@ -2,7 +2,7 @@
   "id": "automation-ansible",
   "name": "Automation & Ansible Agent",
   "version": "1.0.0",
-  "description": "Ansible Automation Platform integration \u2014 launch job templates and workflows, track job status, and inspect inventories from the platform.",
+  "description": "Ansible Automation Platform integration — launch job templates and workflows, track job status, and inspect inventories from the platform.",
   "category": "Platform",
   "icon": "play-circle",
   "color": "#ef4444",
@@ -38,5 +38,13 @@
     "automation",
     "job-template",
     "workflow"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait",
+    "egress": [
+      "ansible-automation-platform"
+    ]
+  }
 }

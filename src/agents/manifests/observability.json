@@ -47,5 +47,10 @@
     "alerts",
     "monitoring",
     "observability"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "read-only",
+    "autonomyLevel": "advisory"
+  }
 }

@@ -52,5 +52,10 @@
     "node",
     "namespace",
     "kubernetes"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

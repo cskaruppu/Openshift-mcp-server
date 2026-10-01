@@ -33,9 +33,27 @@
     "VirtualService, DestinationRule, Gateway management",
     "Mesh metrics, traces, and workload logs"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/networking-mesh",
-  "tags": ["network", "routes", "ingress", "istio", "ossm", "mesh"]
+  "tags": [
+    "network",
+    "routes",
+    "ingress",
+    "istio",
+    "ossm",
+    "mesh"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "mutating",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

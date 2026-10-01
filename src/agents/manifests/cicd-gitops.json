@@ -33,9 +33,26 @@
     "GitOps rollback to last healthy revision",
     "AppProject inventory and policy"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/cicd-gitops",
-  "tags": ["tekton", "argocd", "gitops", "pipelines", "ci-cd"]
+  "tags": [
+    "tekton",
+    "argocd",
+    "gitops",
+    "pipelines",
+    "ci-cd"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

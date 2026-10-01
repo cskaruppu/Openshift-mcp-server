@@ -2,7 +2,7 @@
   "id": "backup-dr",
   "name": "Backup & Disaster Recovery Agent",
   "version": "1.0.0",
-  "description": "Velero-based backup and restore for OpenShift \u2014 backup and schedule management, restore, storage location and Data Protection Application status, and DR readiness assessment.",
+  "description": "Velero-based backup and restore for OpenShift — backup and schedule management, restore, storage location and Data Protection Application status, and DR readiness assessment.",
   "category": "Lifecycle",
   "icon": "shield",
   "color": "#7c3aed",
@@ -47,5 +47,10 @@
     "dr",
     "oadp",
     "data-protection"
-  ]
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "irreversible",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

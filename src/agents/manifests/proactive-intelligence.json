@@ -29,7 +29,13 @@
     "recommend_quota_optimization",
     "recommend_cluster_summary"
   ],
-  "services": ["proactive-agent", "predictive-intel", "automation-rules", "cost-advisor", "learning-engine"],
+  "services": [
+    "proactive-agent",
+    "predictive-intel",
+    "automation-rules",
+    "cost-advisor",
+    "learning-engine"
+  ],
   "capabilities": [
     "Background autonomous cluster scanning at configurable intervals",
     "Anomaly detection (restart spikes, new CrashLoops, resource pressure)",
@@ -42,9 +48,27 @@
     "Incident timeline reconstruction",
     "Natural-language automation rules engine"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/proactive-intelligence",
-  "tags": ["proactive", "predictive", "anomaly", "cost", "automation", "ml"]
+  "tags": [
+    "proactive",
+    "predictive",
+    "anomaly",
+    "cost",
+    "automation",
+    "ml"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "mutating",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

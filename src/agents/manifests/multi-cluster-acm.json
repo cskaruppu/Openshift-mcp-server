@@ -14,7 +14,9 @@
     "emergency_fix",
     "approved_fix"
   ],
-  "services": ["multi-cluster"],
+  "services": [
+    "multi-cluster"
+  ],
   "capabilities": [
     "ACM ManagedCluster inventory across hub and spokes",
     "Per-cluster detail with health, version, capacity",
@@ -23,9 +25,26 @@
     "Emergency fix with two-person approval rule",
     "Approved emergency action execution with audit trail"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/multi-cluster-acm",
-  "tags": ["acm", "multi-cluster", "fleet", "governance", "emergency"]
+  "tags": [
+    "acm",
+    "multi-cluster",
+    "fleet",
+    "governance",
+    "emergency"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "mutating",
+    "autonomyLevel": "propose-and-wait"
+  }
 }

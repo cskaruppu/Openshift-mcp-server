@@ -23,9 +23,26 @@
     "Node topology analysis with upgrade duration estimation",
     "Feature highlights summary across version delta"
   ],
-  "requires": ["core"],
-  "protocols": ["mcp", "rest", "a2a"],
+  "requires": [
+    "core"
+  ],
+  "protocols": [
+    "mcp",
+    "rest",
+    "a2a"
+  ],
   "selectable": true,
   "mcpEndpoint": "/mcp/upgrade-lifecycle",
-  "tags": ["upgrade", "preflight", "lifecycle", "version", "compatibility"]
+  "tags": [
+    "upgrade",
+    "preflight",
+    "lifecycle",
+    "version",
+    "compatibility"
+  ],
+  "governance": {
+    "trustTier": "first-party",
+    "blastRadius": "read-only",
+    "autonomyLevel": "advisory"
+  }
 }
