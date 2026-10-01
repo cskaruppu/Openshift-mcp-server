@@ -6,9 +6,113 @@
 
 import yaml from "js-yaml";
 
+// ── Secure by default ──────────────────────────────────────────────────────
+// This agent ships its own CIS/Pod-Security gate (manifest-scan.js) and runs
+// it on this generator's output. A generator that fails the gate it ships is
+// a gate nobody will trust, so the hardened shape is the DEFAULT: a document
+// opts OUT of a control explicitly, it never has to opt in.
+//
+// Deliberately NOT defaulted on:
+//  · readOnlyRootFilesystem — breaks any image that writes to /var/cache,
+//    /run or /tmp (nginx, httpd, most JVMs). Pod Security "restricted" does
+//    not require it. Generating manifests that cannot start would be worse
+//    than missing a control the standard itself treats as optional.
+//  · runAsUser / fsGroup — OpenShift's SCC assigns a UID from the namespace's
+//    allocated range. A hardcoded UID outside that range is rejected outright.
+export const SECURITY_DEFAULTS = Object.freeze({
+  runAsNonRoot: true,
+  dropCapabilities: true,
+  seccompRuntimeDefault: true,
+  dedicatedServiceAccount: true,
+  readOnlyRootFs: false,
+});
+
+// Resource limits the CIS gate requires (CIS-5.2.4) and a ResourceQuota'd
+// namespace will reject a pod without. When the document states none these
+// are used — and reported as an ASSUMPTION, never as something that was read.
+const DEFAULT_RESOURCES = {
+  database: { cpuReq: "250m", memReq: "512Mi", cpuLim: "1", memLim: "2Gi" },
+  frontend: { cpuReq: "50m", memReq: "64Mi", cpuLim: "200m", memLim: "256Mi" },
+  app: { cpuReq: "100m", memReq: "256Mi", cpuLim: "500m", memLim: "1Gi" },
+};
+
+function securityFor(tier) {
+  return { ...SECURITY_DEFAULTS, ...(tier?.security || {}) };
+}
+
+/** Service account name for a tier — never "default" (CIS-5.1.6). */
+function saNameFor(tier) {
+  return `${tier.name}-sa`;
+}
+
+/**
+ * Apply the hardened pod + container security context in place.
+ * Used by every workload this generator emits — Deployment and init Job
+ * alike, because the gate checks every pod spec, not just the interesting one.
+ */
+function applySecurityContext(podSpec, container, tier) {
+  const sec = securityFor(tier);
+  const pod = {};
+  if (sec.runAsNonRoot !== false) pod.runAsNonRoot = true;
+  if (sec.seccompRuntimeDefault !== false) pod.seccompProfile = { type: "RuntimeDefault" };
+  if (Object.keys(pod).length) podSpec.securityContext = pod;
+
+  const ctr = container.securityContext || {};
+  if (sec.allowPrivilegeEscalation !== true) ctr.allowPrivilegeEscalation = false;
+  if (sec.dropCapabilities !== false) ctr.capabilities = { drop: ["ALL"] };
+  if (sec.readOnlyRootFs) ctr.readOnlyRootFilesystem = true;
+  container.securityContext = ctr;
+
+  if (sec.dedicatedServiceAccount !== false) {
+    podSpec.serviceAccountName = saNameFor(tier);
+    // Nothing this generator emits talks to the Kubernetes API, so the token
+    // is pure attack surface. Opt back in by setting it in the document.
+    if (sec.automountServiceAccountToken !== true) podSpec.automountServiceAccountToken = false;
+  }
+  return sec;
+}
+
+/**
+ * Fill in resource requests/limits, returning the names of any that were
+ * assumed rather than read from the document.
+ */
+function applyResources(container, tier) {
+  const want = DEFAULT_RESOURCES[tier.role] || DEFAULT_RESOURCES.app;
+  const given = tier.resources || {};
+  const assumed = [];
+  const pick = (key) => {
+    if (given[key]) return given[key];
+    assumed.push(key);
+    return want[key];
+  };
+  const requests = { cpu: pick("cpuReq"), memory: pick("memReq") };
+  const limits = { cpu: pick("cpuLim"), memory: pick("memLim") };
+  container.resources = { requests, limits };
+  return assumed;
+}
+
+function makeServiceAccount(tier, ais, ns) {
+  const json = {
+    apiVersion: "v1",
+    kind: "ServiceAccount",
+    metadata: {
+      name: saNameFor(tier),
+      namespace: ns,
+      labels: {
+        app: tier.name,
+        "app.kubernetes.io/name": tier.name,
+        "app.kubernetes.io/part-of": ais.appName,
+        "app.kubernetes.io/managed-by": "tcs-agentic-ai",
+      },
+    },
+    automountServiceAccountToken: false,
+  };
+  return { kind: "ServiceAccount", name: saNameFor(tier), yaml: yaml.dump(json, { lineWidth: -1, noRefs: true }), json };
+}
+
 /**
  * Generate all manifests for a deployment from an AIS.
- * Returns { manifests: [{kind, name, yaml, json}], summary }
+ * Returns { manifests: [{kind, name, yaml, json}], summary, securityApplied, assumptions }
  */
 export function generateManifests(ais) {
   const platform = (ais.targetPlatform || "openshift").toLowerCase();
@@ -27,16 +131,23 @@ export function generateManifests(ais) {
 
   const order = ais.deployOrder || ais.tiers.map((t) => t.name);
   const tierMap = new Map(ais.tiers.map((t) => [t.name, t]));
+  const assumedResources = [];
 
   for (const tierName of order) {
     const tier = tierMap.get(tierName);
     if (!tier) continue;
 
+    if (securityFor(tier).dedicatedServiceAccount !== false) {
+      manifests.push(makeServiceAccount(tier, ais, ns));
+    }
+
     if (tier.storage) {
       manifests.push(makePVC(tier, ns));
     }
 
-    manifests.push(makeDeployment(tier, ais, ns));
+    const dep = makeDeployment(tier, ais, ns);
+    if (dep.assumedResources?.length) assumedResources.push({ tier: tier.name, fields: dep.assumedResources });
+    manifests.push(dep);
     manifests.push(makeService(tier, ns));
 
     if (tier.role === "database" && tier.initSql) {
@@ -103,7 +214,25 @@ export function generateManifests(ais) {
     hasNetworkPolicies: (ais.networkPolicies || []).length > 0,
   };
 
-  return { manifests, summary };
+  // What was actually emitted, read back off the manifests — not a claim.
+  const sas = manifests.filter((m) => m.kind === "ServiceAccount").length;
+  const nps = manifests.filter((m) => m.kind === "NetworkPolicy").length;
+  const optedOut = ais.tiers.filter((t) => securityFor(t).runAsNonRoot === false).map((t) => t.name);
+  const roRoot = ais.tiers.filter((t) => securityFor(t).readOnlyRootFs).map((t) => t.name);
+  const securityApplied = [
+    `Pod Security "restricted" on every pod: runAsNonRoot, seccompProfile RuntimeDefault, allowPrivilegeEscalation false, all capabilities dropped${optedOut.length ? ` — except ${optedOut.join(", ")}, where the document asked for root` : ""}`,
+    `${sas} dedicated ServiceAccount(s), one per tier, with the API token not mounted — the default ServiceAccount is never used`,
+    `Zero-trust NetworkPolicies (${nps}): default-deny both directions, DNS-scoped egress, one allow per declared path`,
+    roRoot.length
+      ? `Read-only root filesystem on ${roRoot.join(", ")} (as the document asked)`
+      : `Read-only root filesystem left off — it breaks images that write to /var/cache, /run or /tmp, and "restricted" does not require it. Ask for it per tier in the document.`,
+  ];
+  const assumptions = [];
+  for (const a of assumedResources) {
+    assumptions.push(`${a.tier}: ${a.fields.length === 4 ? "no CPU/memory requests or limits were stated" : `no ${a.fields.join(", ")} was stated`} — a conservative default for a ${tierMap.get(a.tier)?.role || "app"} tier was used so the pod satisfies CIS-5.2.4 and any ResourceQuota. Review it against the real workload.`);
+  }
+
+  return { manifests, summary, securityApplied, assumptions, assumedResources };
 }
 
 /**
@@ -212,16 +341,10 @@ function makeDeployment(tier, ais, ns) {
     ports: [{ containerPort: tier.port, protocol: tier.protocol || "TCP" }],
   };
 
-  if (tier.resources) {
-    container.resources = {
-      requests: {},
-      limits: {},
-    };
-    if (tier.resources.cpuReq) container.resources.requests.cpu = tier.resources.cpuReq;
-    if (tier.resources.memReq) container.resources.requests.memory = tier.resources.memReq;
-    if (tier.resources.cpuLim) container.resources.limits.cpu = tier.resources.cpuLim;
-    if (tier.resources.memLim) container.resources.limits.memory = tier.resources.memLim;
-  }
+  // Always set requests AND limits. An unlimited container fails CIS-5.2.4 and
+  // is rejected outright by a namespace carrying a ResourceQuota, so anything
+  // the document left unsaid is defaulted and reported as an assumption.
+  const assumedResources = applyResources(container, tier);
 
   container.env = [];
   for (const ev of tier.envVars || []) {
@@ -263,18 +386,7 @@ function makeDeployment(tier, ais, ns) {
   };
   if (volumes.length > 0) podSpec.volumes = volumes;
 
-  const sec = tier.security || {};
-  podSpec.securityContext = {};
-  if (sec.runAsNonRoot) podSpec.securityContext.runAsNonRoot = true;
-  if (sec.runAsNonRoot) container.securityContext = { allowPrivilegeEscalation: false };
-  if (sec.readOnlyRootFs) {
-    container.securityContext = container.securityContext || {};
-    container.securityContext.readOnlyRootFilesystem = true;
-  }
-  if (sec.dropCapabilities) {
-    container.securityContext = container.securityContext || {};
-    container.securityContext.capabilities = { drop: ["ALL"] };
-  }
+  applySecurityContext(podSpec, container, tier);
 
   const json = {
     apiVersion: "apps/v1",
@@ -293,7 +405,7 @@ function makeDeployment(tier, ais, ns) {
     },
   };
 
-  return { kind: "Deployment", name: tier.name, yaml: yaml.dump(json, { lineWidth: -1, noRefs: true }), json };
+  return { kind: "Deployment", name: tier.name, yaml: yaml.dump(json, { lineWidth: -1, noRefs: true }), json, assumedResources };
 }
 
 function makeService(tier, ns) {
@@ -565,6 +677,23 @@ function makeInitJob(tier, ais, ns) {
     { name: "INIT_SQL", value: tier.initSql || "" },
   );
 
+  // The gate checks every pod spec in the set, this one included — so the init
+  // Job is hardened exactly like the workload it initialises, and borrows the
+  // same ServiceAccount (it needs no more rights than the database tier).
+  const initContainer = {
+    name: "init-sql",
+    image: tier.image,
+    command: ["sh", "-c", 'until pg_isready -h "$PGHOST"; do sleep 2; done && psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "$INIT_SQL"'],
+    env: envVars.filter((e) => e.value !== undefined || e.valueFrom !== undefined),
+  };
+  // A one-shot schema load needs a fraction of what the database does.
+  initContainer.resources = {
+    requests: { cpu: "50m", memory: "128Mi" },
+    limits: { cpu: "250m", memory: "256Mi" },
+  };
+  const podSpec = { restartPolicy: "Never", containers: [initContainer] };
+  applySecurityContext(podSpec, initContainer, tier);
+
   const json = {
     apiVersion: "batch/v1",
     kind: "Job",
@@ -582,17 +711,7 @@ function makeInitJob(tier, ais, ns) {
           // pod is invisible to every allow rule and deny-all blocks it.
           labels: { app: tier.name, "app.kubernetes.io/managed-by": "tcs-agentic-ai" },
         },
-        spec: {
-          restartPolicy: "Never",
-          containers: [
-            {
-              name: "init-sql",
-              image: tier.image,
-              command: ["sh", "-c", 'until pg_isready -h "$PGHOST"; do sleep 2; done && psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -c "$INIT_SQL"'],
-              env: envVars.filter((e) => e.value !== undefined || e.valueFrom !== undefined),
-            },
-          ],
-        },
+        spec: podSpec,
       },
     },
   };

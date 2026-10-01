@@ -309,6 +309,12 @@ function SopAgent({ clusters, activeCluster }) {
   const [verify, setVerify] = useState(null); // { phase, cis, image, error }
   const [cisChk, setCisChk] = useState(null); // pre-deploy CIS: { phase, data }
   const [imgChk, setImgChk] = useState(null); // pre-deploy image: { phase, data }
+  const [profiles, setProfiles] = useState([]);     // selectable policy profiles
+  const [profileId, setProfileId] = useState("cis-1.9");
+  const [threshold, setThreshold] = useState("");   // "" = the profile's own
+  const [remed, setRemed] = useState(null);   // remediation: { phase, data, error }
+  const [adm, setAdm] = useState(null);       // admission parity: { phase, data, error }
+  const [gate, setGate] = useState(null);     // sealed evidence record: { phase, record, verification }
   const [watch, setWatch] = useState(null);   // terminal pod watch: { on, done, data, error }
   const [pyramid, setPyramid] = useState(null); // production verification: { phase, data, error }
   const [gitUrl, setGitUrl] = useState("");
@@ -393,7 +399,10 @@ function SopAgent({ clusters, activeCluster }) {
     try {
       const res = await fetch(clusterUrl("/api/automation/deploy", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yaml: editedYaml, manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun, sourceUrl: docSource?.url || null }),
+        // The sealed gate travels with the deploy. The server re-digests what it
+        // is about to apply and records whether this record covers it, so a YAML
+        // edit made after the checks passed cannot present itself as checked.
+        body: JSON.stringify({ yaml: editedYaml, manifests: gen.manifests, namespace: namespace || gen.namespace, dryRun, sourceUrl: docSource?.url || null, gate: gate?.record || null }),
       });
       const d = await res.json().catch(() => ({}));
       if (d.error) throw new Error(d.error);
@@ -429,13 +438,45 @@ function SopAgent({ clusters, activeCluster }) {
     if (watch?.done && !pyramid) runPyramid();
   }, [watch?.done, pyramid, runPyramid]);
 
+  // The policy profiles the gate can run under — the standard is named and
+  // versioned, never implied.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/automation/policy-profiles").then((r) => r.json()).then((d) => {
+      if (!live || !Array.isArray(d.profiles)) return;
+      setProfiles(d.profiles);
+      if (d.default) setProfileId(d.default);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  // Editing the YAML invalidates every verdict that was reached against the old
+  // text. Leaving a green badge above a textarea the user just changed is the
+  // exact lie the gate record exists to catch, so the verdicts go when the text
+  // moves. The remediation panel survives — it is what probably changed the
+  // text — and goes only when the profile itself changes.
+  useEffect(() => {
+    setCisChk(null); setImgChk(null); setAdm(null); setGate(null);
+  }, [editedYaml]);
+  useEffect(() => {
+    setCisChk(null); setImgChk(null); setAdm(null); setGate(null); setRemed(null);
+  }, [profileId, threshold]);
+
+  // What the checks run against: the edited YAML when there is any, the
+  // generated objects otherwise. Same precedence as the server's.
+  const checkBody = () => ({
+    yaml: editedYaml, manifests: gen?.manifests,
+    profile: profileId, threshold: threshold || undefined,
+    namespace: namespace || gen?.namespace,
+  });
+
   // Shift-left checks on the GENERATED code (before deploy) — run separately.
   const runCisCheck = async () => {
     setCisChk({ phase: "running" });
     try {
       const res = await fetch("/api/automation/cis-check", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yaml: editedYaml, manifests: gen?.manifests }),
+        body: JSON.stringify(checkBody()),
       });
       const d = await res.json();
       if (d.error) throw new Error(d.error);
@@ -448,12 +489,80 @@ function SopAgent({ clusters, activeCluster }) {
     try {
       const res = await fetch(clusterUrl("/api/automation/image-scan", cluster), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ yaml: editedYaml, manifests: gen?.manifests }),
+        body: JSON.stringify(checkBody()),
       });
       const d = await res.json();
       if (d.error) throw new Error(d.error);
       setImgChk({ phase: "done", data: d });
     } catch (e) { setImgChk({ phase: "error", error: e.message }); showToast("Image scan failed: " + e.message, "err"); }
+  };
+
+  // Remediation: proposes a patched manifest set and a diff. Nothing is applied
+  // until the user takes the diff into the editor below.
+  const runRemediate = async () => {
+    setRemed({ phase: "running" });
+    try {
+      const res = await fetch("/api/automation/remediate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checkBody()),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setRemed({ phase: "done", data: d });
+      if (!d.patched) showToast("Nothing to remediate — the manifests already satisfy this profile", "ok");
+    } catch (e) { setRemed({ phase: "error", error: e.message }); showToast("Remediation failed: " + e.message, "err"); }
+  };
+
+  // The human applies it. Taking the patch replaces the editor's contents, which
+  // clears every check above — they have to run again against the new text.
+  const applyRemediation = () => {
+    const y = remed?.data?.yaml;
+    if (!y) return;
+    setEditedYaml(y);
+    showToast(`Applied ${remed.data.counts.fixes} fix(es) to the editor — re-run the checks`, "ok");
+  };
+
+  // Admission parity: what the TARGET namespace will actually admit.
+  const runAdmissionCheck = async () => {
+    setAdm({ phase: "running" });
+    try {
+      const res = await fetch(clusterUrl("/api/automation/admission-check", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checkBody()),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setAdm({ phase: "done", data: d });
+    } catch (e) { setAdm({ phase: "error", error: e.message }); showToast("Admission check failed: " + e.message, "err"); }
+  };
+
+  // Seal what was checked into a signed evidence record, keyed to a digest of
+  // the manifests. The deploy re-digests and records whether this covers it.
+  const sealGate = async () => {
+    setGate({ phase: "running" });
+    try {
+      const res = await fetch(clusterUrl("/api/automation/gate-record", cluster), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...checkBody(),
+          cis: cisChk?.phase === "done" ? cisChk.data : null,
+          images: imgChk?.phase === "done" ? imgChk.data : null,
+          admission: adm?.phase === "done" ? adm.data : null,
+          remediation: remed?.phase === "done" ? remed.data.counts : null,
+        }),
+      });
+      const d = await res.json();
+      if (d.error) throw new Error(d.error);
+      setGate({ phase: "done", record: d.record, verification: d.verification });
+      showToast(d.record?.signature?.signed ? "Gate sealed and signed" : "Gate recorded (unsigned — no signing key configured)", "ok");
+    } catch (e) { setGate({ phase: "error", error: e.message }); showToast("Gate record failed: " + e.message, "err"); }
+  };
+
+  // Run everything in order, so the common case is one click.
+  const runAllChecks = async () => {
+    await runCisCheck();
+    await runImageCheck();
+    await runAdmissionCheck();
   };
 
   // Closed-loop security check: run the CIS scan + image vulnerability scan
@@ -568,6 +677,16 @@ function SopAgent({ clusters, activeCluster }) {
               </div>
             </div>
           )}
+          {/* Assumptions — stated separately from the findings, because a number
+              the generator invented must never read like one it was given. */}
+          {(Array.isArray(gen.assumptions) && gen.assumptions.length > 0) && (
+            <div style={{ margin: "8px 0 2px" }}>
+              <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "#c2410c", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>⚠ Assumed, not read from the document</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {gen.assumptions.map((a, i) => <div key={i} style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", lineHeight: 1.45 }}>• {a}</div>)}
+              </div>
+            </div>
+          )}
           {(Array.isArray(gen.monitoringApplied) && gen.monitoringApplied.length > 0) && (
             <div style={{ margin: "8px 0 2px" }}>
               <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>📈 Observability</div>
@@ -590,10 +709,37 @@ function SopAgent({ clusters, activeCluster }) {
 
           {/* Pre-deploy (shift-left) checks — run independently on the generated code */}
           <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid var(--border,#e4e8f1)", background: "rgba(61,90,254,0.04)" }}>
-            <div style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--fg,#151a29)", marginBottom: 8 }}>🔎 Pre-deploy checks <span style={{ fontWeight: 500, color: "var(--muted,#5a6373)" }}>· run on the generated code, before deploying</span></div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={runCisCheck} disabled={cisChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: cisChk?.phase === "running" ? 0.7 : 1 }}>{cisChk?.phase === "running" ? "Checking…" : "🛡 CIS Benchmark check"}</button>
-              <button onClick={runImageCheck} disabled={imgChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.08)", color: "#7c3aed", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: imgChk?.phase === "running" ? 0.7 : 1 }}>{imgChk?.phase === "running" ? "Scanning…" : "🐞 Image vulnerability scan"}</button>
+            <div style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--fg,#151a29)", marginBottom: 8 }}>🔎 Pre-deploy gate <span style={{ fontWeight: 500, color: "var(--muted,#5a6373)" }}>· run on the YAML above, before deploying</span></div>
+
+            {/* The standard is chosen, named and versioned — never implied. */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 9 }}>
+              <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--muted,#5a6373)" }}>Policy profile:</label>
+              <select value={profileId} onChange={(e) => setProfileId(e.target.value)}
+                style={{ padding: "6px 9px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.8rem", fontWeight: 600 }}>
+                {profiles.length === 0 && <option value={profileId}>{profileId}</option>}
+                {profiles.map((p) => <option key={p.id} value={p.id}>{p.name} {p.version} · {p.controlCount} controls</option>)}
+              </select>
+              <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--muted,#5a6373)" }}>Blocks on:</label>
+              <select value={threshold} onChange={(e) => setThreshold(e.target.value)}
+                style={{ padding: "6px 9px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.8rem" }}>
+                <option value="">the profile's own threshold</option>
+                <option value="any">any failed control</option>
+                <option value="warning">critical or warning</option>
+                <option value="critical">critical only</option>
+                <option value="none">nothing — report only</option>
+              </select>
+            </div>
+            {profiles.find((p) => p.id === profileId) && (
+              <div style={{ fontSize: "0.73rem", color: "var(--muted,#5a6373)", marginBottom: 9, lineHeight: 1.45 }}>
+                <b>{profiles.find((p) => p.id === profileId).standard}</b> — {profiles.find((p) => p.id === profileId).description}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={runAllChecks} disabled={cisChk?.phase === "running" || imgChk?.phase === "running" || adm?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#3d5afe", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>▶ Run all checks</button>
+              <button onClick={runCisCheck} disabled={cisChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: cisChk?.phase === "running" ? 0.7 : 1 }}>{cisChk?.phase === "running" ? "Checking…" : "🛡 Policy check"}</button>
+              <button onClick={runImageCheck} disabled={imgChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.08)", color: "#7c3aed", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: imgChk?.phase === "running" ? 0.7 : 1 }}>{imgChk?.phase === "running" ? "Scanning…" : "🐞 Image hygiene + CVEs"}</button>
+              <button onClick={runAdmissionCheck} disabled={adm?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #ea580c", background: "rgba(234,88,12,0.08)", color: "#c2410c", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: adm?.phase === "running" ? 0.7 : 1 }}>{adm?.phase === "running" ? "Reading namespace…" : "🚪 Will the cluster admit it?"}</button>
             </div>
 
             {/* CIS result */}
@@ -604,42 +750,214 @@ function SopAgent({ clusters, activeCluster }) {
                 : (
                   <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🛡 CIS / Pod Security</span>
+                      <span style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--fg,#151a29)" }}>🛡 {cisChk.data.profile?.name || "CIS / Pod Security"} <span style={{ fontWeight: 600, color: "var(--muted,#5a6373)" }}>{cisChk.data.profile?.version}</span></span>
                       <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: cisChk.data.summary.failed === 0 ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: cisChk.data.summary.failed === 0 ? "#16a34a" : "#dc2626" }}>{cisChk.data.summary.passed}/{cisChk.data.summary.total} passed · grade {cisChk.data.summary.grade}</span>
+                      {cisChk.data.verdict && (
+                        <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: cisChk.data.verdict.pass ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: cisChk.data.verdict.pass ? "#16a34a" : "#dc2626" }}>
+                          {cisChk.data.verdict.pass ? "GATE PASS" : "GATE BLOCK"} · blocks on {cisChk.data.verdict.threshold}
+                        </span>
+                      )}
+                      {cisChk.data.summary.notEvaluated > 0 && (
+                        <span style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)" }}>{cisChk.data.summary.notEvaluated} control(s) outside this profile — not evaluated, not counted</span>
+                      )}
                     </div>
+                    {cisChk.data.verdict && <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 5 }}>{cisChk.data.verdict.reason}</div>}
                     <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 3 }}>
                       {cisChk.data.controls.map((c) => (
-                        <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: "0.76rem" }}>
-                          <span style={{ color: c.status === "PASS" ? "#16a34a" : "#dc2626", fontWeight: 800 }}>{c.status === "PASS" ? "✓" : "✗"}</span>
+                        <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 7, fontSize: "0.76rem", opacity: c.status === "N/A" ? 0.55 : 1 }}>
+                          <span style={{ color: c.status === "PASS" ? "#16a34a" : c.status === "N/A" ? "var(--muted,#5a6373)" : "#dc2626", fontWeight: 800 }}>{c.status === "PASS" ? "✓" : c.status === "N/A" ? "–" : "✗"}</span>
                           <span style={{ color: "var(--fg,#151a29)" }}><b>{c.id}</b> {c.title}
+                            {c.status === "FAIL" && <span style={{ fontSize: "0.66rem", fontWeight: 800, marginLeft: 6, padding: "1px 6px", borderRadius: 999, background: c.severity === "critical" ? "rgba(220,38,38,0.12)" : "rgba(234,88,12,0.12)", color: c.severity === "critical" ? "#dc2626" : "#c2410c" }}>{c.severity}</span>}
                             {c.status === "FAIL" && c.offenders?.length > 0 && <span style={{ color: "var(--muted,#5a6373)" }}> — {c.offenders.join(", ")}</span>}
+                            {c.status === "N/A" && <span style={{ color: "var(--muted,#5a6373)" }}> — not in this profile</span>}
                           </span>
                         </div>
                       ))}
                     </div>
+                    {cisChk.data.summary.failed > 0 && (
+                      <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px dashed var(--border,#e4e8f1)", display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+                        <button onClick={runRemediate} disabled={remed?.phase === "running"} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer" }}>
+                          {remed?.phase === "running" ? "Working…" : `🔧 Fix ${cisChk.data.summary.failed} finding(s) — show me the diff`}
+                        </button>
+                        <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>Proposes a patch. Nothing changes until you apply it.</span>
+                      </div>
+                    )}
                   </div>
                 )
+            )}
+
+            {/* Remediation — a diff, not a promise */}
+            {remed?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Remediation: {remed.error}</div>}
+            {remed?.phase === "done" && (
+              <div style={{ marginTop: 10, border: "1px solid #0ea5a0", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--fg,#151a29)" }}>🔧 Proposed remediation</span>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(14,165,160,0.12)", color: "#0e8a86" }}>
+                    grade {remed.data.before?.grade} → {remed.data.after?.grade} · {remed.data.counts.fixes} fix(es)
+                  </span>
+                  {remed.data.counts.verify > 0 && <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(234,88,12,0.12)", color: "#c2410c" }}>{remed.data.counts.verify} need checking before you take them</span>}
+                  {remed.data.counts.objectsAdded > 0 && <span style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)" }}>adds {remed.data.added.join(", ")}</span>}
+                </div>
+
+                {remed.data.fixes.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {remed.data.fixes.map((f, i) => (
+                      <div key={i} style={{ fontSize: "0.76rem", borderLeft: `3px solid ${f.risk === "safe" ? "#16a34a" : "#ea580c"}`, paddingLeft: 8 }}>
+                        <div style={{ color: "var(--fg,#151a29)" }}>
+                          <span style={{ fontSize: "0.65rem", fontWeight: 800, padding: "1px 6px", borderRadius: 999, background: f.risk === "safe" ? "rgba(22,163,74,0.12)" : "rgba(234,88,12,0.12)", color: f.risk === "safe" ? "#16a34a" : "#c2410c", marginRight: 6 }}>{f.risk === "safe" ? "SAFE" : "VERIFY"}</span>
+                          <b>{f.control}</b> <code style={{ fontSize: "0.72rem" }}>{f.target}</code> — {f.change}
+                        </div>
+                        <div style={{ color: "var(--muted,#5a6373)", marginTop: 2, lineHeight: 1.45 }}>{f.why}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {remed.data.unfixable.length > 0 && (
+                  <div style={{ marginTop: 9 }}>
+                    <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "#dc2626", marginBottom: 3 }}>Cannot be fixed from the finding alone</div>
+                    {remed.data.unfixable.map((u, i) => (
+                      <div key={i} style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", lineHeight: 1.45 }}>• <b>{u.control}</b> <code style={{ fontSize: "0.72rem" }}>{u.target}</code> — {u.why}</div>
+                    ))}
+                  </div>
+                )}
+
+                {remed.data.stillFailing?.length > 0 && (
+                  <div style={{ marginTop: 9, fontSize: "0.76rem", color: "#c2410c" }}>
+                    Still failing after the patch: {remed.data.stillFailing.map((c) => c.id).join(", ")} — the gate would still {remed.data.after?.pass ? "pass (below the threshold)" : "block"}.
+                  </div>
+                )}
+
+                {remed.data.diff && (
+                  <>
+                    <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "var(--fg,#151a29)", margin: "10px 0 4px" }}>Diff · generated → remediated</div>
+                    <pre style={{ margin: 0, maxHeight: 320, overflow: "auto", background: "#0f172a", borderRadius: 8, padding: 10, fontSize: "0.72rem", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", lineHeight: 1.5 }}>
+                      {remed.data.diff.split("\n").map((ln, i) => (
+                        <div key={i} style={{ color: ln.startsWith("+") && !ln.startsWith("+++") ? "#4ade80" : ln.startsWith("-") && !ln.startsWith("---") ? "#f87171" : ln.startsWith("@@") ? "#60a5fa" : "#94a3b8", whiteSpace: "pre" }}>{ln || " "}</div>
+                      ))}
+                    </pre>
+                  </>
+                )}
+
+                <div style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+                  <button onClick={applyRemediation} disabled={!remed.data.patched} style={{ padding: "7px 13px", borderRadius: 8, border: "none", background: remed.data.patched ? "#0ea5a0" : "var(--border,#e4e8f1)", color: remed.data.patched ? "#fff" : "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.82rem", cursor: remed.data.patched ? "pointer" : "default" }}>✓ Apply this patch to the editor</button>
+                  <button onClick={() => setRemed(null)} style={{ padding: "7px 13px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer" }}>Discard</button>
+                  <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>Applying replaces the YAML above and clears the checks — they must run again on the new text.</span>
+                </div>
+              </div>
             )}
 
             {/* Image result */}
             {imgChk?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Image scan: {imgChk.error}</div>}
             {imgChk?.phase === "done" && (
               <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🐞 Image Vulnerabilities</span>
-                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(124,58,237,0.12)", color: "#7c3aed" }}>{imgChk.data.summary?.total || 0} image(s) · grade {imgChk.data.summary?.grade}</span>
-                  <span style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)" }}>{imgChk.data.enriched ? "live CVEs + hygiene" : "hygiene (deploy for live CVEs)"}</span>
+                {/* TWO scores. They answer different questions and have different
+                    remedies; one mixed grade told nobody anything. */}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 240px", border: "1px solid var(--border,#e4e8f1)", borderRadius: 8, padding: 9 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, fontSize: "0.8rem", color: "var(--fg,#151a29)" }}>🏷 Image hygiene</span>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: imgChk.data.hygiene?.grade === "A" ? "rgba(22,163,74,0.14)" : "rgba(234,88,12,0.12)", color: imgChk.data.hygiene?.grade === "A" ? "#16a34a" : "#c2410c" }}>grade {imgChk.data.hygiene?.grade}</span>
+                    </div>
+                    <div style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)", marginTop: 4, lineHeight: 1.45 }}>
+                      {imgChk.data.hygiene?.noDefects}/{imgChk.data.hygiene?.total} reference(s) with nothing above advisory · {imgChk.data.hygiene?.findings} finding(s) in all. How the image is referenced: pinned, trusted registry, rebuilt base.
+                    </div>
+                    {imgChk.data.hygiene?.basis && <div style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)", marginTop: 3, fontStyle: "italic" }}>{imgChk.data.hygiene.basis}</div>}
+                  </div>
+                  <div style={{ flex: "1 1 240px", border: "1px solid var(--border,#e4e8f1)", borderRadius: 8, padding: 9 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, fontSize: "0.8rem", color: "var(--fg,#151a29)" }}>🐞 Vulnerabilities (CVEs)</span>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: imgChk.data.vulnerability?.status === "unscanned" ? "rgba(90,99,115,0.14)" : imgChk.data.vulnerability?.grade === "A" ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: imgChk.data.vulnerability?.status === "unscanned" ? "var(--muted,#5a6373)" : imgChk.data.vulnerability?.grade === "A" ? "#16a34a" : "#dc2626" }}>
+                        {imgChk.data.vulnerability?.status === "unscanned" ? "NOT SCANNED" : `grade ${imgChk.data.vulnerability?.grade}`}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: "0.74rem", color: "var(--muted,#5a6373)", marginTop: 4, lineHeight: 1.45 }}>
+                      {imgChk.data.vulnerability?.scanned}/{imgChk.data.vulnerability?.total} image(s) scanned
+                      {imgChk.data.vulnerability?.scanned > 0 && <> · <span style={{ color: "#dc2626" }}>C {imgChk.data.vulnerability.critical}</span> · <span style={{ color: "#ea580c" }}>H {imgChk.data.vulnerability.high}</span> · M {imgChk.data.vulnerability.medium} · L {imgChk.data.vulnerability.low}</>}
+                    </div>
+                    {imgChk.data.vulnerability?.basis && <div style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)", marginTop: 3, fontStyle: "italic" }}>{imgChk.data.vulnerability.basis}</div>}
+                  </div>
                 </div>
                 {imgChk.data.note && <div style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)", marginTop: 6 }}>{imgChk.data.note}</div>}
                 {(imgChk.data.images || []).map((im, i) => (
                   <div key={i} style={{ marginTop: 7, fontSize: "0.76rem" }}>
-                    <div style={{ fontWeight: 600 }}>{im.image} <span style={{ color: "var(--muted,#5a6373)", fontWeight: 400 }}>· {im.source}</span></div>
-                    <div style={{ color: "var(--muted,#5a6373)" }}>
-                      <span style={{ color: "#dc2626" }}>C {im.critical}</span> · <span style={{ color: "#ea580c" }}>H {im.high}</span> · M {im.medium} · L {im.low}
-                    </div>
+                    <div style={{ fontWeight: 600, color: "var(--fg,#151a29)" }}>{im.image} <span style={{ color: "var(--muted,#5a6373)", fontWeight: 400 }}>· {im.source}</span></div>
+                    {im.scanned ? (
+                      <div style={{ color: "var(--muted,#5a6373)" }}>
+                        <span style={{ color: "#dc2626" }}>C {im.critical}</span> · <span style={{ color: "#ea580c" }}>H {im.high}</span> · M {im.medium} · L {im.low}
+                      </div>
+                    ) : (
+                      <div style={{ color: "var(--muted,#5a6373)" }}>No CVE data for this image — unknown, not clean.</div>
+                    )}
                     {(im.hygiene || []).slice(0, 3).map((f, j) => <div key={j} style={{ color: "var(--muted,#5a6373)", marginLeft: 8 }}>• <b>{f.id}</b> {f.description} <span style={{ color: "#0e8a86" }}>→ {f.fixedBy}</span></div>)}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Admission parity — what the TARGET namespace will admit */}
+            {adm?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Admission check: {adm.error}</div>}
+            {adm?.phase === "done" && (() => {
+              const v = adm.data.verdict || {};
+              const c = v.status === "will-be-rejected" ? { fg: "#dc2626", bg: "rgba(220,38,38,0.12)", label: "WILL BE REJECTED" }
+                : v.status === "unknown" ? { fg: "var(--muted,#5a6373)", bg: "rgba(90,99,115,0.14)", label: "UNKNOWN" }
+                : v.status === "admitted-with-gaps" ? { fg: "#c2410c", bg: "rgba(234,88,12,0.12)", label: "ADMITTED, WITH GAPS" }
+                : { fg: "#16a34a", bg: "rgba(22,163,74,0.14)", label: "WILL BE ADMITTED" };
+              return (
+                <div style={{ marginTop: 10, border: "1px solid var(--border,#e4e8f1)", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--fg,#151a29)" }}>🚪 Admission parity <span style={{ fontWeight: 500, color: "var(--muted,#5a6373)" }}>· namespace {adm.data.namespace || "?"}</span></span>
+                    <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: c.bg, color: c.fg }}>{c.label}</span>
+                    <span style={{ fontSize: "0.7rem", color: "var(--muted,#5a6373)" }}>
+                      namespace {adm.data.namespaceState}
+                      {adm.data.psa?.enforce ? ` · enforces ${adm.data.psa.enforce}` : " · no Pod Security label"}
+                      {adm.data.uidRange ? ` · UIDs ${adm.data.uidRange.min}–${adm.data.uidRange.max}` : ""}
+                      {adm.data.quotas === null ? " · quotas unread" : adm.data.quotas.length ? ` · ${adm.data.quotas.length} ResourceQuota` : " · no quota"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)", marginTop: 5, lineHeight: 1.45 }}>{v.summary}</div>
+                  {(adm.data.findings || []).map((f, i) => (
+                    <div key={i} style={{ marginTop: 7, fontSize: "0.76rem", borderLeft: `3px solid ${f.severity === "critical" ? "#dc2626" : f.severity === "warning" ? "#ea580c" : "#16a34a"}`, paddingLeft: 8 }}>
+                      <div style={{ color: "var(--fg,#151a29)", fontWeight: 600 }}>{f.title}</div>
+                      <div style={{ color: "var(--muted,#5a6373)", lineHeight: 1.45 }}>{f.detail}</div>
+                      {f.fix && <div style={{ color: "#0e8a86", lineHeight: 1.45, marginTop: 2 }}>→ {f.fix}</div>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Seal the result into the evidence pack */}
+            <div style={{ marginTop: 11, paddingTop: 10, borderTop: "1px dashed var(--border,#e4e8f1)", display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={sealGate} disabled={gate?.phase === "running" || cisChk?.phase !== "done"}
+                title={cisChk?.phase !== "done" ? "Run the policy check first — there is nothing to record yet." : "Digest the manifests and record what was checked"}
+                style={{ padding: "7px 13px", borderRadius: 8, border: "1px solid #7c3aed", background: cisChk?.phase === "done" ? "rgba(124,58,237,0.08)" : "var(--card-bg,#fff)", color: cisChk?.phase === "done" ? "#7c3aed" : "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.82rem", cursor: cisChk?.phase === "done" ? "pointer" : "default" }}>
+                {gate?.phase === "running" ? "Sealing…" : "🔐 Seal this result into the evidence pack"}
+              </button>
+              <span style={{ fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>Records the standard, the version, every control and a digest of these exact manifests. Deploy checks the digest still matches.</span>
+            </div>
+            {gate?.phase === "error" && <div style={{ marginTop: 8, color: "#dc2626", fontSize: "0.82rem" }}>Gate record: {gate.error}</div>}
+            {gate?.phase === "done" && gate.record && (
+              <div style={{ marginTop: 9, border: "1px solid #7c3aed", borderRadius: 9, padding: 11, background: "var(--card-bg,#fff)", fontSize: "0.76rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 800, fontSize: "0.82rem", color: "var(--fg,#151a29)" }}>🔐 Evidence record</span>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: gate.record.signature?.signed ? "rgba(22,163,74,0.14)" : "rgba(234,88,12,0.12)", color: gate.record.signature?.signed ? "#16a34a" : "#c2410c" }}>
+                    {gate.record.signature?.signed ? "SIGNED (HMAC-SHA256)" : "UNSIGNED — digest only"}
+                  </span>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: gate.record.compliance?.pass ? "rgba(22,163,74,0.14)" : "rgba(220,38,38,0.12)", color: gate.record.compliance?.pass ? "#16a34a" : "#dc2626" }}>
+                    {gate.record.policy?.name} {gate.record.policy?.version} · grade {gate.record.compliance?.grade} · {gate.record.compliance?.pass ? "PASS" : "BLOCK"}
+                  </span>
+                </div>
+                <div style={{ color: "var(--muted,#5a6373)", marginTop: 6, fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem", wordBreak: "break-all" }}>
+                  manifest {gate.record.manifest?.algorithm}:{gate.record.manifest?.value} <span style={{ fontFamily: "inherit" }}>({gate.record.manifest?.objectCount} object(s))</span>
+                </div>
+                <div style={{ color: "var(--muted,#5a6373)", marginTop: 2, fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.72rem", wordBreak: "break-all" }}>
+                  {gate.record.signature?.algorithm}:{gate.record.signature?.value}
+                </div>
+                {gate.record.checksNotRun?.length > 0 && (
+                  <div style={{ color: "#c2410c", marginTop: 6 }}>Not run, and recorded as not run: {gate.record.checksNotRun.join("; ")}.</div>
+                )}
+                {gate.record.signature?.note && <div style={{ color: "var(--muted,#5a6373)", marginTop: 5, lineHeight: 1.45 }}>{gate.record.signature.note}</div>}
               </div>
             )}
           </div>
@@ -655,6 +973,11 @@ function SopAgent({ clusters, activeCluster }) {
           {deploy?.phase === "done" && (
             <div style={{ marginTop: 10, fontSize: "0.84rem", borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
               <b>{deploy.dryRun ? "Dry-run" : "Deploy"} result:</b> {deploy.result.applied?.length || 0} ok{deploy.result.failed?.length ? `, ${deploy.result.failed.length} failed` : ""}.
+              {deploy.result.gateCoverage && (
+                <div style={{ marginTop: 5, fontSize: "0.76rem", padding: "6px 9px", borderRadius: 7, background: deploy.result.gateCoverage.covered ? "rgba(22,163,74,0.08)" : "rgba(234,88,12,0.10)", color: deploy.result.gateCoverage.covered ? "#16a34a" : "#c2410c", lineHeight: 1.45 }}>
+                  {deploy.result.gateCoverage.covered ? "🔐 " : "⚠ "}{deploy.result.gateCoverage.message}
+                </div>
+              )}
               {(deploy.result.deployId || deploy.result.changeRequest) && (
                 <span style={{ marginLeft: 8, fontSize: "0.72rem", color: "var(--muted,#5a6373)" }}>
                   {deploy.result.deployId && <>record <code>{deploy.result.deployId}</code></>}

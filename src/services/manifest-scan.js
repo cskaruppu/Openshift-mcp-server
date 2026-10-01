@@ -12,6 +12,7 @@
  */
 
 import { ocpGet } from "../utils/openshift-client.js";
+import { resolveProfile, gateVerdict } from "./policy-profiles.js";
 
 // ── Extract the pod spec from any workload kind ───────────────────────────
 function podSpecOf(m) {
@@ -39,7 +40,19 @@ export function extractImages(manifests) {
 }
 
 // ── CIS / Pod Security "restricted" — static evaluation ───────────────────
-export function cisCheckManifests(manifests) {
+/**
+ * Evaluate the manifests against a policy profile.
+ *
+ * opts.profile   — profile id (see policy-profiles.js). Default: CIS v1.9.
+ * opts.threshold — override the profile's fail threshold for this run.
+ *
+ * Controls outside the profile are returned with status "N/A" and excluded
+ * from the counts and the grade: a control that was not evaluated is reported
+ * as not evaluated, never as a pass.
+ */
+export function cisCheckManifests(manifests, opts = {}) {
+  const profile = resolveProfile(opts.profile);
+  const inProfile = new Set(profile.controls);
   const workloads = [];
   for (const m of manifests) {
     const ps = podSpecOf(m);
@@ -49,8 +62,16 @@ export function cisCheckManifests(manifests) {
 
   const controls = [];
   const add = (id, title, severity, offenders, note) => {
+    // The profile may raise or lower a control's severity: the same reading
+    // ("runs as root") is a hard stop under restricted and advisory under
+    // baseline. The reading never changes; its consequence does.
+    const sev = profile.severity?.[id] || severity;
+    if (!inProfile.has(id)) {
+      controls.push({ id, title, severity: sev, status: "N/A", offenders: [], note: `Not evaluated — outside ${profile.name} ${profile.version}.`, inProfile: false });
+      return;
+    }
     const status = offenders.length === 0 ? "PASS" : "FAIL";
-    controls.push({ id, title, severity, status, offenders: offenders.slice(0, 12), note: note || null });
+    controls.push({ id, title, severity: sev, status, offenders: offenders.slice(0, 12), note: note || null, inProfile: true });
   };
   // Container-level predicate → list of "workload:container" offenders.
   const failContainers = (pred) => {
@@ -67,8 +88,10 @@ export function cisCheckManifests(manifests) {
   if (workloads.length === 0) {
     return {
       applicable: false,
+      profile: { id: profile.id, name: profile.name, version: profile.version, standard: profile.standard },
       controls: [],
       summary: { total: 0, passed: 0, failed: 0, critical: 0, warning: 0, info: 0, grade: "—" },
+      verdict: { pass: false, threshold: profile.failThreshold, blocking: [], reason: "Nothing was evaluated — a check with no workload to read is not a pass." },
       note: "No Deployment/StatefulSet/Pod workloads found in the manifests.",
     };
   }
@@ -111,16 +134,22 @@ export function cisCheckManifests(manifests) {
   add("CIS-5.4.1", "Credentials sourced from Secrets, not plaintext env", "warning", plaintextCreds,
     "Reference credentials via valueFrom.secretKeyRef / envFrom, never inline env values.");
 
-  const passed = controls.filter((c) => c.status === "PASS").length;
-  const failed = controls.length - passed;
-  const failedBySev = (s) => controls.filter((c) => c.status === "FAIL" && c.severity === s).length;
+  // Only in-profile controls count. An N/A control is neither a pass nor a
+  // failure, and folding it into either would make the grade meaningless.
+  const scored = controls.filter((c) => c.status !== "N/A");
+  const passed = scored.filter((c) => c.status === "PASS").length;
+  const failed = scored.length - passed;
+  const failedBySev = (s) => scored.filter((c) => c.status === "FAIL" && c.severity === s).length;
   const critical = failedBySev("critical"), warning = failedBySev("warning"), info = failedBySev("info");
   const grade = failed === 0 ? "A" : critical ? "F" : warning >= 3 ? "C" : "B";
+  const verdict = gateVerdict(scored, profile, opts.threshold);
 
   return {
     applicable: true,
+    profile: { id: profile.id, name: profile.name, version: profile.version, standard: profile.standard },
     controls,
-    summary: { total: controls.length, passed, failed, critical, warning, info, grade },
+    summary: { total: scored.length, passed, failed, critical, warning, info, grade, notEvaluated: controls.length - scored.length },
+    verdict,
   };
 }
 
@@ -144,7 +173,21 @@ export function imageHygiene(image) {
   }
   const base = ["alpine", "ubuntu", "debian", "centos", "node", "python", "golang", "nginx", "httpd", "redis", "postgres", "mysql", "mariadb"];
   if (base.some((b) => image.includes(`/${b}:`) || image.includes(`/${b}@`) || image.startsWith(`${b}:`) || image === b)) {
-    findings.push({ id: "IMG-006", severity: "medium", cvss: 4.5, package: "base-image", description: "Common base image — ensure regular rebuilds for patched CVEs", fixedBy: "Enable automated base-image rebuilds" });
+    // On a trusted registry this is advisory, not a defect: Red Hat rebuilds
+    // and re-ships these with patched CVEs, so the remedy is "re-pull
+    // periodically", not "fix the reference". Grading a correctly pinned
+    // registry.redhat.io image down for it is how a score stops being read.
+    const trustedBase = trusted.some((r) => image.startsWith(r));
+    findings.push({
+      id: "IMG-006",
+      severity: trustedBase ? "low" : "medium",
+      cvss: trustedBase ? 2.0 : 4.5,
+      package: "base-image",
+      description: trustedBase
+        ? "Common base image on a trusted registry — rebuilt upstream, but re-pull to pick up patched CVEs"
+        : "Common base image — ensure regular rebuilds for patched CVEs",
+      fixedBy: trustedBase ? "Re-pull and redeploy on the vendor's rebuild cadence" : "Enable automated base-image rebuilds",
+    });
   }
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const f of findings) counts[f.severity] = (counts[f.severity] || 0) + 1;
@@ -176,9 +219,34 @@ export async function liveCveForImages(images) {
 }
 
 // ── Top-level: scan all images referenced by the manifests ────────────────
+/**
+ * TWO scores, never one.
+ *
+ * Hygiene and vulnerability answer different questions and have different
+ * remedies, and the old single grade conflated them: it added hygiene findings
+ * into the same critical/high/medium buckets as real CVEs and then subtracted
+ * points per finding per image. A twelve-image application whose every image
+ * was clean but tag-pinned rather than digest-pinned scored F — which taught
+ * everyone to ignore the number.
+ *
+ *   · hygiene      — a pure function of the image REFERENCE: is it pinned, does
+ *                    it come from somewhere trusted. Graded by the worst finding
+ *                    present, NOT by a count, so it does not get worse simply
+ *                    because the application has more tiers. Always available.
+ *   · vulnerability — real CVE counts, and only over images something actually
+ *                    scanned. With no scanner data the grade is "—" and the
+ *                    status is "unscanned": a check with no data is not a pass.
+ */
 export async function scanManifestImages(manifests, { enrich = true } = {}) {
   const images = extractImages(manifests);
-  if (images.length === 0) return { images: [], summary: { total: 0, critical: 0, high: 0, medium: 0, low: 0, grade: "—" }, note: "No container images referenced in the manifests." };
+  if (images.length === 0) {
+    return {
+      images: [],
+      hygiene: { total: 0, high: 0, medium: 0, low: 0, grade: "—", findings: 0 },
+      vulnerability: { status: "not-applicable", total: 0, scanned: 0, unscanned: 0, critical: 0, high: 0, medium: 0, low: 0, grade: "—" },
+      note: "No container images referenced in the manifests.",
+    };
+  }
   const live = enrich ? await liveCveForImages(images) : {};
   const results = images.map((img) => {
     const h = imageHygiene(img);
@@ -186,19 +254,61 @@ export async function scanManifestImages(manifests, { enrich = true } = {}) {
     return {
       image: img.length > 70 ? "…" + img.slice(-67) : img,
       fullImage: img,
+      // Hygiene and CVEs stay in separate fields all the way down, so nothing
+      // downstream can accidentally add them together again.
       hygiene: h.findings,
+      hygieneWorst: h.critical ? "critical" : h.high ? "high" : h.medium ? "medium" : h.low ? "low" : "none",
       liveCve: cve || null,
-      critical: (cve?.critical || 0) + h.critical,
-      high: (cve?.high || 0) + h.high,
-      medium: (cve?.medium || 0) + h.medium,
-      low: (cve?.low || 0) + h.low,
+      scanned: !!cve,
+      critical: cve?.critical || 0,
+      high: cve?.high || 0,
+      medium: cve?.medium || 0,
+      low: cve?.low || 0,
       maxCVSS: h.maxCVSS,
-      source: cve ? "trivy-operator + hygiene" : "hygiene",
+      source: cve ? "trivy-operator (CVEs) + reference hygiene" : "reference hygiene only — no scanner data for this image",
     };
   });
-  const t = results.reduce((a, r) => ({ critical: a.critical + r.critical, high: a.high + r.high, medium: a.medium + r.medium, low: a.low + r.low }), { critical: 0, high: 0, medium: 0, low: 0 });
-  const score = Math.max(0, 100 - t.critical * 15 - t.high * 8 - t.medium * 3 - t.low);
-  const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
-  results.sort((a, b) => (b.critical * 100 + b.high * 10 + b.medium) - (a.critical * 100 + a.high * 10 + a.medium));
-  return { images: results, summary: { total: results.length, ...t, grade }, enriched: Object.keys(live).length > 0 };
+
+  // ── Hygiene: graded by the worst finding present, not by a sum ──
+  const hy = results.reduce((a, r) => {
+    for (const f of r.hygiene) a[f.severity] = (a[f.severity] || 0) + 1;
+    a.findings += r.hygiene.length;
+    return a;
+  }, { critical: 0, high: 0, medium: 0, low: 0, findings: 0 });
+  const hygiene = {
+    total: results.length,
+    ...hy,
+    clean: results.filter((r) => r.hygiene.length === 0).length,
+    // Images carrying nothing above "low" — advisory notes do not make a
+    // correctly pinned reference a defective one.
+    noDefects: results.filter((r) => !r.hygiene.some((f) => f.severity !== "low")).length,
+    grade: hy.critical ? "F" : hy.high ? "C" : hy.medium ? "B" : "A",
+    basis: "Graded by the most severe reference finding present, so a larger application is not penalised for having more images.",
+  };
+
+  // ── Vulnerability: only over images a scanner actually read ──
+  const scannedRows = results.filter((r) => r.scanned);
+  const cv = scannedRows.reduce((a, r) => ({
+    critical: a.critical + r.critical, high: a.high + r.high, medium: a.medium + r.medium, low: a.low + r.low,
+  }), { critical: 0, high: 0, medium: 0, low: 0 });
+  const score = Math.max(0, 100 - cv.critical * 15 - cv.high * 8 - cv.medium * 3 - cv.low);
+  const vulnerability = {
+    status: scannedRows.length === 0 ? "unscanned" : scannedRows.length < results.length ? "partial" : "scanned",
+    total: results.length,
+    scanned: scannedRows.length,
+    unscanned: results.length - scannedRows.length,
+    ...cv,
+    // No scanner data → no grade. Reporting A here would be the worst possible
+    // lie: it reads as "no vulnerabilities" when it means "nobody looked".
+    grade: scannedRows.length === 0 ? "—"
+      : score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F",
+    basis: scannedRows.length === 0
+      ? "No image was scanned. Deploy to a cluster running the Trivy Operator, or point a registry scanner at these images — until then this is unknown, not clean."
+      : `${scannedRows.length} of ${results.length} image(s) have scanner data; the ${results.length - scannedRows.length} without are excluded from the grade rather than counted as clean.`,
+  };
+
+  results.sort((a, b) =>
+    (b.critical * 100 + b.high * 10 + b.medium) - (a.critical * 100 + a.high * 10 + a.medium) ||
+    b.hygiene.length - a.hygiene.length);
+  return { images: results, hygiene, vulnerability, enriched: Object.keys(live).length > 0 };
 }

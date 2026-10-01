@@ -19552,9 +19552,8 @@ export async function handleGenerateManifestAPI(req, res) {
         if (namespace) det.namespace = namespace;
         if (!det.namespace) det.namespace = det.appName;
         if (!det.appName) det.appName = det.namespace;
-        const { manifests, summary } = generateAISManifests(det);
+        const { manifests, summary, securityApplied, assumptions } = generateAISManifests(det);
         const yamlText = manifests.map((m) => String(m.yaml || "").trimEnd()).filter(Boolean).join("\n---\n") + "\n";
-        const npCount = manifests.filter((m) => m.kind === "NetworkPolicy").length;
         const secretCount = manifests.filter((m) => m.kind === "Secret").length;
         const probed = det.tiers.filter((t) => t.probes?.liveness || t.probes?.readiness).length;
         return json(res, 200, {
@@ -19563,11 +19562,13 @@ export async function handleGenerateManifestAPI(req, res) {
           image: det.tiers[0]?.image || "",
           summary: `Deterministic build from the structured document — no AI generation involved, the tables are the contract. ${det.tiers.length} tier(s): ${det.tiers.map((t) => t.name).join(", ")} → ${summary.totalManifests} manifests${summary.hasStorage ? ", persistent storage" : ""}${summary.hasHPA ? ", autoscaling" : ""}.`,
           manifests: manifests.map((m) => m.json),
+          // Read back off the manifests by the generator itself, so this list is
+          // a description of the YAML below rather than a claim about it.
           securityApplied: [
-            `Zero-trust NetworkPolicies (${npCount}): default-deny both directions, DNS-scoped egress, per-path allows in both directions`,
+            ...securityApplied,
             secretCount ? `${secretCount} Secret(s) generated with random credentials — none appear in the document` : "No credentials required",
-            "Non-root/arbitrary-UID images as specified per tier",
           ],
+          assumptions,
           monitoringApplied: [
             `Liveness/readiness probes on ${probed}/${det.tiers.length} tiers, as declared in the document`,
           ],

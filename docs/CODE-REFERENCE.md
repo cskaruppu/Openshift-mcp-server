@@ -79,7 +79,11 @@ Everything meets here:
 | `llm.js` | Single `callLLM()` façade over OpenAI-compatible / Anthropic / Azure / Ollama; provider chosen by env or per-request `llmOpts` |
 | `chat-api.js` (~19,700 lines) | All AI endpoint handlers: chat, fix execution, RCA, plus this session's `handleGenerateManifestAPI` (doc→manifests), `handleIncidentCorrelationAPI` (dedup/correlate incidents), `handleTopologyExplainAPI` (topology root-cause), `handleComplianceImpactAPI` (CIS impact analysis) |
 | `doc-parser.js` | Extracts text from uploaded requirement docs (`parseDocx` via mammoth; PDF via pdf-parse; plain text/markdown passthrough) |
-| `manifest-scan.js` | **Shift-left security**: `cisCheckManifests` (static CIS/PSS-restricted checks on generated YAML) + `scanManifestImages` (image hygiene, optional live-CVE enrichment from Trivy reports) |
+| `manifest-scan.js` | **Shift-left security**: `cisCheckManifests(manifests, {profile, threshold})` — static policy evaluation of generated YAML, scoped to a profile and returning a gate verdict; `scanManifestImages` — TWO separate scores, reference hygiene and real CVEs, where unscanned images grade "—" rather than A |
+| `policy-profiles.js` | The named, versioned standards the gate runs under (CIS 1.9, PSS restricted, PSS baseline, enterprise baseline): which controls apply, each control's severity under that standard, and the fail threshold |
+| `manifest-remediate.js` | Patches what the findings imply, returns a unified diff and a per-fix risk (`safe` / `verify`), and names what it cannot fix. Applies nothing anywhere |
+| `admission-parity.js` | What the TARGET namespace will actually admit — Pod Security labels, SCC UID range, ResourceQuota headroom, LimitRange maxima. An unread namespace is reported as unread |
+| `gate-record.js` | The evidence record: canonical manifest digest, profile + version, per-control result, HMAC signature when `GATE_SIGNING_KEY` is set. `gateCoversManifests()` catches a YAML edit made after the gate ran |
 | `agent-bridge.js`, `mcp-hub.js`, `spoke-proxy.js` | Hub↔spoke federation: SSE bridge, connected-agent registry, request proxying |
 | `auth.js`, `guardrails.js`, `audit-log.js`, `approval-chains.js` | Login/session, action safety rails, audit trail, approvals |
 | `action-workflow.js`, `fix-executor.js`, `pod-doctor.js`, `rca-engine.js`* | Diagnose→propose→dry-run→apply remediation pipeline (*rca in tools/) |
@@ -153,8 +157,12 @@ Upload doc      AutomationHub.SopAgent.onUpload
                 → POST /api/automation/extract-doc      (index.js → doc-parser.js)
 Generate        → POST /api/automation/generate-manifest (index.js → chat-api.handleGenerateManifestAPI → llm.js)
                 ← manifests[] + editable YAML + security/monitoring summaries
-Pre-checks      → POST /api/automation/cis-check         (manifest-scan.cisCheckManifests)
-                → POST /api/automation/image-scan        (manifest-scan.scanManifestImages [+Trivy])
+Profiles        → GET  /api/automation/policy-profiles   (policy-profiles.listProfiles)
+Pre-deploy gate → POST /api/automation/cis-check         (manifest-scan.cisCheckManifests, profile-scoped)
+                → POST /api/automation/image-scan        (manifest-scan.scanManifestImages — hygiene + CVEs, scored apart)
+                → POST /api/automation/admission-check   (admission-parity: PSA / SCC / quota / LimitRange)
+Remediate       → POST /api/automation/remediate         (manifest-remediate: patched YAML + unified diff; human applies)
+Seal            → POST /api/automation/gate-record       (gate-record: digest + signature → the evidence pack)
 Deploy          → POST /api/automation/deploy?cluster=X  (index.js: YAML→objects, apiVersion normalization,
                                                           dependency-ordered create-or-update, dryRun=All)
 Watch           → GET /api/automation/app-status (4s)    (index.js: kubectl-style pod rows → terminal panel)
@@ -192,6 +200,10 @@ Fix             POST /api/topology/remediate                  (dry-run shows rea
 | What the App Deployment Agent generates (standards, images) | `chat-api.js` → `handleGenerateManifestAPI` prompt (rules 1–9) |
 | Which kinds can be deployed | `index.js` → `/api/automation/deploy` `kindPath` + `kindApiVersion` + `applyRank` |
 | CIS checks (static, pre-deploy) | `manifest-scan.js` → `cisCheckManifests` |
+| Which standard the gate measures against | `policy-profiles.js` → `POLICY_PROFILES` |
+| What the generator hardens by default | `manifest-generator.js` → `SECURITY_DEFAULTS` + `applySecurityContext` |
+| What remediation will and will not auto-fix | `manifest-remediate.js` → `remediateManifests` |
+| Signing the evidence record | `gate-record.js` + the `GATE_SIGNING_KEY` environment variable |
 | CIS checks (live cluster) | `compliance-scanner.js` |
 | Incident correlation behavior | `chat-api.js` → `handleIncidentCorrelationAPI` prompt |
 | Topology node kinds / health rules | `namespace-topology.js` |

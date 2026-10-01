@@ -30,6 +30,10 @@ const GLOBALS = new Set([
   "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent", "decodeURIComponent",
   "encodeURI", "decodeURI", "eval", "globalThis", "undefined", "NaN", "Infinity",
   "Intl", "AggregateError", "structuredClone",
+  // typed arrays / binary
+  "ArrayBuffer", "SharedArrayBuffer", "DataView", "Int8Array", "Uint8Array",
+  "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
+  "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array",
   // timers / web-ish
   "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate",
   "clearImmediate", "queueMicrotask", "fetch", "Headers", "Request", "Response",

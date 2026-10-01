@@ -23,8 +23,33 @@
 
 import { ocpFetch } from "../utils/openshift-client.js";
 import { Agent } from "undici";
+import yaml from "js-yaml";
 
 const FIELD_MANAGER = "tcs-automation-hub";
+
+/**
+ * The manifests a request is talking about.
+ *
+ * Every pre-deploy endpoint takes the same two shapes — structured objects from
+ * generation, or the YAML the user edited in the console — and the EDITED YAML
+ * always wins, because that is what will be deployed. Checking the generated
+ * objects while deploying the edited text is how a gate ends up blessing
+ * something it never read.
+ *
+ * @returns {{list: object[], source: "yaml"|"objects"|"none", error?: string}}
+ */
+export function manifestsFromBody(body) {
+  if (typeof body?.yaml === "string" && body.yaml.trim()) {
+    try {
+      const list = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind);
+      return { list, source: "yaml" };
+    } catch (e) {
+      return { list: [], source: "yaml", error: "YAML could not be parsed: " + e.message };
+    }
+  }
+  if (Array.isArray(body?.manifests)) return { list: body.manifests.filter((d) => d && typeof d === "object"), source: "objects" };
+  return { list: [], source: "none" };
+}
 
 // ── kind routing (shared by deploy, rollback and the orchestrator) ──────────
 

@@ -206,7 +206,12 @@ function extractTier(sec, allSections, idx, consumed) {
     reverseProxy: null,
     dependsOn: [],
     initSql: null,
-    security: { runAsNonRoot: false, readOnlyRootFs: false, dropCapabilities: false },
+    // Secure by default. The generator's own CIS gate checks these, so the
+    // hardened value is what you get when the document is silent; the document
+    // opts OUT explicitly ("Run as non-root: no"), it never has to opt in.
+    // readOnlyRootFs stays off by default — see SECURITY_DEFAULTS in
+    // manifest-generator.js for why.
+    security: { runAsNonRoot: true, readOnlyRootFs: false, dropCapabilities: true },
   };
 
   // Replicas
@@ -240,10 +245,10 @@ function extractTier(sec, allSections, idx, consumed) {
     tier.tls = findVal(kv, "tls") || null;
   }
 
-  // Security
-  tier.security.runAsNonRoot = toBool(findVal(kv, "run as non-root", "run as non root", "runasnonroot"));
-  tier.security.readOnlyRootFs = toBool(findVal(kv, "read-only root filesystem", "read only root filesystem", "readonlyrootfilesystem", "readonly root"));
-  tier.security.dropCapabilities = toBool(findVal(kv, "drop capabilities", "drop all capabilities", "dropcapabilities"));
+  // Security — tri-state: a stated value wins, silence keeps the secure default.
+  tier.security.runAsNonRoot = toBoolOpt(findVal(kv, "run as non-root", "run as non root", "runasnonroot"), true);
+  tier.security.readOnlyRootFs = toBoolOpt(findVal(kv, "read-only root filesystem", "read only root filesystem", "readonlyrootfilesystem", "readonly root"), false);
+  tier.security.dropCapabilities = toBoolOpt(findVal(kv, "drop capabilities", "drop all capabilities", "dropcapabilities"), true);
 
   // Depends on
   const dep = findVal(kv, "depends on", "dependson", "dependencies");
@@ -431,6 +436,20 @@ function toInt(val) {
 function toBool(val) {
   if (!val) return false;
   return /^(yes|true|1|y)$/i.test(String(val).trim());
+}
+
+/**
+ * Tri-state boolean: a stated yes/no wins, anything else keeps the default.
+ * Used where the default is a SECURITY control — silence, a blank cell, or a
+ * value the fuzzy key match dragged in from a neighbouring row must all leave
+ * the hardened default in place rather than quietly disabling it.
+ */
+function toBoolOpt(val, dflt) {
+  const s = String(val ?? "").trim();
+  if (!s) return dflt;
+  if (/^(yes|true|1|y|on|enabled?|required?)$/i.test(s)) return true;
+  if (/^(no|false|0|n|off|disabled?|not required)$/i.test(s)) return false;
+  return dflt;
 }
 
 function inferRole(heading) {

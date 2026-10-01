@@ -80,7 +80,7 @@ import { parseDocx, parseMarkdownText, sectionsToMarkdown } from "./services/doc
 import { extractAIS, validateAIS, calculateConfidence } from "./services/ais-extractor.js";
 import { generateManifests, renderYaml, renderSingleYaml } from "./services/manifest-generator.js";
 import { createDeployment, executeDeployment, rollbackDeployment, getDeploymentAnywhere, listDeploymentsAnywhere } from "./services/deployment-orchestrator.js";
-import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVersion as deployKindApiVersion, applyRank as deployApplyRank } from "./services/deploy-verifier.js";
+import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVersion as deployKindApiVersion, applyRank as deployApplyRank, manifestsFromBody } from "./services/deploy-verifier.js";
 import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./services/doc-deploy-store.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, vcSettingsStore, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
@@ -88,6 +88,10 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
+import { listProfiles, resolveProfile } from "./services/policy-profiles.js";
+import { remediateManifests } from "./services/manifest-remediate.js";
+import { checkAdmissionParity } from "./services/admission-parity.js";
+import { buildGateRecord, verifyGateRecord, gateCoversManifests } from "./services/gate-record.js";
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
 import { getGpuOverview, getGpuHistory, registerGpuTools } from "./tools/gpu-metrics.js";
@@ -6088,16 +6092,21 @@ spec:
       try {
         const body = await readJsonBody(req);
         // Prefer edited YAML if the user tweaked it in the UI; fall back to the
-        // structured manifest objects from generation.
-        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
-        if (typeof body.yaml === "string" && body.yaml.trim()) {
-          try {
-            manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind);
-          } catch (e) { sendJson(res, 200, { error: "The edited YAML could not be parsed: " + e.message }); return; }
-        }
+        // structured manifest objects from generation. The SAME helper the gate
+        // uses — a parsing difference between the two would produce a digest
+        // mismatch on manifests nobody touched.
+        const parsed = manifestsFromBody(body);
+        if (parsed.error) { sendJson(res, 200, { error: "The edited YAML could not be parsed: " + parsed.error.replace(/^YAML could not be parsed: /, "") }); return; }
+        const manifests = parsed.list;
         const dryRun = body.dryRun !== false;
         const nsDefault = body.namespace || "";
         if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to deploy." }); return; }
+        // Does the gate record the caller is carrying actually cover THESE
+        // manifests? Re-digest what is about to be applied and compare. The
+        // deploy is not blocked on a mismatch — a human may legitimately edit
+        // after checking — but the record of the deploy says so, permanently.
+        // This is computed BEFORE apply mutates metadata.namespace below.
+        const gateCoverage = gateCoversManifests(body.gate || null, manifests);
         // Apply in a dependency-safe order: namespace → policy/rbac/config → workloads → exposure.
         const ordered = manifests
           .map((m, i) => ({ m, i }))
@@ -6160,6 +6169,9 @@ spec:
           };
         });
         if (result === null) { sendJson(res, 200, { error: "Selected cluster is not reachable for deployment." }); return; }
+        // Reported on the dry-run too — that is precisely when a user wants to
+        // learn their edits are no longer covered by the checks that passed.
+        result.gateCoverage = gateCoverage;
 
         // Real deploys leave a durable record: history that survives a pod
         // restart, a change-timeline event, and (best-effort) a ServiceNow CR.
@@ -6175,14 +6187,24 @@ spec:
             requestedBy: req.user?.name || "anonymous",
             // docs-as-code provenance: which versioned document produced this.
             sourceUrl: typeof body.sourceUrl === "string" && body.sourceUrl ? body.sourceUrl.slice(0, 2000) : null,
+            // The evidence pack: what was checked, under which standard, and
+            // whether that check covers what was actually applied.
+            gate: body.gate || null,
+            gateCoverage,
+            gateSignature: body.gate ? verifyGateRecord(body.gate) : null,
           };
           await recordDeployment(rec).catch(() => {});
           recordChangeEvent({
             source: "deployment", eventType: "doc_deploy_applied",
             namespace: nsMain, resourceKind: "Application", resourceName: nsMain,
-            title: `Automation Hub deploy to ${clusterId}/${nsMain}: ${result.applied.length} object(s)`,
-            details: { deployId, applied: result.applied, failed: result.failed },
-            severity: result.failed.length ? "warning" : "info",
+            title: `Automation Hub deploy to ${clusterId}/${nsMain}: ${result.applied.length} object(s)${gateCoverage.covered ? "" : " — NOT covered by a pre-deploy gate"}`,
+            details: {
+              deployId, applied: result.applied, failed: result.failed,
+              gate: gateCoverage.covered
+                ? { covered: true, policy: body.gate?.policy, grade: body.gate?.compliance?.grade, pass: body.gate?.compliance?.pass, digest: gateCoverage.deployedDigest }
+                : { covered: false, reason: gateCoverage.reason, message: gateCoverage.message },
+            },
+            severity: result.failed.length || !gateCoverage.covered ? "warning" : "info",
           }).catch(() => {});
           // Change record: don't hold the response hostage to a slow ITSM —
           // wait briefly, then let it land in the stored record instead.
@@ -6193,7 +6215,11 @@ spec:
                 shortDescription: `Automation Hub deploy: ${nsMain} on ${clusterId} (${result.applied.length} objects)`,
                 description: result.applied.map((a) => ` - ${a.action.padEnd(10)} ${a.kind}/${a.name}`).join("\n"),
                 type: "normal", category: "Software", risk: "low",
-                implementationPlan: `Server-side apply of ${result.applied.length} manifests to namespace ${nsMain}.`,
+                implementationPlan: `Server-side apply of ${result.applied.length} manifests to namespace ${nsMain}.\n\nPre-deploy gate: ${
+                  gateCoverage.covered
+                    ? `${body.gate?.policy?.name || "policy"} ${body.gate?.policy?.version || ""} — grade ${body.gate?.compliance?.grade}, ${body.gate?.compliance?.passed}/${(body.gate?.compliance?.passed || 0) + (body.gate?.compliance?.failed || 0)} controls passed, verdict ${body.gate?.compliance?.pass ? "PASS" : "FAIL"}. Evidence record ${body.gate?.signature?.signed ? "signed" : "digested"} ${String(body.gate?.signature?.value || "").slice(0, 16)}…, manifest digest ${String(gateCoverage.deployedDigest || "").slice(0, 16)}….`.trim()
+                    : gateCoverage.message
+                }`,
                 backoutPlan: `Delete the created resources recorded under deployment ${deployId} (POST /api/automation/deployments/rollback).`,
                 testPlan: `POST /api/automation/verify {"namespace":"${nsMain}"} — rollout, stability, service wiring and route access must all pass.`,
               });
@@ -6288,13 +6314,92 @@ spec:
       if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
       try {
         const body = await readJsonBody(req);
-        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
-        if (typeof body.yaml === "string" && body.yaml.trim()) {
-          try { manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind); }
-          catch (e) { sendJson(res, 200, { error: "YAML could not be parsed: " + e.message }); return; }
+        const manifests = manifestsFromBody(body);
+        if (manifests.error) { sendJson(res, 200, { error: manifests.error }); return; }
+        if (manifests.list.length === 0) { sendJson(res, 200, { error: "No manifests to check." }); return; }
+        sendJson(res, 200, cisCheckManifests(manifests.list, { profile: body.profile, threshold: body.threshold }));
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · the policy profiles the gate can run under ──
+    if (req.method === "GET" && url.pathname === "/api/automation/policy-profiles") {
+      sendJson(res, 200, { profiles: listProfiles(), default: resolveProfile(null).id });
+      return;
+    }
+
+    // ── App Deployment Agent · remediate the findings, return a reviewable diff ──
+    // Changes nothing on any cluster and writes nothing: the response is patched
+    // YAML plus a unified diff, for a human to read and apply.
+    if (req.method === "POST" && url.pathname === "/api/automation/remediate") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const manifests = manifestsFromBody(body);
+        if (manifests.error) { sendJson(res, 200, { error: manifests.error }); return; }
+        if (manifests.list.length === 0) { sendJson(res, 200, { error: "No manifests to remediate." }); return; }
+        const out = remediateManifests(manifests.list, { profile: body.profile, namespace: body.namespace });
+        // Prove the remediation closed what it claims to close, by re-running the
+        // same gate on the patched set and returning both verdicts.
+        const before = cisCheckManifests(manifests.list, { profile: body.profile, threshold: body.threshold });
+        const after = cisCheckManifests(out.manifests, { profile: body.profile, threshold: body.threshold });
+        sendJson(res, 200, {
+          ...out,
+          before: { grade: before.summary.grade, passed: before.summary.passed, failed: before.summary.failed, pass: before.verdict?.pass },
+          after: { grade: after.summary.grade, passed: after.summary.passed, failed: after.summary.failed, pass: after.verdict?.pass },
+          stillFailing: after.controls.filter((c) => c.status === "FAIL").map((c) => ({ id: c.id, title: c.title, offenders: c.offenders })),
+        });
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · admission parity with the TARGET namespace ──
+    // The static gate cannot see Pod Security labels, the SCC UID range, a
+    // ResourceQuota or a LimitRange. This is where "passed every check and then
+    // the deploy failed" comes from, so it is checked separately and honestly:
+    // a namespace that could not be read is reported as unread.
+    if (req.method === "POST" && url.pathname === "/api/automation/admission-check") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const manifests = manifestsFromBody(body);
+        if (manifests.error) { sendJson(res, 200, { error: manifests.error }); return; }
+        if (manifests.list.length === 0) { sendJson(res, 200, { error: "No manifests to check." }); return; }
+        let out = await withClusterContext(url, async () => checkAdmissionParity(manifests.list, { namespace: body.namespace }));
+        if (out === null) {
+          out = {
+            namespace: body.namespace || null, namespaceState: "unread",
+            psa: { read: false }, uidRange: null, quotas: null, limitRanges: null, findings: [],
+            verdict: { status: "unknown", summary: "The selected cluster is not reachable, so what its admission controllers would do cannot be read. This is unknown, not a pass.", critical: 0, warning: 0 },
+          };
         }
-        if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to check." }); return; }
-        sendJson(res, 200, cisCheckManifests(manifests));
+        sendJson(res, 200, out);
+      } catch (err) { sendJson(res, 500, { error: err.message }); }
+      return;
+    }
+
+    // ── App Deployment Agent · seal the gate result into an evidence record ──
+    // Digests the manifests, records profile + version + per-control result, and
+    // signs it when GATE_SIGNING_KEY is configured. The deploy route re-digests
+    // what it applies and records whether this record covers it.
+    if (req.method === "POST" && url.pathname === "/api/automation/gate-record") {
+      if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
+      try {
+        const body = await readJsonBody(req);
+        const manifests = manifestsFromBody(body);
+        if (manifests.error) { sendJson(res, 200, { error: manifests.error }); return; }
+        if (manifests.list.length === 0) { sendJson(res, 200, { error: "No manifests to record." }); return; }
+        const record = buildGateRecord({
+          manifests: manifests.list,
+          cis: body.cis || null,
+          images: body.images || null,
+          admission: body.admission || null,
+          remediation: body.remediation || null,
+          user: req.user?.name || "anonymous",
+          cluster: url.searchParams.get("cluster") || "local",
+          namespace: body.namespace || null,
+        });
+        sendJson(res, 200, { record, verification: verifyGateRecord(record) });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
@@ -6306,11 +6411,9 @@ spec:
       if (enforceRateLimit(req, res, { burst: 8, refillPerSec: 0.2 })) return;
       try {
         const body = await readJsonBody(req);
-        let manifests = Array.isArray(body.manifests) ? body.manifests : [];
-        if (typeof body.yaml === "string" && body.yaml.trim()) {
-          try { manifests = yaml.loadAll(body.yaml).filter((d) => d && typeof d === "object" && d.kind); }
-          catch (e) { sendJson(res, 200, { error: "YAML could not be parsed: " + e.message }); return; }
-        }
+        const parsed = manifestsFromBody(body);
+        if (parsed.error) { sendJson(res, 200, { error: parsed.error }); return; }
+        const manifests = parsed.list;
         if (manifests.length === 0) { sendJson(res, 200, { error: "No manifests to scan." }); return; }
         // Enrich against the chosen cluster's Trivy reports when reachable;
         // fall back to hygiene-only if the cluster context isn't available.
