@@ -712,10 +712,16 @@ function HealthPanel({ health, sweeping, onSweep, onQuarantine, onRelease }) {
      it is not a malfunction and does not deserve a card of its own.
      A card appears only for an agent with something genuinely wrong. */
   const onlyMissingCanary = (a) =>
-    a.findings?.length > 0 && a.findings.every((f) => f.code === "no-canary" || f.code === "canary-inconclusive");
+    a.findings?.length > 0 && a.findings.every((f) => f.code === "no-canary");
   const notable = rows.filter((a) =>
     a.quarantine || a.recommendation?.recommend
     || ((a.state === "malfunctioning" || a.state === "degraded" || a.state === "watch") && !onlyMissingCanary(a)));
+
+  /* An agent whose canary exists but could not RUN is a different thing from
+     one nobody wrote a canary for, and it must not disappear into the same
+     summary line. "Nothing checked this" is the whole point of the panel, so
+     these are named. */
+  const unverified = rows.filter((a) => a.canary?.verdict === "inconclusive");
 
   return (
     <div className="ar-health-panel">
@@ -751,7 +757,13 @@ function HealthPanel({ health, sweeping, onSweep, onQuarantine, onRelease }) {
             <div className="ar-stat">
               <div className="ar-stat-num">{health.canaryCoverage?.covered ?? "--"}/{health.canaryCoverage?.agents ?? "--"}</div>
               <div className="ar-stat-label">Have a canary</div>
-              <div className="ar-gov-substat">the rest are unchecked</div>
+              <div className="ar-gov-substat">
+                {health.canaryCoverage?.uncovered?.length
+                  ? "the rest are unchecked"
+                  : unverified.length
+                    ? `${unverified.length} could not run here`
+                    : "every agent is checked"}
+              </div>
             </div>
             <div className={"ar-stat" + (health.quarantined ? " ar-stat-alert" : "")}>
               <div className="ar-stat-num">{health.quarantined}</div>
@@ -824,6 +836,15 @@ function HealthPanel({ health, sweeping, onSweep, onQuarantine, onRelease }) {
               </div>
             );
           })}
+
+          {unverified.length > 0 && (
+            <div className="ar-gov-note">
+              <b>{unverified.length} agent(s) could not be checked at all</b> — {unverified.map((a) => a.agentId).join(", ")}.
+              Their canaries exist but every case needs something this environment does not have (a reachable
+              cluster, a configured provider), so each one skipped. Their correctness is <b>unverified</b>,
+              which is not the same as verified — they will run where that dependency exists.
+            </div>
+          )}
 
           {health.canaryCoverage?.uncovered?.length > 0 && (
             <div className="ar-gov-note">

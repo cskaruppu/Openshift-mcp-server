@@ -282,6 +282,32 @@ test("every shipped canary definition is valid and its cases hold", async () => 
   }
 });
 
+test("every agent in the registry has a canary", async () => {
+  // Locked in deliberately. An agent added without one is an agent whose
+  // answers nothing checks, and the gap is invisible precisely because every
+  // other check still passes for it. Adding a file to src/agents/canaries/
+  // named for the agent is the fix; this test is the reminder.
+  const { getAgents } = await import("../../src/agents/registry.js");
+  const { canaryCoverage } = await import("../../src/agents/canary-store.js");
+  const agents = await getAgents();
+  const cov = await canaryCoverage(agents.map((a) => a.id));
+  assert.deepEqual(cov.uncovered, [], cov.note);
+  assert.equal(cov.covered, cov.agents);
+});
+
+test("every canary case states a kind that cannot change anything", async () => {
+  const { loadCanaries } = await import("../../src/agents/canary-store.js");
+  const { byAgent } = await loadCanaries({ reload: true });
+  for (const [agentId, cases] of byAgent) {
+    for (const c of cases) {
+      assert.ok(["pure", "read-only", "llm"].includes(c.kind), `${agentId}/${c.id}: kind "${c.kind}"`);
+      assert.notEqual(c.mutates, true, `${agentId}/${c.id} declares that it mutates`);
+      assert.ok(c.why && c.why.length > 40,
+        `${agentId}/${c.id}: a failure nobody can interpret gets muted, so every case must say why it matters`);
+    }
+  }
+});
+
 // ── Quarantine: recommended automatically, applied by a person ────────────
 
 test("one red canary run watches; two consecutive recommend quarantine", () => {

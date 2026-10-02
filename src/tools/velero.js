@@ -64,11 +64,129 @@ function summarizeSchedule(s) {
   };
 }
 
-function ageDays(ts) {
+function ageDays(ts, now = Date.now()) {
   if (!ts) return null;
   const t = new Date(ts).getTime();
   if (isNaN(t)) return null;
-  return Math.floor((Date.now() - t) / 86400000);
+  return Math.floor((now - t) / 86400000);
+}
+
+/**
+ * Score a cluster's disaster-recovery readiness. PURE — facts in, grade out.
+ *
+ * Lifted out of the tool handler so it can be checked without a cluster, and
+ * so the one invariant that matters here can be protected by a canary:
+ *
+ *   A CLUSTER WITH NO VELERO SCORES 0 AND GRADE F, with `installed: false`.
+ *
+ * It is not "no backups needed". It is not an empty-but-passing result. A
+ * disaster-recovery panel that shows a reassuring grade for a cluster that
+ * cannot be restored at all is the most expensive thing this product could
+ * possibly display — and it would never throw, because an absent operator is
+ * an ordinary 404.
+ *
+ * @param {object} i
+ * @param {boolean} i.installed       could the Velero API be read at all
+ * @param {string}  [i.error]         why not, when it could not
+ * @param {Array}   i.backups         summarised backups
+ * @param {Array}   i.schedules       summarised schedules
+ * @param {Array}   i.locations       raw BackupStorageLocations
+ * @param {number}  i.maxBackupAgeDays
+ * @param {number}  [i.now]           injected so the result is deterministic
+ */
+export function scoreDrReadiness({
+  installed, error = null, backups = [], schedules = [], locations = [],
+  maxBackupAgeDays = 7, now = Date.now(),
+} = {}) {
+  if (!installed) {
+    return {
+      score: 0, grade: "F", installed: false, error,
+      recommendation: "Install OADP/Velero operator.",
+      findings: [{
+        severity: "critical",
+        message: "Velero/OADP is not installed or could not be read, so this cluster has no backups at all. This is not a passing state — nothing here could be restored.",
+      }],
+    };
+  }
+
+  const findings = [];
+  let score = 100;
+
+  // 2. Storage locations available
+  const availableLocs = locations.filter((l) => l.status?.phase === "Available");
+  if (locations.length === 0) {
+    score -= 30;
+    findings.push({ severity: "critical", message: "No BackupStorageLocations defined." });
+  } else if (availableLocs.length === 0) {
+    score -= 25;
+    findings.push({ severity: "critical", message: "No BackupStorageLocations are Available." });
+  }
+
+  // 3. Schedules exist and not all paused
+  if (schedules.length === 0) {
+    score -= 25;
+    findings.push({ severity: "high", message: "No backup schedules defined — relying on manual backups only." });
+  } else {
+    const active = schedules.filter((s) => !s.paused);
+    if (active.length === 0) {
+      score -= 20;
+      findings.push({ severity: "high", message: "All backup schedules are paused." });
+    }
+  }
+
+  // 4. Recent successful backup exists
+  const completed = backups
+    .filter((b) => b.phase === "Completed")
+    .sort((a, b) => (b.completionTimestamp || "").localeCompare(a.completionTimestamp || ""));
+  const lastGood = completed[0];
+  const lastGoodAge = lastGood ? ageDays(lastGood.completionTimestamp, now) : null;
+  if (!lastGood) {
+    score -= 25;
+    findings.push({ severity: "critical", message: "No successful backup has ever completed." });
+  } else if (lastGoodAge != null && lastGoodAge > maxBackupAgeDays) {
+    score -= 15;
+    findings.push({
+      severity: "high",
+      message: `Last successful backup is ${lastGoodAge} days old (threshold ${maxBackupAgeDays}).`,
+    });
+  }
+
+  // 5. Recent failures
+  const recentFails = backups.filter(
+    (b) => ["Failed", "PartiallyFailed", "FailedValidation"].includes(b.phase)
+      && (ageDays(b.startTimestamp, now) ?? 999) <= 7
+  );
+  if (recentFails.length > 0) {
+    score -= Math.min(15, recentFails.length * 5);
+    findings.push({
+      severity: "warning",
+      message: `${recentFails.length} backup(s) failed in the last 7 days.`,
+    });
+  }
+
+  // 6. Backups have storage TTL
+  const noTtl = backups.filter((b) => !b.expiration).length;
+  if (backups.length > 0 && noTtl === backups.length) {
+    score -= 5;
+    findings.push({ severity: "info", message: "No backups have an expiration — storage will grow unbounded." });
+  }
+
+  score = Math.max(0, Math.round(score));
+  const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+  return {
+    score, grade, installed: true,
+    summary: {
+      totalBackups: backups.length,
+      completed: completed.length,
+      schedules: schedules.length,
+      storageLocations: locations.length,
+      availableStorageLocations: availableLocs.length,
+      lastSuccessfulBackup: lastGood?.name || null,
+      lastSuccessfulBackupAgeDays: lastGoodAge,
+    },
+    findings,
+  };
 }
 
 export function registerVeleroTools(server) {
@@ -307,28 +425,18 @@ export function registerVeleroTools(server) {
     },
     async ({ namespace, maxBackupAgeDays }) => {
       try {
-        const findings = [];
-        let score = 100;
-
-        // 1. OADP / Velero installed?
+        // Read the facts here; decide what they mean in scoreDrReadiness(),
+        // which is pure and canary-checked. A cluster with no Velero at all
+        // must come back as score 0 / grade F / installed false, never as an
+        // empty-but-passing result.
         let backups = [];
         let schedules = [];
         let locations = [];
         try {
           backups = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backups`)).items || []).map(summarizeBackup);
         } catch (err) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  { score: 0, grade: "F", installed: false, error: err.message, recommendation: "Install OADP/Velero operator." },
-                  null,
-                  2
-                ),
-              },
-            ],
-          };
+          const out = scoreDrReadiness({ installed: false, error: err.message });
+          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
         }
         try {
           schedules = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/schedules`)).items || []).map(summarizeSchedule);
@@ -337,94 +445,8 @@ export function registerVeleroTools(server) {
           locations = (await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backupstoragelocations`)).items || [];
         } catch (_) { /* ignore */ }
 
-        // 2. Storage locations available
-        const availableLocs = locations.filter((l) => l.status?.phase === "Available");
-        if (locations.length === 0) {
-          score -= 30;
-          findings.push({ severity: "critical", message: "No BackupStorageLocations defined." });
-        } else if (availableLocs.length === 0) {
-          score -= 25;
-          findings.push({ severity: "critical", message: "No BackupStorageLocations are Available." });
-        }
-
-        // 3. Schedules exist and not all paused
-        if (schedules.length === 0) {
-          score -= 25;
-          findings.push({ severity: "high", message: "No backup schedules defined — relying on manual backups only." });
-        } else {
-          const active = schedules.filter((s) => !s.paused);
-          if (active.length === 0) {
-            score -= 20;
-            findings.push({ severity: "high", message: "All backup schedules are paused." });
-          }
-        }
-
-        // 4. Recent successful backup exists
-        const completed = backups
-          .filter((b) => b.phase === "Completed")
-          .sort((a, b) => (b.completionTimestamp || "").localeCompare(a.completionTimestamp || ""));
-        const lastGood = completed[0];
-        const lastGoodAge = lastGood ? ageDays(lastGood.completionTimestamp) : null;
-        if (!lastGood) {
-          score -= 25;
-          findings.push({ severity: "critical", message: "No successful backup has ever completed." });
-        } else if (lastGoodAge != null && lastGoodAge > maxBackupAgeDays) {
-          score -= 15;
-          findings.push({
-            severity: "high",
-            message: `Last successful backup is ${lastGoodAge} days old (threshold ${maxBackupAgeDays}).`,
-          });
-        }
-
-        // 5. Recent failures
-        const recentFails = backups.filter(
-          (b) => ["Failed", "PartiallyFailed", "FailedValidation"].includes(b.phase)
-            && (ageDays(b.startTimestamp) ?? 999) <= 7
-        );
-        if (recentFails.length > 0) {
-          score -= Math.min(15, recentFails.length * 5);
-          findings.push({
-            severity: "warning",
-            message: `${recentFails.length} backup(s) failed in the last 7 days.`,
-          });
-        }
-
-        // 6. Backups have storage TTL
-        const noTtl = backups.filter((b) => !b.expiration).length;
-        if (backups.length > 0 && noTtl === backups.length) {
-          score -= 5;
-          findings.push({ severity: "info", message: "No backups have an expiration — storage will grow unbounded." });
-        }
-
-        score = Math.max(0, Math.round(score));
-        const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  score,
-                  grade,
-                  installed: true,
-                  summary: {
-                    totalBackups: backups.length,
-                    completed: completed.length,
-                    schedules: schedules.length,
-                    storageLocations: locations.length,
-                    availableStorageLocations: availableLocs.length,
-                    lastSuccessfulBackup: lastGood?.name || null,
-                    lastSuccessfulBackupAgeDays: lastGoodAge,
-                  },
-                  findings,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
+        const out = scoreDrReadiness({ installed: true, backups, schedules, locations, maxBackupAgeDays });
+        return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }

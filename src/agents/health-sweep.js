@@ -301,13 +301,25 @@ export async function sweepAgentHealth({ days = 7, act = true } = {}) {
     canaryCoverage: coverage,
     actions,
     assessments,
-    headline: malfunctioning.length
-      ? `${malfunctioning.length} agent(s) are malfunctioning: ${malfunctioning.slice(0, 3).map((x) => x.agentId).join(", ")}.`
-      : degraded.length
-        ? `${degraded.length} agent(s) are degraded; none are malfunctioning.`
-        : coverage.covered === 0
-          ? "No agent is failing — and no agent has a canary, so nothing is checking whether any answer is right."
-          : `All ${assessments.length} agent(s) are answering correctly on the checks that could run.`,
+    // "All agents are answering correctly" must not be said while some of them
+    // were not checked at all. The count of agents whose every case skipped is
+    // part of the headline, not a footnote under it.
+    unverified: assessments.filter((x) => x.canary?.verdict === "inconclusive").length,
+    headline: (() => {
+      const unver = assessments.filter((x) => x.canary?.verdict === "inconclusive");
+      if (malfunctioning.length) {
+        return `${malfunctioning.length} agent(s) are malfunctioning: ${malfunctioning.slice(0, 3).map((x) => x.agentId).join(", ")}.`;
+      }
+      if (degraded.length) return `${degraded.length} agent(s) are degraded; none are malfunctioning.`;
+      if (coverage.covered === 0) {
+        return "No agent is failing — and no agent has a canary, so nothing is checking whether any answer is right.";
+      }
+      const checked = assessments.length - unver.length;
+      if (unver.length) {
+        return `${checked} of ${assessments.length} agent(s) are answering correctly; ${unver.length} could not be checked at all and are unverified, not verified.`;
+      }
+      return `All ${assessments.length} agent(s) are answering correctly on the checks that could run.`;
+    })(),
     dryRun: !act,
   };
   return _last;
