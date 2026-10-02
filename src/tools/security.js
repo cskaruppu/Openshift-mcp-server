@@ -486,6 +486,30 @@ export function registerSecurityTools(server) {
           if (degraded.length > 0) { score -= 10; deductions.push(`-10 pts: ${degraded.length} degraded operator(s)`); recommendations.push(`Fix degraded operators: ${degraded.map(o => o.metadata.name).slice(0, 5).join(", ")}`); }
         } catch {}
 
+        // A score of 100 computed over ZERO pods is not a secure cluster; it is
+        // an unread one. An empty-but-successful list is routine — an RBAC-
+        // filtered read returns 200 with nothing in it — so this cannot be left
+        // to the catch block above. No pods read, no score.
+        if (runningPods.length === 0) {
+          const where = namespace ? `namespace ${namespace}` : "this cluster";
+          return {
+            content: [{
+              type: "text",
+              text: [
+                `Security Compliance Score${namespace ? ` (${namespace})` : ""}`,
+                ``,
+                `  Score: not scored   Grade: —`,
+                ``,
+                `No running pods were read in ${where}, so there was nothing to score.`,
+                `This is NOT a score of 100 and not a clean result — it means either the`,
+                `namespace is empty, or this service account cannot list pods there.`,
+                ``,
+                `Check: oc auth can-i list pods${namespace ? ` -n ${namespace}` : " --all-namespaces"}`,
+              ].join("\n"),
+            }],
+          };
+        }
+
         score = Math.max(0, score);
         const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
 

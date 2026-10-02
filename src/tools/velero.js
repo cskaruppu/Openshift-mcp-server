@@ -10,6 +10,7 @@
 
 import { z } from "zod";
 import { ocpGet, ocpPost, ocpDelete } from "../utils/openshift-client.js";
+import { statusOf } from "../utils/api-discovery.js";
 
 const VELERO_API = "apis/velero.io/v1";
 const OADP_API = "apis/oadp.openshift.io/v1alpha1";
@@ -74,37 +75,128 @@ function ageDays(ts, now = Date.now()) {
 /**
  * Score a cluster's disaster-recovery readiness. PURE — facts in, grade out.
  *
- * Lifted out of the tool handler so it can be checked without a cluster, and
- * so the one invariant that matters here can be protected by a canary:
+ * The single source of truth for this question. It used to be reimplemented in
+ * four places — this scorer, the dashboard DR widget, a chat handler and the
+ * agent-cache path — which disagreed with each other. On a cluster with no
+ * Velero at all the dashboard reported `installed: true, score 20, grade F`,
+ * because every one of its reads was wrapped in a catch that returned an empty
+ * list, so nothing could ever throw and the "not installed" branch was
+ * unreachable. They all call this now.
  *
- *   A CLUSTER WITH NO VELERO SCORES 0 AND GRADE F, with `installed: false`.
+ * THREE STATES, not two, and the third is the one that keeps the other two
+ * honest:
  *
- * It is not "no backups needed". It is not an empty-but-passing result. A
- * disaster-recovery panel that shows a reassuring grade for a cluster that
- * cannot be restored at all is the most expensive thing this product could
- * possibly display — and it would never throw, because an absent operator is
- * an ordinary 404.
+ *   installed: true   read it; score what is there
+ *   installed: false  Velero is genuinely ABSENT (a 404 on its API group).
+ *                     Grade F is earned: nothing on this cluster could be
+ *                     restored.
+ *   installed: null   COULD NOT TELL — a 403, a network failure, an
+ *                     unreachable API server. No score, grade "—". A 403 does
+ *                     not prove presence and it does not prove absence either;
+ *                     the product already learned this the hard way with MTA,
+ *                     and api-discovery.js exists because of it.
  *
  * @param {object} i
- * @param {boolean} i.installed       could the Velero API be read at all
- * @param {string}  [i.error]         why not, when it could not
+ * @param {boolean|null} i.installed  true / false / null — see above
+ * @param {string}  [i.error]         why, when it could not be read
  * @param {Array}   i.backups         summarised backups
  * @param {Array}   i.schedules       summarised schedules
  * @param {Array}   i.locations       raw BackupStorageLocations
  * @param {number}  i.maxBackupAgeDays
  * @param {number}  [i.now]           injected so the result is deterministic
  */
+/**
+ * Read the cluster's Velero state and score it — the whole question, once.
+ *
+ * Every caller that wants a DR readiness answer uses this: the MCP tool, the
+ * dashboard widget and the chat handler. Before it existed each had its own
+ * copy, and they disagreed. The dashboard's wrapped every read in a catch that
+ * returned an empty list, so its "not installed" branch was unreachable and a
+ * cluster with no Velero reported `installed: true, score 20, grade F`.
+ *
+ * The backups read is the one that decides presence, so its failure is
+ * classified rather than swallowed. The other two reads are genuinely optional
+ * — a cluster can have backups and no schedules — but a FAILURE to read them is
+ * not the same as there being none, so each records whether it was read.
+ */
+export async function readDrReadiness({ namespace = DEFAULT_NS, maxBackupAgeDays = 7 } = {}) {
+  let backups;
+  try {
+    backups = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backups`)).items || []).map(summarizeBackup);
+  } catch (err) {
+    return { ...scoreDrReadiness({ installed: veleroPresence(err), error: veleroReadReason(err) }), namespace };
+  }
+
+  let schedules = [], locations = [];
+  let schedulesRead = true, locationsRead = true;
+  try {
+    schedules = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/schedules`)).items || []).map(summarizeSchedule);
+  } catch { schedulesRead = false; }
+  try {
+    locations = (await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backupstoragelocations`)).items || [];
+  } catch { locationsRead = false; }
+
+  return {
+    ...scoreDrReadiness({ installed: true, backups, schedules, locations, maxBackupAgeDays, schedulesRead, locationsRead }),
+    namespace,
+  };
+}
+
+/**
+ * What a failed read of the Velero API actually tells us.
+ *
+ *   404  the group is not served — Velero is absent. A definite answer.
+ *   403  the API server authorised before routing, so this says nothing about
+ *        whether Velero exists. Unknown.
+ *   else no HTTP answer at all — the cluster was not reached. Unknown.
+ *
+ * @returns {false|null} false = definitively absent, null = could not tell
+ */
+export function veleroPresence(err) {
+  return statusOf(err) === 404 ? false : null;
+}
+
+/**
+ * Why the read failed, in words a person can act on.
+ *
+ * The raw error is an internal URL — "Failed to parse URL from
+ * https://undefined:undefined/apis/..." — which tells the reader nothing and
+ * leaks how the client is wired. The status code is the useful part.
+ */
+export function veleroReadReason(err) {
+  const st = statusOf(err);
+  if (st === 403) return "this service account may not read velero.io resources";
+  if (st === 401) return "the cluster rejected the credential";
+  if (st >= 500) return `the API server returned ${st}`;
+  return "the cluster could not be reached";
+}
+
 export function scoreDrReadiness({
   installed, error = null, backups = [], schedules = [], locations = [],
   maxBackupAgeDays = 7, now = Date.now(),
+  // Whether the optional reads actually happened. A read that FAILED is not a
+  // read that found nothing, and deducting for "no schedules" when nobody
+  // could list them turns a permissions gap into a backup gap.
+  schedulesRead = true, locationsRead = true,
 } = {}) {
-  if (!installed) {
+  // Unknown. Not absent, not present — and emphatically not a grade.
+  if (installed === null || installed === undefined) {
+    return {
+      score: null, grade: "—", installed: null, error,
+      recommendation: "Determine whether OADP/Velero is installed: grant this service account read access to velero.io resources, or check API connectivity.",
+      findings: [{
+        severity: "warning",
+        message: `Whether Velero/OADP is installed could not be determined${error ? ` (${error})` : ""}. This is neither a pass nor a failure — until it is known, the disaster-recovery posture of this cluster is unknown.`,
+      }],
+    };
+  }
+  if (installed === false) {
     return {
       score: 0, grade: "F", installed: false, error,
       recommendation: "Install OADP/Velero operator.",
       findings: [{
         severity: "critical",
-        message: "Velero/OADP is not installed or could not be read, so this cluster has no backups at all. This is not a passing state — nothing here could be restored.",
+        message: "Velero/OADP is not installed, so this cluster has no backups at all. This is not a passing state — nothing here could be restored.",
       }],
     };
   }
@@ -114,7 +206,11 @@ export function scoreDrReadiness({
 
   // 2. Storage locations available
   const availableLocs = locations.filter((l) => l.status?.phase === "Available");
-  if (locations.length === 0) {
+  const unread = [];
+  if (!locationsRead) {
+    unread.push("BackupStorageLocations");
+    findings.push({ severity: "warning", message: "BackupStorageLocations could not be read, so whether backups have anywhere to go is unknown. Not scored either way." });
+  } else if (locations.length === 0) {
     score -= 30;
     findings.push({ severity: "critical", message: "No BackupStorageLocations defined." });
   } else if (availableLocs.length === 0) {
@@ -123,7 +219,10 @@ export function scoreDrReadiness({
   }
 
   // 3. Schedules exist and not all paused
-  if (schedules.length === 0) {
+  if (!schedulesRead) {
+    unread.push("Schedules");
+    findings.push({ severity: "warning", message: "Backup schedules could not be read, so whether anything is scheduled is unknown. Not scored either way." });
+  } else if (schedules.length === 0) {
     score -= 25;
     findings.push({ severity: "high", message: "No backup schedules defined — relying on manual backups only." });
   } else {
@@ -165,6 +264,7 @@ export function scoreDrReadiness({
   }
 
   // 6. Backups have storage TTL
+  const failedBackups = backups.filter((b) => ["Failed", "PartiallyFailed", "FailedValidation"].includes(b.phase)).length;
   const noTtl = backups.filter((b) => !b.expiration).length;
   if (backups.length > 0 && noTtl === backups.length) {
     score -= 5;
@@ -176,9 +276,16 @@ export function scoreDrReadiness({
 
   return {
     score, grade, installed: true,
+    // Named, because the score silently covers less when these are present.
+    unreadable: unread.length ? unread : null,
+    note: unread.length
+      ? `${unread.join(" and ")} could not be read, so ${unread.length === 1 ? "that part of" : "parts of"} this score is based on less than the full picture.`
+      : null,
     summary: {
       totalBackups: backups.length,
       completed: completed.length,
+      failed: failedBackups,
+      activeSchedules: schedulesRead ? schedules.filter((x) => !x.paused).length : null,
       schedules: schedules.length,
       storageLocations: locations.length,
       availableStorageLocations: availableLocs.length,
@@ -425,27 +532,8 @@ export function registerVeleroTools(server) {
     },
     async ({ namespace, maxBackupAgeDays }) => {
       try {
-        // Read the facts here; decide what they mean in scoreDrReadiness(),
-        // which is pure and canary-checked. A cluster with no Velero at all
-        // must come back as score 0 / grade F / installed false, never as an
-        // empty-but-passing result.
-        let backups = [];
-        let schedules = [];
-        let locations = [];
-        try {
-          backups = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backups`)).items || []).map(summarizeBackup);
-        } catch (err) {
-          const out = scoreDrReadiness({ installed: false, error: err.message });
-          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
-        }
-        try {
-          schedules = ((await ocpGet(`/${VELERO_API}/namespaces/${namespace}/schedules`)).items || []).map(summarizeSchedule);
-        } catch (_) { /* ignore */ }
-        try {
-          locations = (await ocpGet(`/${VELERO_API}/namespaces/${namespace}/backupstoragelocations`)).items || [];
-        } catch (_) { /* ignore */ }
-
-        const out = scoreDrReadiness({ installed: true, backups, schedules, locations, maxBackupAgeDays });
+        // One reader, one scorer, shared with the dashboard widget and chat.
+        const out = await readDrReadiness({ namespace, maxBackupAgeDays });
         return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };

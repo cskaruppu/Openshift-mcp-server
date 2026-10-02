@@ -474,14 +474,22 @@ export function registerRecommendationTools(server) {
         const [nodes, pods, ops, pvcs] = await Promise.all([
           ocpGet("/api/v1/nodes"),
           ocpGet("/api/v1/pods"),
-          ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [] })),
-          ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [] })),
+          // A read that FAILED is not a read that found nothing. Catching into
+          // an empty list removed the deduction entirely, so a cluster whose
+          // operators could not be read scored HIGHER than one whose operators
+          // were all healthy. Mark it instead.
+          ocpGet("/apis/config.openshift.io/v1/clusteroperators").catch(() => ({ items: [], __unread: true })),
+          ocpGet("/api/v1/persistentvolumeclaims").catch(() => ({ items: [], __unread: true })),
         ]);
 
         const allNodes = nodes.items || [];
         const allPods = pods.items || [];
         const allOps = ops.items || [];
         const allPvcs = pvcs.items || [];
+        const unread = [
+          ops.__unread ? "cluster operators" : null,
+          pvcs.__unread ? "persistent volume claims" : null,
+        ].filter(Boolean);
 
         const notReady = allNodes.filter(n => !(n.status?.conditions || []).some(c => c.type === "Ready" && c.status === "True"));
         const degraded = allOps.filter(o => (o.status?.conditions || []).some(c => c.type === "Degraded" && c.status === "True"));
@@ -500,9 +508,9 @@ export function registerRecommendationTools(server) {
 
         let score = 100;
         if (notReady.length > 0) score -= notReady.length * 10;
-        if (degraded.length > 0) score -= degraded.length * 5;
+        if (!ops.__unread && degraded.length > 0) score -= degraded.length * 5;
         if (problemPods.length > 0) score -= Math.min(20, problemPods.length);
-        if (orphanedPvcs.length > 0) score -= Math.min(10, orphanedPvcs.length * 2);
+        if (!pvcs.__unread && orphanedPvcs.length > 0) score -= Math.min(10, orphanedPvcs.length * 2);
         score = Math.max(0, score);
         const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
 
@@ -512,15 +520,25 @@ export function registerRecommendationTools(server) {
         if (problemPods.length > 0) recs.push({ pri: 2, txt: `Address ${problemPods.length} problem pod(s) — run security_pod_security_audit for details` });
         if (orphanedPvcs.length > 0) recs.push({ pri: 3, txt: `Resolve ${orphanedPvcs.length} unbound PVC(s)` });
         if (totalRestarts > allPods.length * 2) recs.push({ pri: 3, txt: `Cluster has ${totalRestarts} total restarts — investigate flapping workloads with recommend_health_trends` });
-        if (recs.length === 0) recs.push({ pri: 0, txt: "Cluster is healthy. Consider running recommend_resource_rightsizing for cost optimization." });
+        // "Cluster is healthy" is a claim about everything. It may only be made
+        // when everything was read.
+        if (unread.length > 0) {
+          recs.unshift({ pri: 1, txt: `${unread.join(" and ")} could not be read, so this score covers less than the whole cluster — it is not a clean bill of health.` });
+        } else if (recs.length === 0) {
+          recs.push({ pri: 0, txt: "Cluster is healthy. Consider running recommend_resource_rightsizing for cost optimization." });
+        }
 
         const lines = [
           `Cluster Optimization Summary`,
-          `\n  Score: ${score}/100  Grade: ${grade}\n`,
+          `\n  Score: ${score}/100  Grade: ${grade}${unread.length ? `  (partial — ${unread.join(", ")} unread)` : ""}\n`,
           `Nodes:    ${allNodes.length} total, ${notReady.length} not ready`,
-          `Operators: ${allOps.length} total, ${degraded.length} degraded`,
+          ops.__unread
+            ? `Operators: could not be read — not scored`
+            : `Operators: ${allOps.length} total, ${degraded.length} degraded`,
           `Pods:     ${allPods.length} total, ${problemPods.length} problem`,
-          `PVCs:     ${allPvcs.length} total, ${orphanedPvcs.length} unbound`,
+          pvcs.__unread
+            ? `PVCs:     could not be read — not scored`
+            : `PVCs:     ${allPvcs.length} total, ${orphanedPvcs.length} unbound`,
           `Restarts: ${totalRestarts} total\n`,
           `Top recommendations:`,
         ];

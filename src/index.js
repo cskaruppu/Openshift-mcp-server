@@ -88,6 +88,9 @@ import { callLLM } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
+// The one DR readiness scorer, shared with the MCP tool, the dashboard widget
+// and chat. getAgentCachedResponse() is synchronous, so this is a static import.
+import { scoreDrReadiness } from "./tools/velero.js";
 import { listProfiles, resolveProfile } from "./services/policy-profiles.js";
 import { remediateManifests } from "./services/manifest-remediate.js";
 import { checkAdmissionParity } from "./services/admission-parity.js";
@@ -1122,24 +1125,48 @@ export function getAgentCachedResponse(clusterName, endpointPath, opts = {}) {
     }
 
     case "/api/dashboard/dr": {
+      // A spoke agent's cached counts, scored by the SAME function the live
+      // path uses (tools/velero.js). This used to be a fourth, divergent copy
+      // of the scoring — and it invented a storage-location count out of the
+      // schedule count (`dr.schedules > 0 ? 1 : 0`), which is a number nobody
+      // measured appearing in a panel as though somebody had.
       const dr = report.dr;
       if (!dr) return { source: "agent-cache", available: false, message: "DR data not available from this agent" };
-      if (!dr.installed) return { installed: false, score: 0, grade: "?", backups: 0, completed: 0, failed: 0, schedules: 0, activeSchedules: 0, storageLocations: 0, availableLocations: 0, lastBackup: null, lastBackupAge: null, ...meta };
-      let lastBackupAge = null;
-      if (dr.lastBackup) lastBackupAge = Math.floor((Date.now() - new Date(dr.lastBackup).getTime()) / 86400000);
-      let score = 100;
-      if (dr.schedules === 0) score -= 25;
-      if (dr.completed === 0) score -= 25;
-      else if (lastBackupAge != null && lastBackupAge > 7) score -= 15;
-      if (dr.failed > 0) score -= Math.min(15, dr.failed * 5);
-      score = Math.max(0, Math.round(score));
-      const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+
+      // The spoke reports counts, not objects. Rebuild the minimum the scorer
+      // needs, and tell it which facts the cache simply does not carry so it
+      // does not score them as absent.
+      const completedCount = dr.completed || 0;
+      const failedCount = dr.failed || 0;
+      const totalBackups = dr.totalBackups || 0;
+      const backups = [
+        ...(dr.lastBackup && completedCount > 0
+          ? [{ name: String(dr.lastBackup), phase: "Completed", completionTimestamp: dr.lastBackup, startTimestamp: dr.lastBackup, expiration: "cached" }]
+          : []),
+        ...Array.from({ length: Math.max(0, completedCount - (dr.lastBackup ? 1 : 0)) },
+          (_, i) => ({ name: `cached-completed-${i}`, phase: "Completed", completionTimestamp: dr.lastBackup || null, expiration: "cached" })),
+        ...Array.from({ length: failedCount }, (_, i) => ({ name: `cached-failed-${i}`, phase: "Failed", startTimestamp: new Date().toISOString(), expiration: "cached" })),
+      ];
+      const scored = scoreDrReadiness({
+        // undefined installed → the scorer reports unknown, which is right: a
+        // cache that never said is not a cache that said no.
+        installed: dr.installed === true ? true : dr.installed === false ? false : null,
+        backups,
+        schedules: Array.from({ length: dr.schedules || 0 }, (_, i) => ({ name: `cached-${i}`, paused: false })),
+        // The spoke does not report storage locations at all. Saying so beats
+        // deriving one from an unrelated count.
+        locationsRead: false,
+        locations: [],
+      });
+      const sum = scored.summary || {};
       return {
-        installed: true, score, grade,
-        backups: dr.totalBackups || 0, completed: dr.completed || 0, failed: dr.failed || 0,
+        installed: scored.installed, score: scored.score, grade: scored.grade,
+        note: scored.note || scored.findings?.[0]?.message || null,
+        backups: totalBackups, completed: completedCount, failed: failedCount,
         schedules: dr.schedules || 0, activeSchedules: dr.schedules || 0,
-        storageLocations: dr.schedules > 0 ? 1 : 0, availableLocations: dr.schedules > 0 ? 1 : 0,
-        lastBackup: dr.lastBackup || null, lastBackupAge,
+        storageLocations: null, availableLocations: null,
+        lastBackup: dr.lastBackup || null,
+        lastBackupAge: sum.lastSuccessfulBackupAgeDays ?? null,
         ...meta,
       };
     }

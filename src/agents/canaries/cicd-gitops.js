@@ -123,6 +123,38 @@ export default [
   },
 
   {
+    id: "an-unread-namespace-is-not-a-verified-deploy",
+    kind: "pure",
+    title: "The verification pyramid does not pass a namespace it could not read",
+    why: "This is the agent telling a user their deploy worked. Every read used to be caught into an empty list, so an unreadable namespace reported three of four levels GREEN with detail text asserting facts nobody had read — '0 pod(s), none in a failure state', 'no Routes exposed — internal application'. A verification that passes when it could not look is worse than no verification.",
+    run: async () => {
+      const { verifyNamespace } = await import("../../services/deploy-verifier.js");
+      const r = await verifyNamespace("a-namespace-that-cannot-be-read-" + Date.now());
+      const details = r.levels.flatMap((l) => l.checks.map((c) => c.detail)).join(" | ");
+      return {
+        passed: r.passed,
+        unread: r.unread,
+        levelsPassed: r.levels.filter((l) => l.passed).map((l) => l.id),
+        claimsNoFailures: /none in a failure state/.test(details),
+        // The exact sentence that used to be asserted over an unread list. The
+        // corrected text deliberately contains the words "internal application"
+        // while denying them, so match the whole original claim.
+        claimsInternalApp: /no Routes exposed — internal application/.test(details),
+        __evidence: { read: 0, expected: 7, confidence: "high", concluded: true, unread: ["the namespace could not be read"] },
+      };
+    },
+    expect: [
+      { path: "passed", assert: "equals", value: false },
+      { path: "unread", assert: "equals", value: true, note: "'broken' and 'nobody could look' need different responses." },
+      { path: "levelsPassed", assert: "equals", value: [], note: "Not one level may go green over an unread namespace." },
+      { path: "claimsNoFailures", assert: "equals", value: false,
+        note: "An unread pod list cannot show a failing pod, so 'none failing' would be true and meaningless." },
+      { path: "claimsInternalApp", assert: "equals", value: false,
+        note: "'No Routes exposed — internal application' is a claim about the application, from a read that never happened." },
+    ],
+  },
+
+  {
     id: "narrow-profile-does-not-inflate-the-score",
     kind: "pure",
     title: "Controls outside the chosen profile are not counted as passed",

@@ -18,7 +18,7 @@
  * could be checked without a cluster.
  */
 
-import { scoreDrReadiness } from "../../tools/velero.js";
+import { scoreDrReadiness, veleroPresence } from "../../tools/velero.js";
 
 const NOW = Date.parse("2026-06-01T00:00:00Z");
 const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
@@ -54,6 +54,60 @@ export default [
       { path: "grade", assert: "equals", value: "F" },
       { path: "installed", assert: "equals", value: false },
       { path: "firstFinding", assert: "matches", value: "not a passing state" },
+    ],
+  },
+
+  {
+    id: "a-403-is-not-proof-of-absence",
+    kind: "pure",
+    title: "A permissions failure is unknown, not 'Velero is not installed'",
+    why: "A 404 means the API group is not served, so Velero really is absent and grade F is earned. A 403 means the API server authorised before it routed, which says nothing about whether Velero exists — and a network failure says less. Collapsing those into 'not installed' tells a customer to install something they already have, and collapsing them into a grade claims a verdict nobody reached. The product already learned this with MTA.",
+    run: async () => {
+      const absent = scoreDrReadiness({ installed: veleroPresence(new Error("OCP API 404 Not Found")) });
+      const forbidden = scoreDrReadiness({ installed: veleroPresence(new Error("OCP API 403 Forbidden")) });
+      const unreachable = scoreDrReadiness({ installed: veleroPresence(new Error("fetch failed")) });
+      return {
+        absentInstalled: absent.installed, absentGrade: absent.grade,
+        forbiddenInstalled: forbidden.installed, forbiddenScore: forbidden.score, forbiddenGrade: forbidden.grade,
+        unreachableScore: unreachable.score,
+        __evidence: { read: 0, expected: 1, confidence: "high", concluded: true, unread: ["the Velero API could not be read"] },
+      };
+    },
+    expect: [
+      { path: "absentInstalled", assert: "equals", value: false },
+      { path: "absentGrade", assert: "equals", value: "F", note: "A cluster with no Velero genuinely cannot be restored." },
+      { path: "forbiddenInstalled", assert: "equals", value: null, note: "Not false. A 403 is not proof of absence." },
+      { path: "forbiddenScore", assert: "equals", value: null },
+      { path: "forbiddenGrade", assert: "equals", value: "—" },
+      { path: "unreachableScore", assert: "equals", value: null },
+    ],
+  },
+
+  {
+    id: "an-unread-schedule-list-is-not-an-empty-one",
+    kind: "pure",
+    title: "A failed read of the schedules does not count as having none",
+    why: "Deducting 25 points for 'no backup schedules defined' when nobody could list them turns a permissions gap into a backup gap, and sends somebody to configure schedules that already exist.",
+    run: async () => {
+      const base = {
+        installed: true, now: Date.parse("2026-06-01T00:00:00Z"),
+        backups: [{ name: "b", phase: "Completed", completionTimestamp: "2026-05-31T00:00:00Z", expiration: "x" }],
+        locations: [{ status: { phase: "Available" } }],
+      };
+      const unread = scoreDrReadiness({ ...base, schedules: [], schedulesRead: false });
+      const reallyNone = scoreDrReadiness({ ...base, schedules: [], schedulesRead: true });
+      return {
+        unreadScore: unread.score, realGapScore: reallyNone.score,
+        unreadBeatsRealGap: unread.score > reallyNone.score,
+        unreadable: unread.unreadable,
+        realGapUnreadable: reallyNone.unreadable,
+      };
+    },
+    expect: [
+      { path: "unreadBeatsRealGap", assert: "equals", value: true,
+        note: "An unread check must not be penalised like a missing one." },
+      { path: "unreadable", assert: "contains", value: "Schedules" },
+      { path: "realGapUnreadable", assert: "equals", value: null },
     ],
   },
 

@@ -12469,6 +12469,26 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         } catch { uncoveredNs.push(n); }
       }
 
+      // Nothing read means nothing scored. A security posture of 100 computed
+      // over zero pods is an unread cluster wearing a perfect grade, and an
+      // RBAC-filtered list returns 200 with nothing in it, so this never
+      // reaches the catch block.
+      if (items.length === 0) {
+        return {
+          reply: [
+            `### Security Posture${ns ? ` (${ns})` : ""}`,
+            ``,
+            `[WARN] No running pods were read${ns ? ` in ${ns}` : ""}, so there is nothing to score.`,
+            ``,
+            `This is **not** a score of 100 and not a clean result — either there are no`,
+            `workloads here, or this service account cannot list pods.`,
+            ``,
+            `**Check:** \`oc auth can-i list pods${ns ? ` -n ${ns}` : " --all-namespaces"}\``,
+          ].join("\n"),
+          contextKeys: ["slash", "security"],
+        };
+      }
+
       let score = 100;
       if (privilegedList.length > 0) score -= Math.min(25, privilegedList.length * 5);
       if (runAsRootList.length > 0) score -= Math.min(15, runAsRootList.length * 2);
@@ -12812,6 +12832,13 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
   if (cmd === "dr" || cmd === "backups") {
     const veleroNs = arg || "openshift-adp";
     try {
+      // The score comes from the one shared scorer (tools/velero.js), which
+      // knows the difference between "Velero is absent" and "nobody could
+      // tell". This handler used to carry its own copy — one of four — in
+      // which every read was caught into an empty list, so an unreachable
+      // cluster scored as though it simply had no backups configured.
+      const { readDrReadiness } = await import("../tools/velero.js");
+      const dr = await readDrReadiness({ namespace: veleroNs });
       const [backups, schedules, locations] = await Promise.all([
         ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`).catch(() => ({ items: [] })),
         ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/schedules`).catch(() => ({ items: [] })),
@@ -12833,18 +12860,21 @@ async function maybeHandleSlashCommand(userMessage, conversationId, llmOpts = {}
         lastAge = Math.floor((Date.now() - new Date(lastGood.status.completionTimestamp).getTime()) / 86400000);
       }
 
-      let score = 100;
-      if (locItems.length === 0) score -= 30;
-      else if (availLocs.length === 0) score -= 25;
-      if (schItems.length === 0) score -= 25;
-      else if (schItems.every((s) => s.spec?.paused)) score -= 20;
-      if (completed.length === 0) score -= 25;
-      else if (lastAge != null && lastAge > 7) score -= 15;
-      if (failed.length > 0) score -= Math.min(15, failed.length * 5);
-      score = Math.max(0, Math.round(score));
-      const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+      const score = dr.score;
+      const grade = dr.grade;
 
-      const lines = [
+      // No score means nobody could read the cluster. Rendering a score widget
+      // with "null" in it, or defaulting to 0, would both be claims nobody made.
+      const lines = score === null
+        ? [
+            `### Disaster Recovery Assessment`,
+            ``,
+            `[WARN] ${dr.findings?.[0]?.message || "DR readiness could not be determined."}`,
+            ``,
+            `**${dr.recommendation || "Check connectivity and RBAC for velero.io resources."}**`,
+            ``,
+          ]
+        : [
         `### Disaster Recovery Assessment`,
         ``,
         `@@SCORE|${score}|DR Readiness@@`,

@@ -250,7 +250,16 @@ const BAD_POD = /BackOff|Err|Error|Failed|OOM|Invalid|CreateContainer|Unschedula
  * Returns { passed, levels: [{id,title,passed,checks:[{name,passed,detail}]}], access }.
  */
 export async function verifyNamespace(ns) {
-  const safe = async (p) => { try { return await ocpFetch(p); } catch { return { items: [] }; } };
+  // A read that FAILED and a read that found nothing are different facts, and
+  // this used to collapse them into `{ items: [] }`. The consequence was that
+  // an unreadable namespace reported three of the four levels GREEN, with
+  // detail text asserting things nobody had read — "0 pod(s), none in a failure
+  // state", "no Routes exposed — internal application". A verification that
+  // passes when it could not look is worse than no verification.
+  const safe = async (p) => {
+    try { return { ...(await ocpFetch(p)), __read: true }; }
+    catch (e) { return { items: [], __read: false, __error: e.message }; }
+  };
   const [deps, stss, dss, svcs, eps, routes, pods] = await Promise.all([
     safe(`/apis/apps/v1/namespaces/${ns}/deployments`),
     safe(`/apis/apps/v1/namespaces/${ns}/statefulsets`),
@@ -270,7 +279,17 @@ export async function verifyNamespace(ns) {
       const v = rolloutStatus(w);
       return { name: `${w.kind}/${w.metadata?.name}`, passed: v.ok, detail: v.summary };
     });
-    if (checks.length === 0) checks.push({ name: "workloads", passed: false, detail: "no workloads found in namespace" });
+    const workloadsRead = deps.__read && stss.__read && dss.__read;
+    if (checks.length === 0) {
+      checks.push({
+        name: "workloads",
+        passed: false,
+        detail: workloadsRead
+          ? "no workloads found in namespace"
+          : "workloads could not be read, so nothing could be verified — this is not a pass",
+        unread: !workloadsRead,
+      });
+    }
     levels.push({ id: "rollout", title: "Rollout complete", passed: checks.every((c) => c.passed), checks });
   }
 
@@ -288,13 +307,21 @@ export async function verifyNamespace(ns) {
     }
     checks.push({
       name: "No failing pods",
-      passed: failing.length === 0,
-      detail: failing.length ? failing.slice(0, 5).join("; ") : `${active.length} pod(s), none in a failure state`,
+      // An unread pod list cannot show a failing pod, so "none failing" would
+      // be true and meaningless. It fails, and says which it is.
+      passed: pods.__read && failing.length === 0,
+      detail: !pods.__read
+        ? "pods could not be read, so whether any are failing is unknown — reported as unverified, not as stable"
+        : failing.length ? failing.slice(0, 5).join("; ") : `${active.length} pod(s), none in a failure state`,
+      unread: !pods.__read,
     });
     checks.push({
       name: "Container restarts",
-      passed: restarts <= 2,
-      detail: restarts === 0 ? "no restarts" : `${restarts} restart(s) across the namespace${restarts > 2 ? " — investigate before calling this stable" : ""}`,
+      passed: pods.__read && restarts <= 2,
+      detail: !pods.__read
+        ? "pods could not be read, so restart counts are unknown"
+        : restarts === 0 ? "no restarts" : `${restarts} restart(s) across the namespace${restarts > 2 ? " — investigate before calling this stable" : ""}`,
+      unread: !pods.__read,
     });
     levels.push({ id: "stability", title: "Workloads stable", passed: checks.every((c) => c.passed), checks });
   }
@@ -317,7 +344,17 @@ export async function verifyNamespace(ns) {
           : "no endpoints — the Service selector does not match any ready pod (check labels)",
       });
     }
-    if (checks.length === 0) checks.push({ name: "services", passed: true, detail: "no selector-bearing Services to check" });
+    if (checks.length === 0) {
+      const read = svcs.__read && eps.__read;
+      checks.push({
+        name: "services",
+        passed: read,
+        detail: read
+          ? "no selector-bearing Services to check"
+          : "Services or Endpoints could not be read, so whether traffic reaches any pod is unknown",
+        unread: !read,
+      });
+    }
     levels.push({ id: "wiring", title: "Services wired to pods", passed: checks.every((c) => c.passed), checks });
   }
 
@@ -335,9 +372,28 @@ export async function verifyNamespace(ns) {
       access.push({ name: r.metadata?.name, url: target, ...probe });
       checks.push({ name: `Route/${r.metadata?.name}`, passed: probe.ok, detail: `${target} → ${probe.label}${probe.latencyMs != null ? ` (${probe.latencyMs}ms)` : ""}` });
     }
-    if (checks.length === 0) checks.push({ name: "routes", passed: true, detail: "no Routes exposed — internal application" });
+    if (checks.length === 0) {
+      checks.push({
+        name: "routes",
+        passed: routes.__read,
+        detail: routes.__read
+          ? "no Routes exposed — internal application"
+          : "Routes could not be read, so whether the application is reachable is unknown — not an internal application, an unread one",
+        unread: !routes.__read,
+      });
+    }
     levels.push({ id: "access", title: "User can access the application", passed: checks.every((c) => c.passed), checks });
   }
 
-  return { passed: levels.every((l) => l.passed), levels, access, verifiedAt: new Date().toISOString(), namespace: ns };
+  const unreadChecks = levels.flatMap((l) => (l.checks || []).filter((c) => c.unread));
+  return {
+    passed: levels.every((l) => l.passed),
+    // Why it did not pass matters: "the application is broken" and "nobody
+    // could look at it" need different responses from whoever is reading.
+    unread: unreadChecks.length > 0,
+    unreadNote: unreadChecks.length
+      ? `${unreadChecks.length} check(s) could not read what they needed. This namespace is unverified, not failed.`
+      : null,
+    levels, access, verifiedAt: new Date().toISOString(), namespace: ns,
+  };
 }

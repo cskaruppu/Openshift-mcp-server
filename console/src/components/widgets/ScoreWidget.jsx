@@ -21,6 +21,16 @@ export function ScoreWidget({ title, path, map, linkTo, linkLabel, refreshMs }) 
   if (data) {
     if (data.available === false || data.installed === false || data.unavailable) {
       view = { value: "N/A", label: data.message || "Not installed on this cluster", unavailable: true };
+    } else if (data.score === null) {
+      /* A null score means nobody could read it — distinct from "not
+         installed" above, and from a score of zero. Rendering `null/100`, or
+         defaulting to 0, would both be claims nobody made. The server sends a
+         `note` saying what could not be read; show that. */
+      view = {
+        value: "—",
+        label: data.note || "Could not be determined on this cluster",
+        unavailable: true,
+      };
     } else {
       view = map(data);
     }

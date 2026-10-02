@@ -1071,49 +1071,40 @@ export async function handleDashboardAPI(pathname, req, res) {
       }
 
       // ---- DR readiness widget ----
+      // One implementation, shared with the MCP tool and chat. This widget used
+      // to carry its own copy in which every read was wrapped in a catch that
+      // returned an empty list — so nothing could throw, the "not installed"
+      // branch was unreachable, and a cluster with no Velero at all reported
+      // `installed: true, score 20, grade F`.
       case "/api/dashboard/dr": {
-        const veleroNs = "openshift-adp";
         try {
-          const [backups, schedules, locations] = await Promise.all([
-            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backups`).catch(() => ({ items: [] })),
-            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/schedules`).catch(() => ({ items: [] })),
-            ocpGet(`/apis/velero.io/v1/namespaces/${veleroNs}/backupstoragelocations`).catch(() => ({ items: [] })),
-          ]);
-          const bkpItems = backups.items || [];
-          const completed = bkpItems.filter((b) => b.status?.phase === "Completed");
-          const failed = bkpItems.filter((b) => ["Failed", "PartiallyFailed"].includes(b.status?.phase));
-          const schItems = schedules.items || [];
-          const activeSchedules = schItems.filter((s) => !s.spec?.paused);
-          const locItems = locations.items || [];
-          const availLocs = locItems.filter((l) => l.status?.phase === "Available");
-
-          completed.sort((a, b) => (b.status?.completionTimestamp || "").localeCompare(a.status?.completionTimestamp || ""));
-          const lastGood = completed[0];
-          let lastBackupAge = null;
-          if (lastGood?.status?.completionTimestamp) {
-            lastBackupAge = Math.floor((Date.now() - new Date(lastGood.status.completionTimestamp).getTime()) / 86400000);
-          }
-
-          let score = 100;
-          if (locItems.length === 0) score -= 30;
-          else if (availLocs.length === 0) score -= 25;
-          if (schItems.length === 0) score -= 25;
-          else if (activeSchedules.length === 0) score -= 20;
-          if (completed.length === 0) score -= 25;
-          else if (lastBackupAge != null && lastBackupAge > 7) score -= 15;
-          if (failed.length > 0) score -= Math.min(15, failed.length * 5);
-          score = Math.max(0, Math.round(score));
-          const grade = score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
-
+          const { readDrReadiness } = await import("../tools/velero.js");
+          const dr = await readDrReadiness({});
+          const sum = dr.summary || {};
           json(res, 200, {
-            installed: true, score, grade,
-            backups: bkpItems.length, completed: completed.length, failed: failed.length,
-            schedules: schItems.length, activeSchedules: activeSchedules.length,
-            storageLocations: locItems.length, availableLocations: availLocs.length,
-            lastBackup: lastGood?.metadata?.name || null, lastBackupAge,
+            installed: dr.installed, score: dr.score, grade: dr.grade,
+            note: dr.note || dr.findings?.[0]?.message || null,
+            unreadable: dr.unreadable || null,
+            backups: sum.totalBackups ?? 0,
+            completed: sum.completed ?? 0,
+            failed: (dr.findings || []).some((f) => /failed in the last/.test(f.message))
+              ? Number(/(\d+) backup\(s\) failed/.exec((dr.findings.find((f) => /failed in the last/.test(f.message)) || {}).message || "")?.[1] || 0)
+              : 0,
+            schedules: sum.schedules ?? 0,
+            activeSchedules: sum.activeSchedules ?? sum.schedules ?? 0,
+            storageLocations: sum.storageLocations ?? 0,
+            availableLocations: sum.availableStorageLocations ?? 0,
+            lastBackup: sum.lastSuccessfulBackup ?? null,
+            lastBackupAge: sum.lastSuccessfulBackupAgeDays ?? null,
           });
-        } catch {
-          json(res, 200, { installed: false, score: 0, grade: "?", backups: 0, completed: 0, failed: 0, schedules: 0, activeSchedules: 0, storageLocations: 0, availableLocations: 0, lastBackup: null, lastBackupAge: null });
+        } catch (err) {
+          // Unknown, not "not installed" — the same distinction the scorer makes.
+          json(res, 200, {
+            installed: null, score: null, grade: "—",
+            note: `DR readiness could not be determined: ${err.message}`,
+            backups: 0, completed: 0, failed: 0, schedules: 0, activeSchedules: 0,
+            storageLocations: 0, availableLocations: 0, lastBackup: null, lastBackupAge: null,
+          });
         }
         break;
       }
