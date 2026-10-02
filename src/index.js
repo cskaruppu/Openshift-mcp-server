@@ -9783,7 +9783,12 @@ spec:
         if (!fw) return sendJson(res, 404, { error: "Framework not found" });
         const cisResults = getComplianceResults();
         const cisFindings = cisResults?.findings || [];
-        const evaluation = evaluateFramework(fwMatch[1], cisFindings);
+        // Whether a scan RAN is the thing the evaluator cannot infer: the
+        // scanner reports failures, so "no findings" means either "nothing is
+        // wrong" or "nobody looked", and only this layer knows which.
+        const evaluation = evaluateFramework(fwMatch[1], cisFindings, {
+          scanned: Boolean(cisResults), scanTime: cisResults?.scanTime || null,
+        });
         sendJson(res, 200, { framework: fw, evaluation });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
@@ -9792,7 +9797,13 @@ spec:
       try {
         const cisResults = getComplianceResults();
         const cisFindings = cisResults?.findings || [];
-        sendJson(res, 200, { results: evaluateAllFrameworks(cisFindings) });
+        sendJson(res, 200, {
+          scanned: Boolean(cisResults),
+          scanTime: cisResults?.scanTime || null,
+          results: evaluateAllFrameworks(cisFindings, {
+            scanned: Boolean(cisResults), scanTime: cisResults?.scanTime || null,
+          }),
+        });
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }

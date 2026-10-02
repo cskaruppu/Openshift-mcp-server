@@ -39,7 +39,7 @@ function isSystemNamespace(ns) {
 // ---------------------------------------------------------------------------
 // Helper: create a finding object
 // ---------------------------------------------------------------------------
-function finding({ id, category, title, severity, status, namespace, resource, description, remediation }) {
+function finding({ id, category, title, severity, status, namespace, resource, description, remediation, unreadable }) {
   return {
     id,
     category,
@@ -50,6 +50,10 @@ function finding({ id, category, title, severity, status, namespace, resource, d
     resource: resource || "",
     description,
     remediation,
+    // A check that could not READ what it needed is not a check that passed.
+    // Marked explicitly rather than inferred from the title, because the score
+    // and every framework mapping downstream depend on telling the two apart.
+    ...(unreadable ? { unreadable: true } : {}),
   };
 }
 
@@ -73,6 +77,7 @@ async function checkPodSecurity() {
         title: "Pod security scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to retrieve pods: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing pods.",
       })
@@ -288,6 +293,7 @@ async function checkNetworkSecurity() {
         title: "NetworkPolicy scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check NetworkPolicies: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing namespaces and networkpolicies.",
       })
@@ -343,6 +349,7 @@ async function checkNetworkSecurity() {
         title: "Service exposure scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check services: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing services.",
       })
@@ -383,6 +390,7 @@ async function checkNetworkSecurity() {
         title: "Default service account scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check pods for default service accounts: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing pods.",
       })
@@ -460,6 +468,7 @@ async function checkRBACAndSecrets() {
         title: "Cluster-admin binding scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check cluster role bindings: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing clusterrolebindings.",
       })
@@ -523,6 +532,7 @@ async function checkRBACAndSecrets() {
         title: "Secret env var scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check secrets in environment variables: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing pods.",
       })
@@ -624,6 +634,7 @@ async function checkImageSecurity(options = {}) {
         title: "Image security scan failed",
         severity: "warning",
         status: "WARN",
+        unreadable: true,
         description: `Unable to check image security: ${err.message}`,
         remediation: "Verify API connectivity and RBAC permissions for listing pods.",
       })
@@ -636,7 +647,43 @@ async function checkImageSecurity(options = {}) {
 // ---------------------------------------------------------------------------
 // Score calculation — penalty model (consistent with dashboard security widget)
 // ---------------------------------------------------------------------------
+/**
+ * The categories this scanner covers. A category whose read failed contributed
+ * no findings of its own, so without this list there is nothing to notice.
+ */
+export const SCAN_CATEGORIES = ["pod-security", "network-security", "rbac-secrets", "image-security"];
+
+/**
+ * Which category each CIS control belongs to.
+ *
+ * Exported because the framework evaluator needs it to answer "was this check
+ * read?", and deriving it from the findings does not work: a category that
+ * failed to read contributes ONE marker finding, so every other control in that
+ * category is simply absent — and absent used to mean passed. The mapping has
+ * to come from a catalogue, not from what happened to be reported.
+ */
+export function categoryForControl(controlId) {
+  const m = /^CIS-5\.(\d)\./.exec(String(controlId || ""));
+  if (!m) return null;
+  return { 1: "rbac-secrets", 2: "pod-security", 3: "network-security", 4: "rbac-secrets", 5: "image-security" }[m[1]] || null;
+}
+
+/** Which categories could not be read at all. */
+function unreadableCategories(allFindings) {
+  return [...new Set(allFindings.filter((f) => f.unreadable).map((f) => f.category))];
+}
+
 function calculateScore(allFindings) {
+  // A scan that could read NOTHING has no score. It used to return 100 here,
+  // because 100 is what "no failures" meant and a cluster nobody could reach
+  // produces no failures — only WARNs saying the read did not work. That is how
+  // an unreachable cluster came to display "100 / grade A" on the Audit tab.
+  //
+  // A check with no data is not a pass. Null is not a bad score; it is the
+  // absence of one, and the console renders the two differently.
+  const unread = unreadableCategories(allFindings);
+  if (unread.length >= SCAN_CATEGORIES.length) return null;
+
   const fails = allFindings.filter((f) => f.status === "FAIL");
   if (fails.length === 0) return 100;
 
@@ -671,6 +718,9 @@ function calculateScore(allFindings) {
 }
 
 function calculateGrade(score) {
+  // No score, no grade. "F" would be a verdict on the cluster; this is the
+  // absence of one.
+  if (score === null || score === undefined) return "—";
   if (score >= 90) return "A";
   if (score >= 80) return "B";
   if (score >= 70) return "C";
@@ -743,12 +793,41 @@ export async function runComplianceScan(options = {}) {
     "CIS-5.3.1", "CIS-5.3.2", "CIS-5.3.3", "CIS-5.4.1", "CIS-5.5.1", "CIS-5.5.2",
   ];
   const failingControlIds = new Set(allFindings.filter((f) => f.status !== "PASS").map((f) => f.id));
-  const controlsPassed = CIS_CONTROL_CATALOG.filter((id) => !failingControlIds.has(id)).length;
+  // A control whose category could not be read was not evaluated, so it is
+  // neither passed nor failed. Counting it as passed is the same mistake the
+  // score used to make, one level down.
+  const unread = unreadableCategories(allFindings);
+  const unreadableControlIds = new Set(
+    allFindings.filter((f) => f.unreadable).map((f) => f.id)
+  );
+  // Category comes from the catalogue, not from the findings. A category that
+  // failed to read reports ONE marker finding, so every other control in it is
+  // absent — and deriving the mapping from what was reported would count all of
+  // those as evaluated-and-passed, which is the whole bug.
+  const notEvaluatedIds = CIS_CONTROL_CATALOG.filter(
+    (id) => unreadableControlIds.has(id) || unread.includes(categoryForControl(id))
+  );
+  const evaluatedIds = CIS_CONTROL_CATALOG.filter((id) => !notEvaluatedIds.includes(id));
+  const controlsPassed = evaluatedIds.filter((id) => !failingControlIds.has(id)).length;
 
   const results = {
     scanTime,
     score,
     grade,
+    // Said plainly, because every number above is conditional on it.
+    scanned: unread.length < SCAN_CATEGORIES.length,
+    unreadableCategories: unread,
+    coverage: {
+      categories: SCAN_CATEGORIES.length,
+      read: SCAN_CATEGORIES.length - unread.length,
+      controlsEvaluated: evaluatedIds.length,
+      controlsNotEvaluated: notEvaluatedIds.length,
+    },
+    note: unread.length >= SCAN_CATEGORIES.length
+      ? "Nothing could be read on this cluster, so there is no compliance score. This is not a pass — check API connectivity and the scanner's RBAC."
+      : unread.length
+        ? `${unread.join(", ")} could not be read, so ${notEvaluatedIds.length} control(s) were not evaluated. The score covers the ${evaluatedIds.length} that were.`
+        : null,
     findings: allFindings,
     summary,
     totals: {
@@ -758,7 +837,11 @@ export async function runComplianceScan(options = {}) {
       warn: allFindings.filter((f) => f.status === "WARN").length,
       controlsTotal: CIS_CONTROL_CATALOG.length,
       controlsPassed,
-      controlsFailed: CIS_CONTROL_CATALOG.length - controlsPassed,
+      // Failed means evaluated and failed. A control nobody could evaluate is
+      // counted in its own bucket, not folded into either side — "X of Y
+      // passed" must not imply the rest were tried.
+      controlsFailed: evaluatedIds.length - controlsPassed,
+      controlsNotEvaluated: notEvaluatedIds.length,
       critical: allFindings.filter((f) => f.severity === "critical").length,
       warning: allFindings.filter((f) => f.severity === "warning").length,
       info: allFindings.filter((f) => f.severity === "info").length,

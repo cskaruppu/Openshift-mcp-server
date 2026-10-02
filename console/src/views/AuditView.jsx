@@ -529,7 +529,15 @@ export function AuditView() {
                 {compScore !== null ? <>{compScore}<span className="aud-stat-denom">/100</span></> : "—"}
               </div>
               <div className="aud-stat-lbl">CIS Score &rsaquo;</div>
-              {compScore === null && <div className="aud-stat-sub">no scan yet</div>}
+              {/* "No scan yet" and "the scan ran and read nothing" both arrive
+                  as a null score and need different words — the second is a
+                  connectivity problem somebody has to fix, not a button
+                  somebody has to press. */}
+              {compScore === null && (
+                <div className="aud-stat-sub">
+                  {compData?.scanTime ? "scan read nothing" : "no scan yet"}
+                </div>
+              )}
             </div>
             <div className={"aud-stat-box" + ((compTotals.fail || 0) > 0 ? " alert" : "")}
               title="Show only failed findings" style={{ cursor: "pointer" }}
@@ -603,8 +611,13 @@ export function AuditView() {
               <div className="aud-empty-icon">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
               </div>
-              <h3>No Compliance Scan Yet</h3>
-              <p>Run a CIS Kubernetes Benchmark scan to see your cluster's security posture</p>
+              <h3>{compData?.scanTime ? "Nothing Could Be Read" : "No Compliance Scan Yet"}</h3>
+              <p>
+                {compData?.note
+                  || (compData?.scanTime
+                    ? "The scan ran but could not read this cluster, so there is no score. This is not a pass — check API connectivity and the scanner's RBAC."
+                    : "Run a CIS Kubernetes Benchmark scan to see your cluster's security posture")}
+              </p>
               <button className="aud-hero-btn scan" onClick={handleScan} disabled={scanning}>
                 {scanning ? "Scanning…" : "Run CIS Scan"}
               </button>
@@ -844,24 +857,41 @@ export function AuditView() {
           ) : (
             <div className="aud-fw-grid">
               {frameworks.map((fw, i) => {
-                const gc = gradeColor(fw.grade || "F");
+                /* A framework the scanner never reached has NO score. It used
+                   to render as 0 here (`fw.score ?? 0`) beside a grade from a
+                   100% evaluation — the server now sends null, and a dash is
+                   the only honest thing to draw. "Nobody looked" is not a
+                   number, and this card is the one people screenshot. */
+                const unscored = fw.score === null || fw.score === undefined;
+                const gc = unscored ? "var(--text2, #8b93a7)" : gradeColor(fw.grade || "F");
                 const isExp = expandedFw === i;
                 return (
                   <div key={fw.id || i} className={"aud-fw-card" + (isExp ? " expanded" : "")}>
                     <div className="aud-fw-head" onClick={() => setExpandedFw(isExp ? null : i)}>
                       <div className="aud-fw-score-ring" style={{ "--fw-c": gc }}>
-                        <span>{fw.score ?? 0}</span>
+                        <span>{unscored ? "—" : fw.score}</span>
                       </div>
                       <div className="aud-fw-info">
                         <div className="aud-fw-name">{fw.name}</div>
                         <div className="aud-fw-desc">{fw.description}</div>
-                        <div className="aud-fw-stats">
-                          <span style={{ color: "#22c55e" }}>{fw.compliant || 0} compliant</span>
-                          <span style={{ color: "#f59e0b" }}>{fw.partial || 0} partial</span>
-                          <span style={{ color: "#ef4444" }}>{fw.nonCompliant || 0} non-compliant</span>
-                        </div>
+                        {unscored ? (
+                          <div className="aud-fw-stats">
+                            <span style={{ color: "var(--text2,#8b93a7)" }}>
+                              {fw.note || "Not evaluated — no CIS scan result was available."}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="aud-fw-stats">
+                            <span style={{ color: "#22c55e" }}>{fw.compliant || 0} compliant</span>
+                            <span style={{ color: "#f59e0b" }}>{fw.partial || 0} partial</span>
+                            <span style={{ color: "#ef4444" }}>{fw.nonCompliant || 0} non-compliant</span>
+                            {fw.notEvaluatedControls > 0 && (
+                              <span style={{ color: "var(--text2,#8b93a7)" }}>{fw.notEvaluatedControls} not evaluated</span>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="aud-fw-grade" style={{ color: gc, borderColor: gc }}>{fw.grade || "?"}</div>
+                      <div className="aud-fw-grade" style={{ color: gc, borderColor: gc }}>{unscored ? "—" : (fw.grade || "?")}</div>
                     </div>
                     {isExp && fw.controls && (
                       <div className="aud-fw-controls">

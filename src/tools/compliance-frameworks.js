@@ -1,3 +1,5 @@
+import { categoryForControl } from "./compliance-scanner.js";
+
 export const FRAMEWORKS = {
   "soc2": {
     name: "SOC 2 Type II",
@@ -170,47 +172,137 @@ function calculateGrade(score) {
   return "F";
 }
 
-export function evaluateFramework(frameworkId, cisFindings) {
+/**
+ * Map a framework's controls onto the CIS findings from a scan.
+ *
+ * THE RULE THIS EXISTS TO HOLD: a framework is scored only when a scan actually
+ * ran. The CIS scanner reports FAILURES — a check that ran and passed produces
+ * no finding — so an empty list is genuinely ambiguous: it means either "the
+ * scan ran and nothing is wrong" or "no scan has ever run". Those are opposite
+ * facts and they arrive identically.
+ *
+ * This used to resolve that ambiguity the most dangerous way available. Every
+ * control's checks were absent from the (empty) failure list, so every control
+ * counted as compliant and every framework scored 100% with grade A. A customer
+ * opening the Audit tab before the first scan completed — or on a cluster the
+ * scanner could not read — was shown perfect SOC 2, PCI-DSS and HIPAA
+ * compliance. Nothing threw, nothing was logged, and the number is the kind
+ * somebody screenshots for an assessor.
+ *
+ * Now the caller says whether a scan happened, and when it did not the result
+ * carries `scanned: false`, a NULL score and the grade "—". Not zero: zero is a
+ * score, and "nobody looked" is not a score.
+ *
+ * @param {string} frameworkId
+ * @param {Array}  cisFindings  findings from the CIS scan (failures, plus any
+ *                              explicit passes)
+ * @param {object} [opts]
+ * @param {boolean} [opts.scanned]  did a scan actually run? An explicit answer
+ *                                  always wins. Without one the only honest
+ *                                  inference is "findings present ⇒ a scan
+ *                                  ran", and anything else is unknown — which
+ *                                  must never resolve to 100%.
+ * @param {string} [opts.scanTime]  when, so the result can be aged
+ */
+export function evaluateFramework(frameworkId, cisFindings, opts = {}) {
   const fw = FRAMEWORKS[frameworkId];
   if (!fw) return null;
 
   const findings = Array.isArray(cisFindings) ? cisFindings : [];
+  const scanned = typeof opts.scanned === "boolean" ? opts.scanned : findings.length > 0;
+
+  if (!scanned) {
+    const controlEntries = Object.entries(fw.controls);
+    return {
+      frameworkId,
+      frameworkName: fw.name,
+      frameworkDescription: fw.description || null,
+      totalControls: controlEntries.length,
+      compliantControls: 0,
+      partialControls: 0,
+      nonCompliantControls: 0,
+      notEvaluatedControls: controlEntries.length,
+      // Null, not 0. A score of 0 says "this cluster fails everything"; null
+      // says "nothing was measured", and the console renders them differently.
+      score: null,
+      grade: "—",
+      scanned: false,
+      scanTime: null,
+      note: "No CIS scan result was available, so this framework was not evaluated. This is not a compliance score of any kind — run a scan, then read it. An empty finding set cannot be told apart from an unread cluster.",
+      controls: controlEntries.map(([controlId, c]) => ({
+        controlId,
+        title: c.title,
+        description: c.description,
+        status: "not-evaluated",
+        cisChecks: c.cisChecks || [],
+        passCount: 0,
+        failCount: 0,
+        findings: [],
+      })),
+    };
+  }
+
   const failsById = new Map();
+  // A check whose underlying scan could not READ what it needed was not
+  // evaluated. It produces no FAIL, so without this it would be credited as a
+  // pass — which is how an unreachable cluster scored 100% against every
+  // framework. The scanner marks those findings `unreadable`.
+  const unreadableIds = new Set();
+  const unreadableCategories = new Set();
   for (const f of findings) {
+    if (f.unreadable) {
+      unreadableIds.add(f.id);
+      if (f.category) unreadableCategories.add(f.category);
+    }
     if (f.status === "FAIL") {
       if (!failsById.has(f.id)) failsById.set(f.id, []);
       failsById.get(f.id).push(f);
     }
   }
+  // A category that failed to read takes every one of its checks with it. The
+  // mapping comes from the scanner's catalogue, not from the findings: a failed
+  // category reports ONE marker finding, so all its other controls are simply
+  // absent — and absent is exactly what used to be read as "passed".
+  const wasRead = (checkId) =>
+    !unreadableIds.has(checkId) && !unreadableCategories.has(categoryForControl(checkId));
 
   const controlEntries = Object.entries(fw.controls);
   const totalControls = controlEntries.length;
   let compliantControls = 0;
   let partialControls = 0;
   let nonCompliantControls = 0;
+  let notEvaluatedControls = 0;
 
   const controls = controlEntries.map(([controlId, c]) => {
     const checks = c.cisChecks || [];
     let passCount = 0;
     let failCount = 0;
+    let unreadCount = 0;
     const failedFindings = [];
 
     for (const checkId of checks) {
       if (failsById.has(checkId)) {
         failCount++;
         failedFindings.push(...failsById.get(checkId));
+      } else if (!wasRead(checkId)) {
+        unreadCount++;
       } else {
         passCount++;
       }
     }
 
+    const evaluated = passCount + failCount;
     let status;
-    if (checks.length === 0) {
+    if (checks.length === 0 || evaluated === 0) {
+      // Either no CIS check is mapped to this control, or every check that is
+      // could not be read. Both mean nothing was measured, and neither may
+      // quietly inflate the pass side of the denominator.
       status = "not-evaluated";
+      notEvaluatedControls++;
     } else if (failCount === 0) {
       status = "compliant";
       compliantControls++;
-    } else if (failCount === checks.length) {
+    } else if (failCount === evaluated) {
       status = "non-compliant";
       nonCompliantControls++;
     } else {
@@ -226,14 +318,21 @@ export function evaluateFramework(frameworkId, cisFindings) {
       cisChecks: checks,
       passCount,
       failCount,
+      unreadCount,
       findings: failedFindings,
     };
   });
 
-  const score = totalControls === 0
-    ? 0
-    : Math.round(((compliantControls + 0.5 * partialControls) / totalControls) * 100);
-  const grade = calculateGrade(score);
+  // Scored over the controls that could actually be evaluated, never over all
+  // of them. A control with no CIS check behind it is neither a pass nor a
+  // failure, and folding it into either direction makes the percentage mean
+  // something different from what it says — the same rule the deploy gate's
+  // policy profiles follow.
+  const evaluatedControls = totalControls - notEvaluatedControls;
+  const score = evaluatedControls === 0
+    ? null
+    : Math.round(((compliantControls + 0.5 * partialControls) / evaluatedControls) * 100);
+  const grade = score === null ? "—" : calculateGrade(score);
 
   return {
     frameworkId,
@@ -245,12 +344,33 @@ export function evaluateFramework(frameworkId, cisFindings) {
     compliantControls,
     partialControls,
     nonCompliantControls,
+    notEvaluatedControls,
+    evaluatedControls,
     score,
     grade,
+    scanned: true,
+    scanTime: opts.scanTime || null,
+    // Two different reasons a control goes unevaluated, and they need different
+    // actions: one is a gap in the mapping, the other is a cluster that could
+    // not be read. Saying "no CIS check mapped" for an unreadable cluster sends
+    // somebody to edit a catalogue when the real problem is connectivity.
+    note: notEvaluatedControls > 0
+      ? (() => {
+          const unmapped = controls.filter((c) => c.status === "not-evaluated" && (c.cisChecks || []).length === 0).length;
+          const unread = notEvaluatedControls - unmapped;
+          const reasons = [
+            unread ? `${unread} because the checks behind them could not be read on this cluster` : null,
+            unmapped ? `${unmapped} because no CIS check is mapped to them` : null,
+          ].filter(Boolean);
+          return evaluatedControls === 0
+            ? `None of this framework's ${totalControls} control(s) could be evaluated — ${reasons.join(", and ")}. There is no score: this is not a pass, and not a failure either.`
+            : `${notEvaluatedControls} of ${totalControls} control(s) were not evaluated — ${reasons.join(", and ")}. The score covers the ${evaluatedControls} that were.`;
+        })()
+      : null,
     controls,
   };
 }
 
-export function evaluateAllFrameworks(cisFindings) {
-  return Object.keys(FRAMEWORKS).map((id) => evaluateFramework(id, cisFindings));
+export function evaluateAllFrameworks(cisFindings, opts = {}) {
+  return Object.keys(FRAMEWORKS).map((id) => evaluateFramework(id, cisFindings, opts));
 }
