@@ -1,3 +1,4 @@
+import { recordEgress } from "../services/agent-context.js";
 /**
  * ServiceNow REST API client utility.
  *
@@ -59,6 +60,7 @@ export async function snowFetch(path, options = {}) {
     throw new Error("ServiceNow instance URL not configured. Set SERVICENOW_INSTANCE via the dashboard Settings panel or environment variable.");
   }
   const url = `${instance}/api${path}`;
+  recordEgress(instance);
   const timeoutMs = options.timeoutMs || 15000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

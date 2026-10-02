@@ -2026,7 +2026,13 @@ async function startSSE() {
       runComplianceScan().then(() => console.log("[compliance] Initial CIS scan complete")).catch(() => {});
     }, 15000);
     setInterval(() => runComplianceScan().catch(() => {}), 900000);
-    console.log("[startup] RBAC, SLOs, policies, notifications, audit loaded; capacity (hourly), compliance (15m)");
+    // Agent health runs on its own timer. Without it the canaries, the
+    // evidence-density check and the latency baselines are only evaluated
+    // while somebody has the governance panel open — and a detector nobody is
+    // watching is not a detector.
+    const { startAgentHealthSweep } = await import("./agents/health-sweep.js");
+    const sweep = startAgentHealthSweep();
+    console.log(`[startup] RBAC, SLOs, policies, notifications, audit loaded; capacity (hourly), compliance (15m), agent health (${Math.round(sweep.intervalMs / 60000)}m)`);
   } catch (err) {
     console.warn("[startup] RBAC/SLO/Capacity init:", err.message);
   }
@@ -2322,6 +2328,20 @@ async function startSSE() {
     // scattered across the file. State-changing calls only — see traceHubAgent.
     for (const [prefix, id, name, cat] of HUB_AGENT_ROUTES) {
       if (url.pathname.startsWith(prefix)) {
+        // The one place that can REFUSE an agent rather than report on it: a
+        // quarantined agent, or one past the token budget its own manifest
+        // declared with budgetAction "block". It fails OPEN on uncertainty —
+        // see gatekeeper.js for why a health gate that fails closed on missing
+        // telemetry is a worse outage than the fault it guards against.
+        const { mayRun, refusalResponse } = await import("./agents/gatekeeper.js");
+        const { getAgentById } = await import("./agents/registry.js");
+        const manifest = await getAgentById(id).catch(() => null);
+        const decision = await mayRun(id, manifest?.governance || null);
+        if (!decision.allowed) {
+          const r = refusalResponse(decision);
+          sendJson(res, r.status, r.body);
+          return;
+        }
         traceHubAgent(req, res, url, id, name, cat);
         // Every model call made while serving this request now lands on this
         // agent, with no call site needing to know. Set here rather than passed
@@ -2539,6 +2559,74 @@ async function startSSE() {
             note: body?.note || null,
           });
           return sendJson(res, out.ok ? 200 : 400, out);
+        }
+      }
+
+      // ── Is each agent still answering correctly? ──────────────────────
+      // The governance lens answers "what is this agent permitted to do".
+      // This answers "is it working", which is a different question and the
+      // one nothing could answer before: every other check watches whether an
+      // agent RAN, none watched whether it was RIGHT.
+      if (url.pathname === "/api/agents/health") {
+        const { lastSweep, sweepAgentHealth } = await import("./agents/health-sweep.js");
+        if (req.method === "GET") {
+          const last = lastSweep();
+          // Never run a sweep implicitly on a GET — a page load must not run
+          // every canary and raise incidents as a side effect. Say it has not
+          // run yet, and offer the button.
+          if (!last) return sendJson(res, 200, { ranYet: false, note: "No health sweep has run in this process yet. One runs automatically a minute after start and every few hours after that; POST to this path to run one now." });
+          return sendJson(res, 200, { ranYet: true, ...last });
+        }
+        if (req.method === "POST") {
+          const body = await readJsonBody(req).catch(() => ({}));
+          // act defaults to FALSE from the console: pressing a button must not
+          // quarantine agents and open incidents unless that was asked for.
+          const out = await sweepAgentHealth({ act: body?.act === true, days: Math.min(90, Math.max(1, Number(body?.days) || 7)) });
+          return sendJson(res, 200, { ranYet: true, ...out });
+        }
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/agents/health/canary") {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const { runCanaryFor } = await import("./agents/canary-store.js");
+        const out = await runCanaryFor(body?.agentId);
+        if (!out) return sendJson(res, 404, { error: `No canary is defined for "${body?.agentId}". Nothing checks whether its answers are right.` });
+        return sendJson(res, 200, out);
+      }
+
+      const quarMatch = url.pathname.match(/^\/api\/agents\/([\w.-]+)\/quarantine$/);
+      if (quarMatch) {
+        const agentId = quarMatch[1];
+        const actor = req.user?.name || null;
+        if (!actor) return sendJson(res, 401, { ok: false, error: "Sign in before taking an agent out of circulation." });
+        const { getAgentById } = await import("./agents/registry.js");
+        if (!(await getAgentById(agentId))) return sendJson(res, 404, { ok: false, error: `No agent "${agentId}" in the registry.` });
+        const { quarantineAgent, releaseAgent } = await import("./agents/quarantine.js");
+        const { invalidateGatekeeper } = await import("./agents/gatekeeper.js");
+
+        if (req.method === "POST") {
+          const body = await readJsonBody(req).catch(() => ({}));
+          try {
+            const rec = await quarantineAgent(agentId, {
+              reason: body?.reason || "manual",
+              detail: body?.detail || null,
+              evidence: body?.evidence || null,
+              source: "human", by: actor,
+            });
+            invalidateGatekeeper();
+            return sendJson(res, 200, { ok: true, quarantine: rec });
+          } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
+        }
+        // Release is always a human with a reason — see quarantine.js for why
+        // nothing automatic is allowed to do this.
+        if (req.method === "DELETE") {
+          const body = await readJsonBody(req).catch(() => ({}));
+          try {
+            const rec = await releaseAgent(agentId, { by: actor, note: body?.note });
+            if (!rec) return sendJson(res, 404, { ok: false, error: `${agentId} is not quarantined.` });
+            invalidateGatekeeper();
+            return sendJson(res, 200, { ok: true, quarantine: rec });
+          } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
         }
       }
 

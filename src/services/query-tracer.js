@@ -39,6 +39,23 @@ CREATE TABLE IF NOT EXISTS query_trace_spans (
 CREATE INDEX IF NOT EXISTS idx_qt_created ON query_traces(created_at);
 CREATE INDEX IF NOT EXISTS idx_qt_conv ON query_traces(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_qts_trace ON query_trace_spans(trace_id);
+-- Added after the fact, so IF NOT EXISTS on each: an existing deployment keeps
+-- its rows and starts recording these from the next span.
+--   egress        makes governance's undeclared-egress finding able to fire. It
+--                 has existed since governance.js was written and has never
+--                 had any data behind it.
+--   called_by     the other half of that reconciliation.
+--   facts_read /  what the operation actually read, against how confident it
+--   confidence    sounded — the one signal that catches an agent failing while
+--                 reporting success. See agents/health-signals.js.
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS egress TEXT[];
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS called_by VARCHAR(128);
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS delegation_depth INTEGER;
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS facts_read INTEGER;
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS facts_expected INTEGER;
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS confidence VARCHAR(16);
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS concluded BOOLEAN;
+ALTER TABLE query_trace_spans ADD COLUMN IF NOT EXISTS unread_reasons TEXT[];
 `;
 
 async function ensureSchema() {
@@ -100,13 +117,26 @@ export async function recordTrace({ traceId, conversationId, queryText, provider
 
     for (let i = 0; i < safeSpans.length; i++) {
       const s = safeSpans[i];
+      const ev = s.evidence || null;
       await dbQuery(
-        `INSERT INTO query_trace_spans (trace_id, span_order, agent_id, agent_name, agent_icon, agent_color, category, tools_called, status, duration_ms, resources_touched, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        `INSERT INTO query_trace_spans (trace_id, span_order, agent_id, agent_name, agent_icon, agent_color, category, tools_called, status, duration_ms, resources_touched, created_at,
+                                        egress, called_by, delegation_depth, facts_read, facts_expected, confidence, concluded, unread_reasons)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [traceId, i, s.agentId || null, s.agentName, s.icon || null, s.color || null,
          s.category || null, s.toolsCalled || [], s.status || "active",
          s.durationMs ?? null, s.resourcesTouched ? JSON.stringify(s.resourcesTouched) : null,
-         row.created_at]
+         row.created_at,
+         // Empty is written as NULL, never as an empty array: an empty array
+         // reads as "nothing was contacted, all clear" when it means "nothing
+         // was recorded". The governance lens must be able to tell them apart.
+         s.egress?.length ? s.egress : null,
+         s.calledBy || null,
+         Number.isFinite(s.delegationDepth) ? s.delegationDepth : null,
+         Number.isFinite(ev?.read) ? ev.read : null,
+         Number.isFinite(ev?.expected) ? ev.expected : null,
+         ev?.confidence || null,
+         typeof ev?.concluded === "boolean" ? ev.concluded : null,
+         ev?.unread?.length ? ev.unread.slice(0, 20) : null]
       );
     }
 
@@ -141,8 +171,24 @@ export async function traceAgentOperation({
   agentId, agentName, operation, toolsCalled = [],
   durationMs = null, status = "success", conversationId = null,
   cluster = null, resourcesTouched = null, category = null,
+  egress = null, evidence = null, calledBy = null,
 }) {
   if (!agentId || !operation) return null;
+  // Egress, the delegation chain and evidence are collected at the bottom of
+  // the call stack by agent-context and read here, so no call site has to pass
+  // them. An explicit argument still wins, for a caller that knows better.
+  let ctxEgress = null, ctxEvidence = null, ctxChain = [];
+  try {
+    const ctx = await import("./agent-context.js");
+    ctxEgress = ctx.currentEgress();
+    ctxEvidence = ctx.currentEvidence();
+    ctxChain = ctx.currentChain();
+  } catch { /* no context in scope — recorded as unrecorded, never as empty */ }
+  const finalEgress = egress?.length ? egress : (ctxEgress?.length ? ctxEgress : null);
+  const finalEvidence = evidence || ctxEvidence || null;
+  const depth = ctxChain.length || null;
+  const caller = calledBy || (ctxChain.length > 1 ? ctxChain[ctxChain.length - 2] : null);
+
   try {
     return await recordTrace({
       traceId: generateTraceId(),
@@ -159,6 +205,10 @@ export async function traceAgentOperation({
         status: status === "success" ? "success" : "error",
         durationMs,
         resourcesTouched,
+        egress: finalEgress,
+        evidence: finalEvidence,
+        calledBy: caller,
+        delegationDepth: depth,
       }],
     });
   } catch (err) {
@@ -539,4 +589,129 @@ async function purgeOldTraces(retentionDays = DEFAULT_RETENTION_DAYS) {
     console.log(`[query-tracer] purged ${deleted} in-memory traces older than ${retentionDays} days`);
   }
   return deleted;
+}
+
+/**
+ * The health signals the governance lens needs, which the analytics query does
+ * not carry: where each agent went, what it read, and how its recent latency
+ * compares with its own earlier baseline.
+ *
+ * Separate from getAgentAnalytics() on purpose. That query is load-bearing for
+ * the Agent Traces panel and several callers; bolting four more aggregates onto
+ * it to serve a different question is how a query becomes unmaintainable.
+ *
+ * @param {object} o
+ * @param {number} o.days          the recent window
+ * @param {number} o.baselineDays  the window BEFORE it, for latency comparison
+ * @returns Map agentId -> { egress, evidence[], recent{}, baseline{} }
+ */
+export async function getAgentHealthSignals({ days = 7, baselineDays = 30 } = {}) {
+  const now = Date.now();
+  const recentFrom = new Date(now - days * 86400000).toISOString();
+  const baselineFrom = new Date(now - (days + baselineDays) * 86400000).toISOString();
+  const out = new Map();
+  const ensure = (id) => {
+    if (!out.has(id)) {
+      out.set(id, {
+        agentId: id,
+        // null, not [] — nothing recorded is not the same as nothing contacted,
+        // and the governance lens reports the two differently.
+        egress: null, callers: null,
+        evidence: [],
+        recent: { samples: 0, avgMs: null },
+        baseline: { samples: 0, avgMs: null },
+        maxDelegationDepth: null,
+      });
+    }
+    return out.get(id);
+  };
+
+  if (await dbEnabled()) {
+    await ensureSchema();
+    try {
+      const egressRes = await dbQuery(
+        `SELECT agent_id, array_agg(DISTINCT host) AS hosts
+           FROM query_trace_spans s, LATERAL unnest(s.egress) AS host
+          WHERE s.created_at >= $1 AND s.agent_id IS NOT NULL
+          GROUP BY agent_id`, [recentFrom]);
+      for (const r of egressRes?.rows || []) ensure(r.agent_id).egress = r.hosts || [];
+
+      const callerRes = await dbQuery(
+        `SELECT agent_id, array_agg(DISTINCT called_by) AS callers, MAX(delegation_depth) AS max_depth
+           FROM query_trace_spans
+          WHERE created_at >= $1 AND agent_id IS NOT NULL AND called_by IS NOT NULL
+          GROUP BY agent_id`, [recentFrom]);
+      for (const r of callerRes?.rows || []) {
+        const e = ensure(r.agent_id);
+        e.callers = r.callers || [];
+        e.maxDelegationDepth = r.max_depth ?? null;
+      }
+
+      const evRes = await dbQuery(
+        `SELECT agent_id, facts_read, facts_expected, confidence, concluded, unread_reasons
+           FROM query_trace_spans
+          WHERE created_at >= $1 AND agent_id IS NOT NULL
+            AND (facts_read IS NOT NULL OR facts_expected IS NOT NULL OR confidence IS NOT NULL)
+          ORDER BY created_at DESC LIMIT 2000`, [recentFrom]);
+      for (const r of evRes?.rows || []) {
+        ensure(r.agent_id).evidence.push({
+          read: r.facts_read, expected: r.facts_expected,
+          confidence: r.confidence, concluded: r.concluded,
+          unread: r.unread_reasons || [],
+        });
+      }
+
+      const latRes = await dbQuery(
+        `SELECT agent_id,
+                COUNT(*) FILTER (WHERE created_at >= $1)::int AS recent_n,
+                ROUND(AVG(duration_ms) FILTER (WHERE created_at >= $1))::int AS recent_ms,
+                COUNT(*) FILTER (WHERE created_at < $1 AND created_at >= $2)::int AS base_n,
+                ROUND(AVG(duration_ms) FILTER (WHERE created_at < $1 AND created_at >= $2))::int AS base_ms
+           FROM query_trace_spans
+          WHERE created_at >= $2 AND agent_id IS NOT NULL AND duration_ms IS NOT NULL
+          GROUP BY agent_id`, [recentFrom, baselineFrom]);
+      for (const r of latRes?.rows || []) {
+        const e = ensure(r.agent_id);
+        e.recent = { samples: r.recent_n || 0, avgMs: r.recent_ms ?? null };
+        e.baseline = { samples: r.base_n || 0, avgMs: r.base_ms ?? null };
+      }
+      return out;
+    } catch (err) {
+      console.error("[query-tracer] health signals query failed:", err.message);
+      return out;
+    }
+  }
+
+  // In-memory ring. Same shape, bounded by RING_MAX rather than by the window.
+  const rt = Date.parse(recentFrom), bt = Date.parse(baselineFrom);
+  const acc = new Map();
+  for (const entry of _ring) {
+    const at = Date.parse(entry.created_at);
+    if (!Number.isFinite(at) || at < bt) continue;
+    for (const s of entry.spans || []) {
+      const id = s.agentId || s.agent_id;
+      if (!id) continue;
+      const e = ensure(id);
+      if (s.egress?.length) e.egress = [...new Set([...(e.egress || []), ...s.egress])];
+      if (s.calledBy) e.callers = [...new Set([...(e.callers || []), s.calledBy])];
+      if (Number.isFinite(s.delegationDepth)) {
+        e.maxDelegationDepth = Math.max(e.maxDelegationDepth ?? 0, s.delegationDepth);
+      }
+      if (at >= rt && s.evidence) e.evidence.push({ ...s.evidence });
+      const d = s.durationMs ?? s.duration_ms;
+      if (Number.isFinite(d)) {
+        const k = at >= rt ? "recent" : "baseline";
+        const a = acc.get(id) || { recent: [], baseline: [] };
+        a[k].push(d);
+        acc.set(id, a);
+      }
+    }
+  }
+  for (const [id, a] of acc) {
+    const e = ensure(id);
+    const mean = (xs) => (xs.length ? Math.round(xs.reduce((t, x) => t + x, 0) / xs.length) : null);
+    e.recent = { samples: a.recent.length, avgMs: mean(a.recent) };
+    e.baseline = { samples: a.baseline.length, avgMs: mean(a.baseline) };
+  }
+  return out;
 }

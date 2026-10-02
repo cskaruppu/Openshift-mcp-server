@@ -683,7 +683,162 @@ function LifecycleCell({ agent, onPromote, busy }) {
   );
 }
 
-function GovernanceLens({ data, onClaim, onPromote, busyId, scope, onScope }) {
+/**
+ * Is each agent still answering CORRECTLY?
+ *
+ * Everything else on this screen watches whether an agent ran. This watches
+ * whether it was right — which is a different question, and the one that was
+ * unanswerable before the canaries existed. An agent whose prompt drifted or
+ * whose dependency started returning empty keeps a perfect error rate and a
+ * grade A scorecard while handing the customer rubbish.
+ */
+const HEALTH_STATE = {
+  malfunctioning: { label: "Malfunctioning", fg: "#dc2626", bg: "rgba(220,38,38,0.12)", icon: "✖" },
+  degraded: { label: "Degraded", fg: "#c2410c", bg: "rgba(234,88,12,0.12)", icon: "▲" },
+  watch: { label: "Unchecked", fg: "#5a6373", bg: "rgba(90,99,115,0.12)", icon: "?" },
+  healthy: { label: "Answering correctly", fg: "#16a34a", bg: "rgba(22,163,74,0.12)", icon: "✓" },
+};
+
+function HealthPanel({ health, sweeping, onSweep, onQuarantine, onRelease }) {
+  const ran = health?.ranYet;
+  const rows = (health?.assessments || []).slice().sort((a, b) => {
+    const R = { malfunctioning: 0, degraded: 1, watch: 2, healthy: 3 };
+    return (R[a.state] ?? 9) - (R[b.state] ?? 9) || (a.agentId || "").localeCompare(b.agentId || "");
+  });
+  /* A row per agent is what the first version did, and it filled the panel with
+     fourteen identical "this agent has no canary" cards — which buried the one
+     agent that was actually failing. Nobody having written a canary is a
+     COVERAGE gap, counted in the stat row and named in the note at the bottom;
+     it is not a malfunction and does not deserve a card of its own.
+     A card appears only for an agent with something genuinely wrong. */
+  const onlyMissingCanary = (a) =>
+    a.findings?.length > 0 && a.findings.every((f) => f.code === "no-canary" || f.code === "canary-inconclusive");
+  const notable = rows.filter((a) =>
+    a.quarantine || a.recommendation?.recommend
+    || ((a.state === "malfunctioning" || a.state === "degraded" || a.state === "watch") && !onlyMissingCanary(a)));
+
+  return (
+    <div className="ar-health-panel">
+      <div className="ar-health-head">
+        <div>
+          <b>Is it working?</b>
+          <span className="ar-health-sub">
+            {" "}· golden-set canaries, evidence density, latency against each agent's own baseline, declared vs actual egress
+          </span>
+        </div>
+        <button className="ar-health-run" onClick={onSweep} disabled={sweeping}>
+          {sweeping ? "Checking…" : ran ? "↻ Re-check now" : "▶ Run the checks"}
+        </button>
+      </div>
+
+      {!ran ? (
+        <div className="ar-gov-note" style={{ margin: "8px 0 0" }}>
+          {health?.note || "No health check has run in this process yet."}
+        </div>
+      ) : (
+        <>
+          <div className="ar-stats-row" style={{ marginTop: 8 }}>
+            <div className={"ar-stat" + (health.malfunctioning ? " ar-stat-alert" : "")}>
+              <div className="ar-stat-num">{health.malfunctioning}</div>
+              <div className="ar-stat-label">Malfunctioning</div>
+              <div className="ar-gov-substat">answering wrongly</div>
+            </div>
+            <div className={"ar-stat" + (health.degraded ? " ar-stat-alert" : "")}>
+              <div className="ar-stat-num">{health.degraded}</div>
+              <div className="ar-stat-label">Degraded</div>
+              <div className="ar-gov-substat">worth a look</div>
+            </div>
+            <div className="ar-stat">
+              <div className="ar-stat-num">{health.canaryCoverage?.covered ?? "--"}/{health.canaryCoverage?.agents ?? "--"}</div>
+              <div className="ar-stat-label">Have a canary</div>
+              <div className="ar-gov-substat">the rest are unchecked</div>
+            </div>
+            <div className={"ar-stat" + (health.quarantined ? " ar-stat-alert" : "")}>
+              <div className="ar-stat-num">{health.quarantined}</div>
+              <div className="ar-stat-label">Quarantined</div>
+              <div className="ar-gov-substat">out of circulation</div>
+            </div>
+            <div className={"ar-stat" + (health.recommended ? " ar-stat-alert" : "")}>
+              <div className="ar-stat-num">{health.recommended}</div>
+              <div className="ar-stat-label">Recommended out</div>
+              <div className="ar-gov-substat">awaiting a human</div>
+            </div>
+          </div>
+
+          <div className={"ar-gov-headline" + (health.malfunctioning ? " crit" : "")}>{health.headline}</div>
+          {health.dryRun && (
+            <div className="ar-gov-note" style={{ margin: "6px 0 0" }}>
+              This run changed nothing — no agent was quarantined and no incident was raised. The scheduled
+              sweep does that; this shows what it would find.
+            </div>
+          )}
+
+          {notable.map((a) => {
+            const s = HEALTH_STATE[a.state] || HEALTH_STATE.watch;
+            return (
+              <div key={a.agentId} className={"ar-health-row" + (a.state === "malfunctioning" ? " crit" : "")}>
+                <div className="ar-health-row-head">
+                  <span className="ar-gov-pill" style={{ background: s.bg, color: s.fg }}>{s.icon} {s.label}</span>
+                  <b>{a.agentId}</b>
+                  {a.quarantine && <span className="ar-gov-pill crit">quarantined</span>}
+                  {a.canary && (
+                    <span className="ar-health-chip" title={a.canary.headline}>
+                      canary {a.canary.verdict}
+                    </span>
+                  )}
+                  {a.evidence?.instrumented && <span className="ar-health-chip">evidence {a.evidence.state}</span>}
+                  {a.latency?.severity && <span className="ar-health-chip warn">{a.latency.state.replace(/-/g, " ")}</span>}
+                  <span className="ar-health-spacer" />
+                  {/* Offered only where there is a fault. Taking an agent out of
+                      circulation because nobody wrote a canary for it would be
+                      an outage caused by a documentation gap. */}
+                  {a.quarantine
+                    ? <button className="ar-health-btn" onClick={() => onRelease(a)}>Release…</button>
+                    : (a.state === "malfunctioning" || a.state === "degraded" || a.recommendation?.recommend)
+                      ? <button className="ar-health-btn crit" onClick={() => onQuarantine(a)}>Take out of circulation…</button>
+                      : null}
+                </div>
+                {/* The headline is the worst finding's message, so printing both
+                    said the same sentence twice. */}
+                {a.headline !== a.findings?.[0]?.message && <div className="ar-health-line">{a.headline}</div>}
+
+                {a.findings?.map((f, i) => (
+                  <div key={i} className={"ar-health-finding " + (f.severity || "info")}>
+                    <b>{f.message}</b>
+                    {f.detail && <div className="ar-health-detail">{f.detail}</div>}
+                  </div>
+                ))}
+
+                {a.recommendation?.recommend && !a.quarantine && (
+                  <div className="ar-health-rec">
+                    Quarantine is recommended: {a.recommendation.detail} — not applied, because this agent's
+                    manifest does not set <code>governance.autoQuarantine</code>. A person decides.
+                  </div>
+                )}
+                {a.quarantine && (
+                  <div className="ar-health-rec">
+                    Out of circulation since {new Date(a.quarantine.quarantinedAt).toLocaleString()}
+                    {a.quarantine.quarantinedBy ? ` — ${a.quarantine.quarantinedBy}` : " — automatically"}. {a.quarantine.detail}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {health.canaryCoverage?.uncovered?.length > 0 && (
+            <div className="ar-gov-note">
+              <b>{health.canaryCoverage.uncovered.length} agent(s) have no canary</b> — {health.canaryCoverage.uncovered.join(", ")}.
+              Nothing checks whether their answers are still right; the error rate and the scorecard only see
+              whether they ran. Add a file to <code>src/agents/canaries/</code> named for the agent.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function GovernanceLens({ data, onClaim, onPromote, busyId, scope, onScope, agentHealth, sweeping, onSweep, onQuarantine, onRelease }) {
   if (!data) return <div className="ar-gov-loading">Reading agent posture…</div>;
 
   const agents = Array.isArray(data.agents) ? data.agents : [];
@@ -756,6 +911,12 @@ function GovernanceLens({ data, onClaim, onPromote, busyId, scope, onScope }) {
           </div>
         </div>
       )}
+
+      {/* Whether the agents are WORKING, above whether they are governed. An
+          agent answering wrongly matters more than an agent with no declared
+          owner, and the order on the screen should say so. */}
+      <HealthPanel health={agentHealth} sweeping={sweeping} onSweep={onSweep}
+        onQuarantine={onQuarantine} onRelease={onRelease} />
 
       {/* The worst true thing, in one sentence, before any table. */}
       {fleet.headline && (
@@ -896,6 +1057,69 @@ export function AgentRegistryModal({ open, onClose }) {
     staleTime: 60_000,
     enabled: open && lens === "governance",
   });
+
+  /* "Is it working" is a different question from "what may it do", and a GET
+     only READS the last sweep — it never runs one. A page load that ran every
+     canary and opened incidents as a side effect would be a page nobody dares
+     refresh. */
+  const { data: healthData, refetch: refetchHealth } = useQuery({
+    queryKey: ["/api/agents/health"],
+    queryFn: ({ signal }) => apiGet("/api/agents/health", { signal }).catch(() => ({})),
+    staleTime: 60_000,
+    enabled: open && lens === "governance",
+  });
+  const [sweeping, setSweeping] = useState(false);
+
+  /* Running the checks on demand. `act: false` — pressing a button in a console
+     must not quarantine agents or open incidents; the scheduled sweep does
+     that, and this shows what it would find. */
+  const runHealthSweep = async () => {
+    setSweeping(true);
+    try {
+      const r = await fetch("/api/agents/health", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ act: false, days: 7 }),
+      }).then((x) => x.json());
+      if (r.error) throw new Error(r.error);
+      await refetchHealth();
+    } catch (e) { window.alert("Health check failed: " + e.message); }
+    finally { setSweeping(false); }
+  };
+
+  /* Taking an agent out of circulation stops it serving — 503 on every one of
+     its routes. It asks, it records who, and it says plainly that a human has
+     to let it back. */
+  const quarantineAgent = async (a) => {
+    const detail = window.prompt(
+      `Take ${a.agentId} out of circulation?\n\n` +
+      `Every route belonging to this agent will answer 503 until a human releases it.\n\n` +
+      `What is the reason? (recorded with your name)`,
+      a.recommendation?.detail || a.headline || "");
+    if (detail === null) return;
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(a.agentId)}/quarantine`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: a.recommendation?.reason || "manual", detail, evidence: a.recommendation?.evidence || null }),
+      }).then((x) => x.json());
+      if (!r.ok) throw new Error(r.error || "Could not quarantine.");
+      await refetchHealth();
+    } catch (e) { window.alert(e.message); }
+  };
+
+  const releaseAgent = async (a) => {
+    const note = window.prompt(
+      `Let ${a.agentId} back into circulation?\n\n` +
+      `Why is it safe now? An un-explained release is how the same fault comes back, so this is required.`, "");
+    if (!note) return;
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(a.agentId)}/quarantine`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      }).then((x) => x.json());
+      if (!r.ok) throw new Error(r.error || "Could not release.");
+      await refetchHealth();
+    } catch (e) { window.alert(e.message); }
+  };
 
   /* Claiming is accepting accountability, so it asks first and says exactly
      what it is recording. `owner` null means "me" — the server fills in the
@@ -1044,7 +1268,9 @@ export function AgentRegistryModal({ open, onClose }) {
           }}>
           {lens === "governance" ? (
             <GovernanceLens data={govData} onClaim={claimAgent} onPromote={promoteAgent}
-              busyId={claiming} scope={scope} onScope={setScope} />
+              busyId={claiming} scope={scope} onScope={setScope}
+              agentHealth={healthData} sweeping={sweeping} onSweep={runHealthSweep}
+              onQuarantine={quarantineAgent} onRelease={releaseAgent} />
           ) : (<>
           {/* Stats Hero */}
           <div className="ar-stats-row">

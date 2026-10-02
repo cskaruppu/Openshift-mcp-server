@@ -25,6 +25,7 @@
  */
 import { Agent, fetch as undiciFetch } from "undici";
 import { caForConnection, clusterTrustBundle } from "./trust-store.js";
+import { recordEgress } from "../services/agent-context.js";
 
 /**
  * vCenter appliances are routinely fronted by their own certificate authority,
@@ -196,6 +197,10 @@ async function sessionToken(cfg) {
 export async function vcFetch(path, { cfg = null, method = "GET", body = null, timeoutMs = 30_000 } = {}) {
   cfg = cfg || vcenterConfig();
   if (!cfg.configured) throw new Error(cfg.reason);
+  // Every host this request leaves the cluster for, recorded against whichever
+  // agent is in scope, so governance can reconcile it against what the agent's
+  // manifest declared. No-op outside an agent context.
+  recordEgress(cfg.url);
   const token = await sessionToken(cfg);
   const resp = await undiciFetch(`${cfg.url}${path}`, {
     method,

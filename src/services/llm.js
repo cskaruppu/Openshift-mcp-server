@@ -13,6 +13,7 @@
  */
 
 import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
+import { recordEgress } from "./agent-context.js";
 import { redactIfEnabled } from "./redaction.js";
 
 let DEFAULT_PROVIDER = process.env.LLM_PROVIDER || "none";
@@ -103,6 +104,10 @@ const DNS_RETRY_CODES = new Set(["EAI_AGAIN", "ETIMEDOUT", "ECONNRESET", "ENOTFO
 const MAX_RETRIES = 2;
 
 async function llmFetch(url, opts, retries = MAX_RETRIES) {
+  // The model endpoint is egress like any other, and the one every agent uses.
+  // An agent whose manifest declares no model host and which is calling one is
+  // worth knowing about. No-op outside an agent context.
+  recordEgress(url);
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await undiciFetch(url, { ...opts, dispatcher: llmDispatcher });

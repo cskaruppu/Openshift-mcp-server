@@ -84,6 +84,12 @@ Everything meets here:
 | `manifest-remediate.js` | Patches what the findings imply, returns a unified diff and a per-fix risk (`safe` / `verify`), and names what it cannot fix. Applies nothing anywhere |
 | `admission-parity.js` | What the TARGET namespace will actually admit — Pod Security labels, SCC UID range, ResourceQuota headroom, LimitRange maxima. An unread namespace is reported as unread |
 | `gate-record.js` | The evidence record: canonical manifest digest, profile + version, per-control result, HMAC signature when `GATE_SIGNING_KEY` is set. `gateCoversManifests()` catches a YAML edit made after the gate ran |
+| `agents/health-signals.js` | The detectors that see an agent failing while REPORTING SUCCESS: `evidenceDensity` (did it read anything, against how confident it sounded), `latencyVerdict` (slower than itself, not than a fixed number), `delegationVerdict`, `budgetVerdict`. All pure |
+| `agents/canary.js` + `agents/canaries/*.js` | Golden-set canaries — the only check that can see a WRONG answer. Fixed inputs, invariant expectations, `pure`/`read-only`/`llm` kinds, and a skip is never a pass |
+| `agents/canary-store.js` | Loads canary definitions, runs them, keeps history, answers "how long has this been failing" and "which agents have no canary at all" |
+| `agents/quarantine.js` | Taking an agent out of circulation. Recommendation is automatic; removal is a human's (unless the manifest sets `autoQuarantine`); release is ALWAYS a human, with a reason |
+| `agents/gatekeeper.js` | The only thing that can REFUSE an agent: quarantined, or past the token budget its manifest declared with `budgetAction: block`. Fails OPEN on uncertainty |
+| `agents/health-sweep.js` | Runs every detector on a timer, raises and resolves incidents (deduplicated per agent per fault), applies opt-in auto-quarantine |
 | `agent-bridge.js`, `mcp-hub.js`, `spoke-proxy.js` | Hub↔spoke federation: SSE bridge, connected-agent registry, request proxying |
 | `auth.js`, `guardrails.js`, `audit-log.js`, `approval-chains.js` | Login/session, action safety rails, audit trail, approvals |
 | `action-workflow.js`, `fix-executor.js`, `pod-doctor.js`, `rca-engine.js`* | Diagnose→propose→dry-run→apply remediation pipeline (*rca in tools/) |
@@ -204,6 +210,10 @@ Fix             POST /api/topology/remediate                  (dry-run shows rea
 | What the generator hardens by default | `manifest-generator.js` → `SECURITY_DEFAULTS` + `applySecurityContext` |
 | What remediation will and will not auto-fix | `manifest-remediate.js` → `remediateManifests` |
 | Signing the evidence record | `gate-record.js` + the `GATE_SIGNING_KEY` environment variable |
+| What an agent's canary asserts | `src/agents/canaries/<agent-id>.js` |
+| How often agent health is swept | `AGENT_HEALTH_SWEEP_MS` (default 4h) |
+| Whether an agent may be quarantined automatically | `governance.autoQuarantine` in its manifest |
+| What an agent is permitted to contact | `governance.egress` — now reconciled against real traffic |
 | CIS checks (live cluster) | `compliance-scanner.js` |
 | Incident correlation behavior | `chat-api.js` → `handleIncidentCorrelationAPI` prompt |
 | Topology node kinds / health rules | `namespace-topology.js` |

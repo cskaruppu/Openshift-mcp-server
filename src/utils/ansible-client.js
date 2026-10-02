@@ -2,11 +2,14 @@
  * Ansible Automation Platform (AAP / Controller) REST API client.
  */
 
+import { recordEgress } from "../services/agent-context.js";
+
 const AAP_URL = process.env.ANSIBLE_CONTROLLER_URL || "";
 const AAP_TOKEN = process.env.ANSIBLE_CONTROLLER_TOKEN || "";
 
 export async function aapFetch(path, options = {}) {
   const url = `${AAP_URL}/api/v2${path}`;
+  recordEgress(AAP_URL);
   const resp = await fetch(url, {
     ...options,
     headers: {
