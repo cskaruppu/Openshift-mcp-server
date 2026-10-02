@@ -798,7 +798,13 @@ export function AuditView() {
                             <div className="aud-fd-block" style={{ borderLeft: "3px solid #16a34a", paddingLeft: 10 }}>
                               <span className="aud-fd-lbl">✓ Fix Applied</span>
                               <p>Applied to <strong>{rem.data.appliedCount}</strong> namespace(s).{rem.data.failed?.length ? ` ${rem.data.failed.length} failed.` : ""}</p>
-                              {rem.data.rescan && <p>Re-scan: score <strong>{rem.data.rescan.score}</strong> (grade {rem.data.rescan.grade}).</p>}
+                              {rem.data.rescan && (
+                                <p>
+                                  {rem.data.rescan.score == null
+                                    ? "Re-scan could not read the cluster, so the fix is unverified — not confirmed."
+                                    : <>Re-scan: score <strong>{rem.data.rescan.score}</strong> (grade {rem.data.rescan.grade}).</>}
+                                </p>
+                              )}
                               <p style={{ fontSize: "0.85em", color: "var(--muted)" }}>{rem.data.note}</p>
                             </div>
                           )}
@@ -830,8 +836,15 @@ export function AuditView() {
                   <div className="aud-history-list">
                     {historyList.slice(0, 10).map((h, i) => (
                       <div key={i} className="aud-history-item">
-                        <span className="aud-history-score" style={{ color: gradeColor(h.score >= 90 ? "A" : h.score >= 80 ? "B" : h.score >= 70 ? "C" : "D") }}>
-                          {h.score}
+                        {/* A scan that could not read the cluster records a null
+                            score. Rendering it bare showed an empty box tinted
+                            like a D — a failing grade for a scan that never
+                            graded anything. An audit history wants the gap
+                            visible, but as a gap. */}
+                        <span className="aud-history-score"
+                          style={{ color: h.score == null ? "var(--text2,#8b93a7)" : gradeColor(h.score >= 90 ? "A" : h.score >= 80 ? "B" : h.score >= 70 ? "C" : "D") }}
+                          title={h.score == null ? "This scan could not read the cluster — no score" : undefined}>
+                          {h.score == null ? "—" : h.score}
                         </span>
                         <span className="aud-history-time"><TimeCell ts={h.scanTime} /></span>
                         <span className="aud-history-counts">{h.totals?.fail || 0} fail · {h.totals?.pass || 0} pass</span>
