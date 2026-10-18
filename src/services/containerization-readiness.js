@@ -209,6 +209,51 @@ const APP_SERVERS = ["tomcat", "jboss", "weblogic", "websphere"];
 /** What runs inside one of those, and must not be counted again beside it. */
 const FRAMEWORKS = ["springboot", "java"];
 
+// ---------------------------------------------------------------------------
+// Mounts
+// ---------------------------------------------------------------------------
+/**
+ * Mounts that are the operating system rather than the application's data.
+ *
+ * A container image already contains all of these, so their size says nothing
+ * about whether the workload can move. What matters is the mount somebody
+ * attached on purpose — /data, /var/lib/pgsql, /u01, an NFS share — because
+ * that is the state a container starts without.
+ */
+const OS_MOUNTS = /^(?:\/|\/boot(?:\/efi)?|\/usr|\/var|\/var\/log|\/var\/tmp|\/tmp|\/home|\/opt|\/srv|\/dev\/shm|\/run|\/snap(?:\/.*)?)$/i;
+
+/** Windows reports drive letters; C:\ is the OS, another letter is attached. */
+const WINDOWS_SYSTEM_DRIVE = /^C:\\?$/i;
+
+/** Below this a mount is a mount point, not a data volume worth a finding. */
+export const DATA_MOUNT_MIN_BYTES = 1024 ** 3;          // 1 GiB
+
+export const gib = (b) => (b == null ? "unknown" : `${(b / 1024 ** 3).toFixed(1)} GiB`);
+
+export function describeMount(d) {
+  const used = d.usedBytes == null ? "" : ` (${gib(d.usedBytes)} used)`;
+  return `${d.path} ${gib(d.capacityBytes)}${used}`;
+}
+
+/**
+ * The mounts that represent attached data, largest first.
+ *
+ * Takes the mount table as vCenter reported it and removes the operating
+ * system. Returns [] for a machine with nothing attached — which, unlike a
+ * machine whose table was never read, is a real finding of "none".
+ */
+export function dataMounts(disks = []) {
+  if (!Array.isArray(disks)) return [];
+  return disks
+    .filter((d) => {
+      const p = String(d?.path || "").replace(/\\$/, "") || "";
+      if (!p) return false;
+      if (OS_MOUNTS.test(p) || WINDOWS_SYSTEM_DRIVE.test(d.path)) return false;
+      return (d.capacityBytes ?? 0) >= DATA_MOUNT_MIN_BYTES;
+    })
+    .sort((a, b) => (b.capacityBytes ?? 0) - (a.capacityBytes ?? 0));
+}
+
 /** Datastores running on this machine. */
 export function detectDatastores(processes = []) {
   return DATASTORES
@@ -350,6 +395,23 @@ export function scoreContainerisation({ vm = {}, guest = null } = {}) {
     evidence: datastores.map((d) => d.evidence).filter(Boolean).join(" | ") || null,
   });
 
+  // ── What is mounted, now that guest.disk is read ───────────────────────
+  // Deliberately checkIf rather than check: a machine whose mount table was
+  // not reported has NOT been shown to be free of attached storage, and the
+  // product's standing rule is that a check with no data is not a pass.
+  checkIf(guest?.disks || null, "mounts", "The guest mount table", (disks) => {
+    const data = dataMounts(disks);
+    if (!data.length) return null;
+    const biggest = data[0];
+    return {
+      id: "data-mounts", blocks: false, severity: "warning", required: true,
+      title: `${data.length} mount${data.length === 1 ? "" : "s"} outside the operating system carry data`,
+      detail: `${data.map(describeMount).join(", ")}. A container starts with an empty filesystem: none of this comes across, and whatever the application reads or writes there needs a PersistentVolumeClaim and a copy of its own.`,
+      action: "Decide per mount: a database moves to an operator or a managed service as its own project; data that matters becomes a PVC with a cutover window; logs, caches and temp are dropped.",
+      evidence: `${biggest.path} — ${gib(biggest.capacityBytes)} capacity, ${gib(biggest.usedBytes)} used`,
+    };
+  });
+
   check(() => workloads.length > 1 && {
     id: "multi-app-host", blocks: false, severity: "warning", required: true,
     title: `${workloads.length} application runtimes share this machine`,
@@ -404,14 +466,21 @@ export function scoreContainerisation({ vm = {}, guest = null } = {}) {
   base.coverage = { ran, total };
   base.runtimes = runtimes;
   base.datastores = datastores;
+  // Carried onto the result so the plan can use what was read rather than
+  // re-deriving it: the mount table decides whether a PVC is proposed, and the
+  // listening ports decide whether the container port is a finding or a guess.
+  base.disks = guest?.disks ?? null;
+  base.ports = guest?.ports ?? null;
+  base.portReason = guest?.portReason ?? null;
   base.blockers = blockers;
   base.concerns = concerns;
   base.unchecked = [...(guest?.unread || []), ...skipped];
 
   // ── The verdict ────────────────────────────────────────────────────────
-  // Confidence is capped at medium by construction: ports, unit files and
-  // config were not read, and no amount of process evidence substitutes for
-  // them. Nothing in this module returns "high".
+  // Still capped at medium, even where the ports were read. Listening sockets
+  // retire one assumption; unit files, config and the application's own files
+  // remain unread, and those are what decide whether the thing actually starts
+  // in a container. Nothing in this module returns "high".
   const confidence = "medium";
 
   if (blockers.length) {

@@ -17,7 +17,9 @@
  * reading, so no vCenter and no credentials are needed to check it.
  */
 
-import { scoreContainerisation, VERDICTS, distinctWorkloads, detectRuntimes } from "../../services/containerization-readiness.js";
+import { scoreContainerisation, VERDICTS, distinctWorkloads, detectRuntimes, dataMounts } from "../../services/containerization-readiness.js";
+import { listeningPorts, reconcilePort } from "../../services/guest-ports.js";
+import { redact, readable } from "../../services/guest-files.js";
 
 // `cmdLine` is the field vSphere's ListProcessesInGuest returns, and the one
 // the detector matches on. Spelling it any other way makes every command-line
@@ -128,6 +130,134 @@ export default [
     expect: [
       { path: "verdict", assert: "equals", value: VERDICTS.POWERED_OFF },
       { path: "confidence", assert: "equals", value: "none" },
+    ],
+  },
+
+  {
+    id: "an-unread-mount-table-is-not-an-empty-one",
+    kind: "pure",
+    title: "A machine whose mounts were not reported is not reported as carrying no data",
+    why: "guest.disk is the newest input to the decision and it arrives from vCenter, so it is absent far more often than it is wrong — an older appliance, a guest with no Tools, a property read that partially failed. If a missing mount table ever reads as 'no attached storage', every machine vCenter stayed quiet about becomes a clean container candidate, which is the same empty-list mistake this product has already had to fix six times elsewhere.",
+    run: async () => {
+      const tomcat = [proc("java", "/usr/lib/jvm/java-17/bin/java -Dcatalina.base=/opt/tomcat org.apache.catalina.startup.Bootstrap start", "tomcat")];
+      const unread = scoreContainerisation({
+        vm: { id: "vm-1", name: "app01" },
+        guest: { powerState: "poweredOn", processes: tomcat, disks: null, os: { fullName: "RHEL 9" } },
+      });
+      const reallyNone = scoreContainerisation({
+        vm: { id: "vm-2", name: "app02" },
+        guest: { powerState: "poweredOn", processes: tomcat, disks: [{ path: "/", capacityBytes: 5e10, freeBytes: 4e10 }], os: { fullName: "RHEL 9" } },
+      });
+      return {
+        unreadRecordsTheGap: unread.unchecked.some((u) => u.fact === "mounts"),
+        unreadRaisesNoFinding: ![...unread.blockers, ...unread.concerns].some((f) => f.id === "data-mounts"),
+        readRecordsNoGap: !reallyNone.unchecked.some((u) => u.fact === "mounts"),
+        __evidence: { read: 0, expected: 1, confidence: "high", concluded: true, unread: ["the guest mount table"] },
+      };
+    },
+    expect: [
+      { path: "unreadRecordsTheGap", assert: "equals", value: true,
+        note: "An unreported mount table must appear in `unchecked`, so the report can say which checks did not run." },
+      { path: "unreadRaisesNoFinding", assert: "equals", value: true,
+        note: "It must also not invent a finding it had no data for." },
+      { path: "readRecordsNoGap", assert: "equals", value: true,
+        note: "A table that WAS read and holds only OS mounts is a real answer, not a gap." },
+    ],
+  },
+
+  {
+    id: "a-data-mount-is-found-and-the-os-is-not",
+    kind: "pure",
+    title: "A 400GB /var/lib/pgsql is a finding; / and /boot are not",
+    why: "The whole value of reading the mount table is separating storage somebody attached on purpose from the operating system every machine has. If the OS filter ever inverts or widens, either every machine raises a data-mount finding — which trains the operator to ignore it — or none does, and a database volume ships as a container with an empty filesystem.",
+    run: async () => {
+      const disks = [
+        { path: "/", capacityBytes: 53687091200, freeBytes: 40000000000 },
+        { path: "/boot", capacityBytes: 1073741824, freeBytes: 900000000 },
+        { path: "/var/lib/pgsql", capacityBytes: 429496729600, freeBytes: 171798691840 },
+      ];
+      const data = dataMounts(disks);
+      const scored = scoreContainerisation({
+        vm: { id: "vm-1", name: "db01" },
+        guest: { powerState: "poweredOn", os: { fullName: "RHEL 9" }, disks,
+          processes: [proc("java", "/usr/bin/java -Dcatalina.home=/opt/tomcat org.apache.catalina.startup.Bootstrap", "tomcat")] },
+      });
+      const finding = [...scored.blockers, ...scored.concerns].find((f) => f.id === "data-mounts");
+      return {
+        paths: data.map((d) => d.path),
+        findingRaised: !!finding,
+        namesThePath: !!finding && /\/var\/lib\/pgsql/.test(finding.detail),
+      };
+    },
+    expect: [
+      { path: "paths", assert: "equals", value: ["/var/lib/pgsql"],
+        note: "Only the attached mount. / and /boot are in every container image already." },
+      { path: "findingRaised", assert: "equals", value: true },
+      { path: "namesThePath", assert: "equals", value: true,
+        note: "A count is not actionable; the operator needs the path to decide PVC, operator or drop." },
+    ],
+  },
+
+  {
+    id: "only-listening-sockets-count-as-ports",
+    kind: "pure",
+    title: "/proc/net/tcp yields listening ports, in hex, excluding established connections",
+    why: "This retires the agent's most expensive assumption — the container port — so it has to be exactly right. Two ways to be quietly wrong: reading the hex port as decimal gives a plausible number that is not the port, and counting non-LISTEN sockets turns every outbound connection into a port the proposal would expose. Both produce a Containerfile that builds, starts, passes a TCP probe and serves nothing.",
+    run: async () => {
+      const table = [
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+        "   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 24680 1",
+        "   1: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 13579 1",
+        "   2: 0100007F:8AE2 0100007F:1F90 01 00000000:00000000 00:00000000 00000000  1001        0 31337 1",
+      ].join("\n");
+      const read = listeningPorts({ tcp: table });
+      return {
+        ports: read.ports.map((p) => p.port),
+        confirmed: reconcilePort(8080, read).status,
+        unreadKeepsConvention: reconcilePort(8080, null),
+        emptyIsNotRead: listeningPorts({}).read,
+      };
+    },
+    expect: [
+      { path: "ports", assert: "equals", value: [22, 8080],
+        note: "1F90 is 8080 read as hex. An established socket on 8AE2 is not a listening port." },
+      { path: "confirmed", assert: "equals", value: "confirmed" },
+      { path: "unreadKeepsConvention.status", assert: "equals", value: "unread",
+        note: "No read means the convention stands and is still labelled an assumption." },
+      { path: "emptyIsNotRead", assert: "equals", value: false,
+        note: "Reading nothing is not reading that nothing listens." },
+    ],
+  },
+
+  {
+    id: "guest-reads-stay-on-the-allow-list-and-redact",
+    kind: "pure",
+    title: "Only named paths are readable, and secrets never leave the guest",
+    why: "This agent now reads files out of machines a customer owns, using a credential they supplied for assessment. Two regressions would turn that from a feature into an incident: a path parameter that reaches the guest unchecked, which is an exfiltration primitive with a product banner on it, and a config read that carries a production password into a report, a model prompt and a log aggregator in one step. Neither throws, and neither is visible in a demo.",
+    run: async () => {
+      const leaky = [
+        "spring.datasource.password=hunter2",
+        "<password>hunter2</password>",
+        "jdbc:postgresql://app:hunter2@db.internal:5432/orders",
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB\n-----END RSA PRIVATE KEY-----",
+      ].join("\n");
+      const cleaned = redact(leaky);
+      return {
+        allowListed: !!readable("net-tcp"),
+        arbitraryPathRefused: readable("/etc/shadow") === null,
+        traversalRefused: readable("../../etc/passwd") === null,
+        passwordGone: !cleaned.includes("hunter2"),
+        keyGone: !cleaned.includes("MIIEowIB"),
+      };
+    },
+    expect: [
+      { path: "allowListed", assert: "equals", value: true },
+      { path: "arbitraryPathRefused", assert: "equals", value: true,
+        note: "A caller must never be able to name the path. The readable set is fixed in code." },
+      { path: "traversalRefused", assert: "equals", value: true },
+      { path: "passwordGone", assert: "equals", value: true,
+        note: "Redaction runs on the way in, so nothing downstream can leak what this module chose not to hold." },
+      { path: "keyGone", assert: "equals", value: true },
     ],
   },
 ];

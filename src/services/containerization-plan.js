@@ -28,7 +28,8 @@
 
 import { generateManifests } from "./manifest-generator.js";
 import { containerfileFor, CONVENTIONAL_PORT } from "./containerfile-templates.js";
-import { distinctWorkloads, VERDICTS } from "./containerization-readiness.js";
+import { reconcilePort } from "./guest-ports.js";
+import { distinctWorkloads, VERDICTS, dataMounts, describeMount } from "./containerization-readiness.js";
 
 /** Verdicts a build may be proposed for. Everything else is refused. */
 const BUILDABLE = new Set([VERDICTS.READY, VERDICTS.WITH_WORK]);
@@ -67,6 +68,37 @@ const dns = (s) => String(s || "app").toLowerCase().replace(/[^a-z0-9-]/g, "-").
  * @param {object} opts     { namespace, appName }
  * @returns {{ok:boolean, refusal?:object, machine, namespace, tiers, containerfiles, manifests, assumptions, nextSteps}}
  */
+/**
+ * What the proposal can say about persistent data.
+ *
+ * Three different sentences, because they are three different situations and
+ * collapsing them is how "no volume claimed" came to mean both "there is no
+ * state" and "nobody looked". The mount table now separates them.
+ */
+export function stateAssumption(result) {
+  const disks = result?.disks;
+  if (!Array.isArray(disks)) {
+    return {
+      id: "state", field: "persistent data", value: "not read",
+      why: "The mount table was not reported for this machine, so whether it carries attached data is unknown. An unread filesystem is not an empty one.",
+      confirm: "Confirm the application writes nothing to local disk that matters. If it does, that data needs a volume and a migration of its own.",
+    };
+  }
+  const data = dataMounts(disks);
+  if (!data.length) {
+    return {
+      id: "state", field: "persistent data", value: "no data mounts",
+      why: "The mount table was read and carries nothing outside the operating system filesystems, so no PersistentVolumeClaim is proposed.",
+      confirm: "An application can still write to the root disk, which a container loses on restart. Confirm there is nothing under /opt or /var the application depends on keeping.",
+    };
+  }
+  return {
+    id: "state", field: "persistent data", value: `${data.length} data mount${data.length === 1 ? "" : "s"}`,
+    why: `${data.map(describeMount).join(", ")}. A container starts with an empty filesystem, so none of this comes across and no PersistentVolumeClaim is proposed for data nobody has classified yet.`,
+    confirm: "Decide per mount before building: a database is its own project, data that matters becomes a PVC with a copy and a cutover, logs and caches are dropped.",
+  };
+}
+
 export function proposeContainerBuild(result, opts = {}) {
   const refusal = planRefusal(result);
   if (refusal) return { ok: false, refusal, machine: result?.name || null };
@@ -82,11 +114,27 @@ export function proposeContainerBuild(result, opts = {}) {
   const chosen = workloads.length ? workloads : (result.runtimes || []).slice(0, 1);
 
   const containerfiles = [], tiers = [], assumptions = [], refusedTiers = [];
+  // Facts that used to be assumptions. Kept apart from `assumptions` so a
+  // reader can see at a glance how much of the proposal was read rather than
+  // guessed — and so the console can stop asking someone to confirm a port
+  // the agent watched the machine listen on.
+  const findings = [];
   let firstPort = null;
 
   for (const [i, rt] of chosen.entries()) {
     const name = dns(chosen.length > 1 ? `${appName}-${rt.id}` : appName);
-    const cf = containerfileFor(rt, { machine, vmId: result.vmId });
+    // What the machine actually listens on, where that was read. With one
+    // application runtime a single listening port decides the answer; with
+    // two it narrows and still says so, because attributing a socket to a
+    // process needs a read this agent does not do.
+    const portRead = reconcilePort(
+      CONVENTIONAL_PORT[rt.id] ?? 8080,
+      result.ports ? { read: true, ports: result.ports } : null,
+    );
+    const cf = containerfileFor(rt, {
+      machine, vmId: result.vmId,
+      port: chosen.length === 1 && portRead.status === "corrected" ? portRead.port : undefined,
+    });
     if (!cf.ok) { refusedTiers.push({ runtime: rt.label, reason: cf.reason }); continue; }
 
     containerfiles.push({ tier: name, runtime: rt.id, runtimeLabel: rt.label, base: cf.base, port: cf.port, containerfile: cf.containerfile });
@@ -117,11 +165,23 @@ export function proposeContainerBuild(result, opts = {}) {
       security: { runAsNonRoot: true, readOnlyRootFs: true, dropCapabilities: true },
     });
 
-    assumptions.push({
-      id: `port-${name}`, field: "containerPort", value: cf.port,
-      why: `${cf.port} is the conventional port for ${rt.label}. Listening ports were never read — that needs a command run inside the guest, which this agent does not do.`,
-      confirm: `Check what ${machine} actually listens on before building. A wrong port builds, starts, passes its probe if the probe is wrong too, and serves nothing.`,
-    });
+    // A port that was read is a finding, not an assumption, and only the
+    // cases that remain uncertain stay on the assumptions list.
+    if (portRead.status === "confirmed" || (portRead.status === "corrected" && chosen.length === 1)) {
+      findings.push({
+        id: `port-${name}`, field: "containerPort", value: cf.port,
+        read: `/proc/net/tcp on ${machine}`,
+        detail: portRead.note,
+      });
+    } else {
+      assumptions.push({
+        id: `port-${name}`, field: "containerPort", value: cf.port,
+        why: portRead.status === "unread"
+          ? `${cf.port} is the conventional port for ${rt.label}. Listening ports were not read for this machine — that needs a guest credential, and on Windows there is no equivalent.`
+          : portRead.note,
+        confirm: `Check what ${machine} actually listens on before building. A wrong port builds, starts, passes its probe if the probe is wrong too, and serves nothing.`,
+      });
+    }
   }
 
   if (!containerfiles.length) {
@@ -149,11 +209,7 @@ export function proposeContainerBuild(result, opts = {}) {
       why: "The VM's size is not the container's requirement — a 4 vCPU VM running one Tomcat does not need 4 cores. Setting requests from the VM shape is the single most expensive mistake in a migration like this.",
       confirm: "Measure the workload and set requests from what it uses. The right-sizing panel does this from vCenter history.",
     },
-    {
-      id: "state", field: "persistent data", value: "no volume claimed",
-      why: "No PersistentVolumeClaim is proposed because no local state was identified — and local state cannot be identified without reading the filesystem.",
-      confirm: "Confirm the application writes nothing to local disk that matters. If it does, that data needs a volume and a migration of its own.",
-    },
+    stateAssumption(result),
     {
       id: "config", field: "configuration and secrets", value: "none extracted",
       why: "Configuration files, environment and credentials on this machine were not read.",
@@ -185,7 +241,7 @@ export function proposeContainerBuild(result, opts = {}) {
   return {
     ok: true, machine, vmId: result.vmId || null, namespace, appName,
     verdict: result.verdict, tiers, containerfiles, manifests, summary, ais,
-    assumptions, refusedTiers,
+    assumptions, findings, refusedTiers,
     // What has to happen, in the order it bites. The concerns the assessment
     // raised come FIRST — a multi-app host that is not split produces two
     // images that both still share a filesystem nobody looked at.

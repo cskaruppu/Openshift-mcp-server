@@ -356,7 +356,26 @@ describe("build proposal", () => {
     assert.equal(p.tiers[0].port, CONVENTIONAL_PORT.tomcat);
     const a = p.assumptions.find((x) => x.id.startsWith("port-"));
     assert.ok(a, "the port must be listed as assumed");
-    assert.match(a.why, /never read/i);
+    assert.match(a.why, /not read/i);
+    assert.ok(!p.findings.some((f) => f.field === "containerPort"),
+      "an unread port must not also appear as a finding");
+  });
+
+  // The other half of the same rule, now that /proc/net/tcp can be read: a
+  // port that WAS read has to stop being presented as a guess. Leaving it in
+  // `assumptions` would keep asking an operator to confirm something the agent
+  // watched the machine do, which is how a confirmation step becomes noise
+  // that gets clicked through.
+  test("a port that was read is a finding, and reaches the Containerfile", () => {
+    const listening = [
+      { port: 9200, wildcard: true, infrastructure: false },
+      { port: 22, wildcard: true, infrastructure: true },
+    ];
+    const p = proposeContainerBuild(score([tomcat], { ports: listening }));
+    assert.equal(p.tiers[0].port, 9200, "the read port wins over the convention");
+    assert.match(p.containerfiles[0].containerfile, /EXPOSE 9200/);
+    assert.ok(p.findings.some((f) => f.field === "containerPort"), "it is a finding");
+    assert.ok(!p.assumptions.some((x) => x.id.startsWith("port-")), "and no longer an assumption");
   });
 
   test("the scaffold says outright that the application files were not seen", () => {

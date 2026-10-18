@@ -222,6 +222,55 @@ export async function vcFetch(path, { cfg = null, method = "GET", body = null, t
   return json && typeof json === "object" && "value" in json && Object.keys(json).length === 1 ? json.value : json;
 }
 
+/**
+ * Fetch an absolute URL vCenter handed us, on the same TLS posture as the API.
+ *
+ * Guest file transfer does not return the file: it returns a one-shot URL on
+ * the vCenter (or the ESXi host) that has to be fetched separately, with the
+ * same certificate trust and the SOAP session cookie. Going through plain
+ * fetch here would verify against the system store and fail on every lab
+ * vCenter with a self-signed certificate, which is most of them.
+ *
+ * Capped on purpose. The caller names a byte ceiling and the download stops
+ * there: these URLs point at arbitrary guest paths, and an operator who asks
+ * for the wrong one should get a refusal rather than a 40GB stream into the
+ * pod's memory.
+ *
+ * @returns {{ok:true, body:Buffer, truncated:boolean}|never}
+ */
+export async function vcDownload(url, { cfg = null, cookie = null, timeoutMs = 60_000, maxBytes = 2_000_000 } = {}) {
+  cfg = cfg || vcenterConfig();
+  if (!cfg.configured) throw new Error(cfg.reason);
+  recordEgress(url);
+  let resp;
+  try {
+    resp = await undiciFetch(url, {
+      method: "GET",
+      headers: { ...(cookie ? { Cookie: cookie } : {}) },
+      dispatcher: agent(cfg),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    throw new Error(describeNetworkError(e, url));
+  }
+  if (!resp.ok) throw new Error(`The guest file transfer URL returned ${resp.status}.`);
+
+  const chunks = [];
+  let total = 0, truncated = false;
+  for await (const chunk of resp.body) {
+    const buf = Buffer.from(chunk);
+    if (total + buf.length > maxBytes) {
+      chunks.push(buf.subarray(0, maxBytes - total));
+      total = maxBytes;
+      truncated = true;
+      break;
+    }
+    chunks.push(buf);
+    total += buf.length;
+  }
+  return { ok: true, body: Buffer.concat(chunks), truncated };
+}
+
 // ── SOAP ───────────────────────────────────────────────────────────────────
 /**
  * The Web Services API is a different protocol with a different session: a
@@ -313,6 +362,19 @@ async function soapSession(cfg) {
  * One authenticated SOAP call. `body` is built by the caller; the PerfManager
  * MoRef is handed back so the caller does not have to guess it.
  */
+/**
+ * The live SOAP session, for the few calls that need more than one round trip.
+ *
+ * Guest file transfer is the case: InitiateFileTransferFromGuest returns a URL
+ * that has to be fetched with the SAME session cookie, so the caller needs the
+ * cookie itself rather than just the response body vcSoap hands back.
+ */
+export async function vcSoapSession(cfg = null) {
+  cfg = cfg || vcenterConfig();
+  if (!cfg.configured) throw new Error(cfg.reason);
+  return soapSession(cfg);
+}
+
 export async function vcSoap(buildBody, { cfg = null, timeoutMs = 60_000 } = {}) {
   cfg = cfg || vcenterConfig();
   if (!cfg.configured) throw new Error(cfg.reason);

@@ -56,6 +56,14 @@ const GUEST_PROPS = [
   "guest.toolsRunningStatus",
   "guest.toolsVersionStatus2",
   "guest.guestState",
+  // The mount table, with capacity and free space per filesystem. VMware Tools
+  // already reports this to vCenter, so it costs nothing beyond the property
+  // read already being made — and it is the fact the containerisation decision
+  // turns on most often after the process list. A machine with a 400GB mount
+  // at /var/lib/pgsql is not a container candidate whatever its process list
+  // said, and until this was read the agent had to say "no volume claimed,
+  // because local state cannot be identified without reading the filesystem".
+  "guest.disk",
 ];
 
 // ---------------------------------------------------------------------------
@@ -127,6 +135,41 @@ export function unescapeXml(s) {
 }
 
 /**
+ * The guest mount table out of a `guest.disk` property value.
+ *
+ * Unlike every other property here this one is an array of structures, so it
+ * is parsed from the raw block before the flat name/val sweep gets to it — the
+ * sweep would hand back a string of XML.
+ *
+ * `capacity` and `freeSpace` are bytes, as 64-bit values that comfortably
+ * exceed Number.MAX_SAFE_INTEGER only above 9 petabytes, so Number is safe and
+ * BigInt would make every consumer awkward for no gain.
+ *
+ * filesystemType is vSphere 7+; older appliances omit it, and it comes back
+ * null rather than guessed from the path.
+ */
+export function parseGuestDisks(block = "") {
+  const val = /<propSet><name>guest\.disk<\/name><val[^>]*>([\s\S]*?)<\/val><\/propSet>/.exec(String(block))?.[1];
+  if (!val) return null;                       // not reported — not "no disks"
+  const disks = [];
+  for (const m of val.matchAll(/<GuestDiskInfo[^>]*>([\s\S]*?)<\/GuestDiskInfo>/g)) {
+    const b = m[1];
+    const path = unescapeXml(tag(b, "diskPath") || "") || null;
+    if (!path) continue;
+    const capacity = Number(tag(b, "capacity"));
+    const free = Number(tag(b, "freeSpace"));
+    disks.push({
+      path,
+      capacityBytes: Number.isFinite(capacity) ? capacity : null,
+      freeBytes: Number.isFinite(free) ? free : null,
+      usedBytes: Number.isFinite(capacity) && Number.isFinite(free) ? capacity - free : null,
+      filesystemType: unescapeXml(tag(b, "filesystemType") || "") || null,
+    });
+  }
+  return disks;
+}
+
+/**
  * Turn a RetrievePropertiesEx response into one record per machine.
  *
  * Each objects block carries the MoRef and a flat list of name/val pairs, so
@@ -162,6 +205,10 @@ export function parseGuestProperties(xml = "") {
       // stopped, and they need different advice.
       toolsRunning: running == null ? null : running === "guestToolsRunning",
       guestState: props["guest.guestState"] || null,
+      // null when vCenter did not report the property — which is a different
+      // thing from a machine with no mounts, and the scorer must not read one
+      // as the other.
+      disks: parseGuestDisks(block),
     });
   }
   return out;
@@ -239,7 +286,12 @@ export function describeGuestOpError(message = "") {
  * is indistinguishable from one that saw nothing wrong.
  */
 export const UNREAD_WITHOUT_PROBE = Object.freeze([
-  { fact: "listeningPorts", reason: "Listening ports are not exposed by guest properties or the process list. Reading them means running a command inside the guest." },
+  // Retired on Linux by guest-files.js, which reads /proc/net/tcp rather than
+  // running `ss`. It stays in the list because the read is opt-in, needs a
+  // guest credential, and has no equivalent on Windows — so for any machine
+  // where it did not happen this is still the honest line. The orchestrator
+  // removes it per machine once the ports have actually been read.
+  { fact: "listeningPorts", reason: "Listening ports were not read. On Linux the agent can read them from /proc/net/tcp with a guest credential; on Windows there is no equivalent that does not run a command." },
   { fact: "services", reason: "systemd units and Windows services are not exposed without running a command inside the guest." },
   { fact: "packages", reason: "Installed packages and runtime versions are not exposed without running a command inside the guest." },
   { fact: "scheduledJobs", reason: "cron and Scheduled Tasks are not exposed without running a command inside the guest." },
@@ -260,8 +312,11 @@ export function unreadableGuest(vm, reason) {
     instanceUuid: null,
     ipAddress: null,
     toolsRunning: null,
+    disks: null,
     processes: null,
     processReason: reason,
+    ports: null,
+    portReason: reason,
     unread: [...UNREAD_WITHOUT_PROBE],
   };
 }
@@ -279,9 +334,10 @@ export function unreadableGuest(vm, reason) {
  * @param {Array}  vms                      [{ id, name, ... }] — id is the vCenter MoRef
  * @param {object} opts.cfg                 vCenter credential (defaults to the configured one)
  * @param {object} opts.guestCredentials    { "<vm name or id>": {username,password} } or { "*": {...} }
+ * @param {boolean} opts.readPorts          also read /proc/net/tcp for listening ports (Linux, opt-in)
  * @returns {{guests: Map<string,object>, source: string, reason: string|null, coverage: object}}
  */
-export async function discoverGuests(vms = [], { cfg = null, guestCredentials = null } = {}) {
+export async function discoverGuests(vms = [], { cfg = null, guestCredentials = null, readPorts = false } = {}) {
   cfg = cfg || vcenterConfig();
   const coverage = { total: vms.length, properties: 0, processes: 0, failures: {} };
   const guests = new Map();
@@ -399,12 +455,82 @@ export async function discoverGuests(vms = [], { cfg = null, guestCredentials = 
     }
   }
 
+  // ── Layer 3: listening ports, read from /proc rather than run ──────────
+  if (readPorts) await readListeningPorts(withIds, guests, { cfg, guestCredentials, coverage });
+
   return {
     guests,
     source: coverage.processes ? "vcenter-guest+processes" : "vcenter-guest",
     reason: null,
     coverage,
   };
+}
+
+/**
+ * Fill in `ports` for every machine whose processes were read.
+ *
+ * Only those machines: a guest that would not hand over its process list will
+ * not hand over /proc either, and asking produces a second identical failure
+ * the operator has to read twice.
+ *
+ * The file manager is resolved once for the whole wave rather than per
+ * machine — it is a property of the vCenter, not of the guest.
+ */
+async function readListeningPorts(vms, guests, { cfg, guestCredentials, coverage }) {
+  const { readGuestFile, resolveFileManager } = await import("./guest-files.js");
+  const { listeningPorts } = await import("./guest-ports.js");
+
+  let fileManager = null;
+  try {
+    fileManager = await resolveFileManager(cfg);
+  } catch (e) {
+    for (const g of guests.values()) {
+      if (g.ports === undefined || g.ports === null) g.portReason = describeGuestOpError(e.message);
+    }
+    return;
+  }
+
+  for (const vm of vms) {
+    const g = guests.get(vm.id || vm.name);
+    if (!g) continue;
+    if (g.processes === null) {
+      g.ports = null;
+      g.portReason = g.processReason || "Nothing inside this machine was read.";
+      continue;
+    }
+    // Windows has no /proc. Say so once, here, rather than letting two file
+    // reads fail and reporting it as a problem.
+    if (/windows/i.test(g.os?.family || g.os?.fullName || "")) {
+      g.ports = null;
+      g.portReason = "This is a Windows guest. /proc does not exist, and there is no Windows equivalent this agent can read without running a command.";
+      g.portFailure = "windows";
+      continue;
+    }
+
+    const cred = credentialFor(vm, guestCredentials);
+    if (!cred) { g.ports = null; g.portReason = "No guest credential was supplied for this machine."; continue; }
+
+    const common = { vmId: vm.id, username: cred.username, password: cred.password, cfg, fileManager };
+    const v4 = await readGuestFile({ ...common, fileId: "net-tcp" });
+    const v6 = await readGuestFile({ ...common, fileId: "net-tcp6" });
+
+    if (!v4.ok && !v6.ok) {
+      g.ports = null;
+      g.portReason = v4.reason || v6.reason;
+      g.portFailure = v4.failure || v6.failure;
+      coverage.failures[`ports:${g.portFailure}`] = (coverage.failures[`ports:${g.portFailure}`] || 0) + 1;
+      continue;
+    }
+
+    const read = listeningPorts({ tcp: v4.ok ? v4.text : null, tcp6: v6.ok ? v6.text : null });
+    g.ports = read.ports;
+    g.portReason = null;
+    // An IPv6-only read is a partial answer, not a complete one, and the
+    // difference matters for a service bound to 0.0.0.0 only.
+    g.portsPartial = !(v4.ok && v6.ok);
+    g.unread = (g.unread || []).filter((u) => u.fact !== "listeningPorts");
+    coverage.ports = (coverage.ports || 0) + 1;
+  }
 }
 
 /** Per-machine credential, falling back to a wildcard. Name or id may key it. */

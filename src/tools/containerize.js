@@ -16,7 +16,9 @@ import { discoverVMs } from "../services/vm-migration.js";
 import { discoverGuests } from "../services/guest-discovery.js";
 import {
   scoreSelection, containerisationFunnel, readinessCoverageNote, VERDICT_LABEL,
+  dataMounts, gib,
 } from "../services/containerization-readiness.js";
+import { applicationPorts } from "../services/guest-ports.js";
 import { proposeContainerBuild } from "../services/containerization-plan.js";
 import { mtaReadiness, applicationIssues, effortSummary, combinedView } from "../services/mta-client.js";
 import { proposeBuildPipeline } from "../services/build-pipeline.js";
@@ -93,13 +95,14 @@ export function registerContainerizeTools(server) {
 
   server.tool(
     "containerize_inspect_guest",
-    "Read what is running inside one virtual machine — guest OS, VMware Tools state, and the process list with command lines. Read-only; nothing is executed in the guest.",
+    "Read what is running inside one virtual machine — guest OS, VMware Tools state, the mount table, the process list with command lines, and optionally the listening ports. Read-only: nothing is executed in the guest and nothing is written to it.",
     {
       provider: z.string().describe("MTV source provider uid or name"),
       vm: z.string().describe("VM name as the source inventory reports it"),
+      readPorts: z.boolean().optional().describe("Also read listening ports from /proc/net/tcp (Linux guests, needs the guest credential). Reads a file; runs no command."),
       ...credShape,
     },
-    async ({ provider, vm, guestUsername, guestPassword }) => {
+    async ({ provider, vm, readPorts, guestUsername, guestPassword }) => {
       let vms;
       try {
         vms = await discoverVMs(provider, { search: vm });
@@ -111,7 +114,7 @@ export function registerContainerizeTools(server) {
 
       const cfg = await resolveVcenterFor(provider);
       const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
-      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds, readPorts: readPorts === true });
       const g = guests.get(match.id || match.name);
       if (!g) return text(`Nothing came back for "${vm}".`);
 
@@ -124,6 +127,33 @@ export function registerContainerizeTools(server) {
         `- VMware Tools: ${g.toolsRunning === null ? "not reported" : g.toolsRunning ? "running" : "not running"}`,
         "",
       ];
+
+      // The mount table comes free with the property read — no guest
+      // credential — and it is the fact the container-or-VM decision turns on
+      // most often after the process list.
+      if (!Array.isArray(g.disks)) {
+        out.push("**The mount table was not reported.** Whether this machine carries attached data is unknown; an unread filesystem is not an empty one.", "");
+      } else {
+        const data = dataMounts(g.disks);
+        out.push(`## Mounts — ${g.disks.length} reported, ${data.length} carrying data`, "");
+        for (const d of g.disks) {
+          const flag = data.includes(d) ? " **data**" : "";
+          out.push(`- \`${d.path}\` — ${gib(d.capacityBytes)}, ${gib(d.usedBytes)} used${d.filesystemType ? ` · ${d.filesystemType}` : ""}${flag}`);
+        }
+        out.push("");
+      }
+
+      if (g.ports === null || g.ports === undefined) {
+        if (g.portReason) out.push(`**Listening ports were not read.** ${g.portReason}`, "");
+      } else {
+        const app = applicationPorts(g.ports);
+        out.push(`## Listening ports — read from /proc/net/tcp${g.portsPartial ? " (one address family only)" : ""}`, "");
+        out.push(g.ports.length
+          ? g.ports.map((p) => `\`${p.port}\`${p.infrastructure ? " (infrastructure)" : ""}${p.wildcard ? "" : " (loopback only)"}`).join(", ")
+          : "The machine is listening on nothing. The service may be stopped, or behind a unix socket.");
+        if (app.length === 1) out.push("", `One application port: **${app[0].port}**. That is what the proposal will expose.`);
+        out.push("");
+      }
       if (!Array.isArray(g.processes)) {
         out.push(`**Processes were not read.** ${g.processReason || ""}`);
       } else if (!g.processes.length) {
@@ -159,7 +189,7 @@ export function registerContainerizeTools(server) {
 
       const cfg = await resolveVcenterFor(provider);
       const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
-      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds, readPorts: true });
       const [result] = scoreSelection([match], guests);
       const plan = proposeContainerBuild(result, { namespace, appName: match.name });
 
@@ -280,7 +310,7 @@ export function registerContainerizeTools(server) {
 
       const cfg = await resolveVcenterFor(provider);
       const creds = guestUsername && guestPassword ? { "*": { username: guestUsername, password: guestPassword } } : null;
-      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds });
+      const { guests } = await discoverGuests([match], { cfg, guestCredentials: creds, readPorts: true });
       const [result] = scoreSelection([match], guests);
       const plan = proposeContainerBuild(result, { appName: match.name });
       if (!plan.ok) return text(`# ${match.name} — no build proposed\n\n${plan.refusal.message}`);
