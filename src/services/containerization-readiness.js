@@ -405,7 +405,7 @@ export function scoreContainerisation({ vm = {}, guest = null } = {}) {
     const biggest = data[0];
     return {
       id: "data-mounts", blocks: false, severity: "warning", required: true,
-      title: `${data.length} mount${data.length === 1 ? "" : "s"} outside the operating system carry data`,
+      title: `${data.length} mount${data.length === 1 ? " outside the operating system carries" : "s outside the operating system carry"} data`,
       detail: `${data.map(describeMount).join(", ")}. A container starts with an empty filesystem: none of this comes across, and whatever the application reads or writes there needs a PersistentVolumeClaim and a copy of its own.`,
       action: "Decide per mount: a database moves to an operator or a managed service as its own project; data that matters becomes a PVC with a cutover window; logs, caches and temp are dropped.",
       evidence: `${biggest.path} — ${gib(biggest.capacityBytes)} capacity, ${gib(biggest.usedBytes)} used`,
