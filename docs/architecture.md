@@ -68,6 +68,12 @@ flowchart TB
 
 ## Reference Architecture Diagram
 
+> **Also:** [`backend-architecture.html`](backend-architecture.html) draws the
+> same system from the component side — which processes exist, what moves
+> between them, and what a request meets inside one of them. Open it in a
+> browser; it needs no build. This page stays the reference for the agent
+> lifecycle and the data-flow pipeline.
+
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px', 'fontFamily': 'Red Hat Display, Segoe UI, Arial' }}}%%
 

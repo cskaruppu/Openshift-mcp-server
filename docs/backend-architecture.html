@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  Backend architecture — the component view.
+
+  Companion to architecture-diagram.html, which covers the agent lifecycle and
+  the data-flow pipeline. This one answers a different question: what processes
+  exist, what moves between them, and what a request meets inside one of them.
+
+  Self-contained apart from the webfont. Open it in a browser; nothing to build.
+-->
+<title>Backend Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: two figures, each making one claim — how the pods are arranged and
+   what flows between them, then what a single request meets inside one
+   process. Tables carry the inventory; the drawings carry the mechanism. */
+:root{
+  --bg:#f5f6f8; --surface:#fff; --surface2:#eef0f4; --line:#dfe3ea; --line2:#c3cad6;
+  --fg:#12151c; --fg2:#4b5566; --fg3:#7d8697;
+  --ac:#c42b2b; --acbg:#fdecec;
+  --hold:#1d4ed8; --holdbg:#eaf0fe;
+  --ui:"Inter",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a0c10; --surface:#13161c; --surface2:#1b1f27; --line:#242933; --line2:#39414f;
+  --fg:#e9ecf2; --fg2:#99a3b5; --fg3:#6a7486;
+  --ac:#ff6b6b; --acbg:#2a1416; --hold:#7fb0ff; --holdbg:#111a2b; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#0a0c10; --surface:#13161c; --surface2:#1b1f27; --line:#242933; --line2:#39414f;
+  --fg:#e9ecf2; --fg2:#99a3b5; --fg3:#6a7486;
+  --ac:#ff6b6b; --acbg:#2a1416; --hold:#7fb0ff; --holdbg:#111a2b; color-scheme:dark;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--ui);line-height:1.6;
+  -webkit-font-smoothing:antialiased;padding-left:16px;padding-right:16px}
+.wrap{max-width:1020px;margin:0 auto;padding-block:30px 50px}
+header.top{padding-bottom:20px;border-bottom:1px solid var(--line)}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--fg3);font-weight:600;margin:0 0 8px}
+h1{font-size:clamp(26px,4.4vw,38px);font-weight:800;letter-spacing:-.028em;margin:0;text-wrap:balance}
+.stand{color:var(--fg2);font-size:15px;max-width:70ch;margin:11px 0 0}
+.stand b{color:var(--fg);font-weight:600}
+
+section{margin-top:32px;border-top:2px solid var(--line2);padding-top:18px}
+section>h2{font-size:20px;font-weight:700;letter-spacing:-.018em;margin:0 0 5px}
+.lede{color:var(--fg2);font-size:14px;margin:0 0 14px;max-width:76ch}
+p{font-size:14px;color:var(--fg2)}
+
+figure{margin:0 0 6px;background:var(--surface);border:1px solid var(--line);
+  border-radius:12px;padding:16px 16px 10px}
+figure svg{display:block;width:100%;height:auto;max-width:100%}
+figcaption{font-size:12.5px;color:var(--fg3);margin-top:10px;padding-top:9px;
+  border-top:1px solid var(--line)}
+figcaption b{color:var(--fg2)}
+
+/* SVG text inherits the page foreground; only the marked path carries a hue. */
+.dg{font-family:var(--ui);fill:currentColor}
+.t-title{font-size:13px;font-weight:700}
+.t-body{font-size:11.5px;fill:var(--fg2)}
+.t-mono{font-family:var(--mono);font-size:10.5px;fill:var(--fg3)}
+.t-edge{font-size:10.5px;fill:var(--fg3)}
+.t-group{font-size:10px;font-weight:700;letter-spacing:.12em;fill:var(--fg3)}
+.box{fill:var(--surface2);stroke:var(--line2);stroke-width:1.2}
+.box-core{fill:var(--acbg);stroke:var(--ac);stroke-width:1.6}
+.box-state{fill:var(--holdbg);stroke:var(--hold);stroke-width:1.3}
+.zone{fill:none;stroke:var(--line2);stroke-width:1.2;stroke-dasharray:5 4}
+.edge{stroke:var(--fg3);stroke-width:1.4;fill:none}
+.edge-ac{stroke:var(--ac);stroke-width:2;fill:none}
+
+table{width:100%;border-collapse:collapse;font-size:13px;margin:14px 0}
+th{text-align:left;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg3);
+  font-weight:700;padding:0 12px 8px 0;border-bottom:1px solid var(--line)}
+td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);color:var(--fg2);vertical-align:top}
+td:first-child{color:var(--fg);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+code{font-family:var(--mono);font-size:.88em;color:var(--fg);background:var(--surface2);
+  padding:1px 5px;border-radius:4px}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-top:16px}
+.note{border-left:2px solid var(--line2);padding-left:13px}
+.note.hit{border-left-color:var(--ac)}
+.note h4{font-size:13px;font-weight:700;margin:0 0 5px}
+.note p{font-size:12.5px;margin:0}
+footer{margin-top:36px;padding-top:15px;border-top:1px solid var(--line);font-size:12px;color:var(--fg3);
+  display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:space-between}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">TCS Agentic AI for Hybrid Infrastructure</p>
+  <h1>Backend Architecture</h1>
+  <p class="stand">Two drawings. The first is how the pods are arranged and what moves between them; the second is what a single request meets on its way through one process. <b>Both read from the code as it stands</b> — 227 files, 119k lines, 328 HTTP routes.</p>
+</header>
+
+<!-- ───────────────────────── FIGURE 1 ───────────────────────── -->
+<section>
+  <h2>One image, two roles</h2>
+  <p class="lede">The same container runs as the hub and as a per-cluster agent. What differs is a mode flag and which direction the registration goes — so a new managed cluster is a deployment, not a new component.</p>
+
+  <figure>
+    <svg viewBox="0 0 960 400" role="img"
+         aria-label="The hub cluster holds a dashboard pod, a control plane pod, Postgres and Redis. Browsers and MCP clients connect to the hub. Each managed cluster runs the same control plane image in spoke mode, registering to the hub and sending a heartbeat every thirty seconds, while the hub proxies live queries back.">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--fg3)"/>
+        </marker>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ac)"/>
+        </marker>
+      </defs>
+      <g class="dg">
+
+        <!-- clients: the protocol rides inside the box, so no edge label can
+             collide with the hub boundary a few pixels to its right -->
+        <text class="t-group" x="18" y="74">CLIENTS</text>
+        <rect class="box" x="18" y="88" width="172" height="66" rx="8"/>
+        <text class="t-title" x="32" y="110">MCP client</text>
+        <text class="t-body" x="32" y="128">IDE, framework, agent</text>
+        <text class="t-mono" x="32" y="146">/mcp/&lt;agent-id&gt;/sse</text>
+
+        <rect class="box" x="18" y="180" width="172" height="66" rx="8"/>
+        <text class="t-title" x="32" y="202">Browser</text>
+        <text class="t-body" x="32" y="220">React console</text>
+        <text class="t-mono" x="32" y="238">HTTPS</text>
+
+        <!-- hub zone -->
+        <rect class="zone" x="238" y="56" width="432" height="316" rx="12"/>
+        <text class="t-group" x="254" y="78">HUB CLUSTER · NAMESPACE openshift-mcp</text>
+
+        <rect class="box" x="258" y="92" width="200" height="54" rx="8"/>
+        <text class="t-title" x="272" y="114">Dashboard pod</text>
+        <text class="t-mono" x="272" y="132">mcp-dashboard</text>
+
+        <rect class="box-core" x="258" y="178" width="200" height="84" rx="8"/>
+        <text class="t-title" x="272" y="202">Control plane</text>
+        <text class="t-mono" x="272" y="220">openshift-mcp-server</text>
+        <text class="t-body" x="272" y="240">Node.js · MCP + REST</text>
+        <text class="t-body" x="272" y="256">in one process</text>
+
+        <rect class="box-state" x="490" y="178" width="158" height="52" rx="8"/>
+        <text class="t-title" x="504" y="200">PostgreSQL 16</text>
+        <text class="t-body" x="504" y="218">durable state</text>
+
+        <rect class="box-state" x="490" y="244" width="158" height="52" rx="8"/>
+        <text class="t-title" x="504" y="266">Redis 7</text>
+        <text class="t-body" x="504" y="284">cache · coordination</text>
+
+        <!-- spokes -->
+        <text class="t-group" x="722" y="74">MANAGED CLUSTERS</text>
+        <rect class="box" x="722" y="88" width="220" height="62" rx="8"/>
+        <text class="t-title" x="736" y="110">Spoke · prod-east</text>
+        <text class="t-mono" x="736" y="128">openshift-mcp-server</text>
+        <text class="t-mono" x="736" y="144">MCP_MODE=spoke</text>
+
+        <rect class="box" x="722" y="178" width="220" height="62" rx="8"/>
+        <text class="t-title" x="736" y="200">Spoke · prod-west</text>
+        <text class="t-mono" x="736" y="218">openshift-mcp-server</text>
+        <text class="t-mono" x="736" y="234">MCP_MODE=spoke</text>
+
+        <rect class="box" x="722" y="268" width="220" height="40" rx="8" stroke-dasharray="5 4"/>
+        <text class="t-body" x="736" y="293">…one per managed cluster</text>
+
+        <!-- clients into the hub -->
+        <path class="edge" d="M190,121 L224,121 L224,200 L256,200" marker-end="url(#a1)"/>
+        <path class="edge" d="M190,213 L212,213 L212,119 L256,119" marker-end="url(#a1)"/>
+
+        <path class="edge" d="M358,146 L358,176" marker-end="url(#a1)"/>
+        <text class="t-edge" x="366" y="166">REST /api · 328 routes</text>
+
+        <!-- control plane into the stores -->
+        <path class="edge" d="M458,204 L488,204" marker-end="url(#a1)"/>
+        <path class="edge" d="M458,232 L474,232 L474,270 L488,270" marker-end="url(#a1)"/>
+
+        <!-- the two spoke lanes, routed below the stores so neither crosses a box -->
+        <path class="edge-ac" d="M722,119 L692,119 L692,324 L320,324 L320,264" marker-end="url(#a2)"/>
+        <text class="t-edge" x="416" y="318" fill="var(--ac)">register + heartbeat every 30s</text>
+
+        <path class="edge" d="M400,264 L400,352 L708,352 L708,209 L720,209" marker-end="url(#a1)"/>
+        <text class="t-edge" x="420" y="368">live proxy for widgets and chat</text>
+      </g>
+    </svg>
+    <figcaption><b>The hub is a spoke that also holds the state.</b> Deployed on the management cluster with <code>--cluster-name hub-cluster</code>, the same image registers against itself, so the control plane has no special build and no second code path.</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>Store</th><th>Holds</th><th>If it is lost</th></tr>
+    <tr><td>PostgreSQL</td>
+      <td>Audit trail, chat history, assessments, migration history, persistent memory, VM requests</td>
+      <td>A record is gone. These must survive a restart</td></tr>
+    <tr><td>Redis</td>
+      <td>Agent cache, spoke snapshots, cross-pod coordination</td>
+      <td>A refresh. Nothing a customer can point at</td></tr>
+    <tr><td>ServiceNow</td>
+      <td>The incident duplicate check queries ServiceNow itself, not the local store</td>
+      <td>Nothing — which is the point. It still holds after a pod restart has lost everything cached</td></tr>
+  </table>
+
+  <div class="notes">
+    <div class="note hit"><h4>Why one image</h4><p>A spoke that drifted from the hub would be a second product to test. Two roles, one binary, one <code>MCP_MODE</code> flag.</p></div>
+    <div class="note"><h4>Why a heartbeat</h4><p>It carries the build version and LLM config, so the hub can tell a cluster that is quiet from one running an older image.</p></div>
+    <div class="note"><h4>Why a proxy, not a copy</h4><p>Widgets and chat query the spoke live. The cached snapshot exists so the fleet view loads, not so answers go stale.</p></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── FIGURE 2 ───────────────────────── -->
+<section>
+  <h2>Inside one process</h2>
+  <p class="lede">Two protocols enter, and both land on the same services. That is the claim this drawing exists to make: the MCP tool layer is thin, and nothing in services reaches the network except through a client in <code>utils</code>.</p>
+
+  <figure>
+    <svg viewBox="0 0 960 560" role="img"
+         aria-label="MCP over SSE or stdio and 328 REST routes both enter index.js, which registers fifty tool groups. Tools validate with zod and call services. The services layer of 115 files holds all logic and reaches outward only through clients in utils, which talk to the cluster API, vCenter, Prometheus, ServiceNow, Ansible, Red Hat tooling and model providers. The agents layer sits alongside, governing which tools a session may register.">
+      <defs>
+        <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--fg3)"/>
+        </marker>
+        <marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ac)"/>
+        </marker>
+      </defs>
+      <g class="dg">
+
+        <!-- entries -->
+        <rect class="box" x="60" y="26" width="262" height="52" rx="8"/>
+        <text class="t-title" x="74" y="48">MCP · SSE and stdio</text>
+        <text class="t-mono" x="74" y="66">/mcp/&lt;agent-id&gt;/sse</text>
+
+        <rect class="box" x="404" y="26" width="262" height="52" rx="8"/>
+        <text class="t-title" x="418" y="48">REST</text>
+        <text class="t-mono" x="418" y="66">328 routes under /api</text>
+
+        <!-- converge -->
+        <path class="edge-ac" d="M191,78 L191,104 L330,104 L330,122" marker-end="url(#b2)"/>
+        <path class="edge-ac" d="M535,78 L535,104 L396,104 L396,122" marker-end="url(#b2)"/>
+
+        <rect class="box-core" x="192" y="124" width="342" height="52" rx="8"/>
+        <text class="t-title" x="206" y="146">index.js</text>
+        <text class="t-body" x="206" y="164">registers 50 tool groups · serves both transports</text>
+        <text class="t-mono" x="452" y="146">10.6k lines</text>
+
+        <path class="edge" d="M363,176 L363,204" marker-end="url(#b1)"/>
+
+        <rect class="box" x="60" y="206" width="606" height="52" rx="8"/>
+        <text class="t-title" x="74" y="228">tools/ — 50 files</text>
+        <text class="t-body" x="74" y="246">zod validation, then one call into a service. Deliberately thin.</text>
+        <text class="t-mono" x="584" y="228">20.5k</text>
+
+        <path class="edge" d="M363,258 L363,286" marker-end="url(#b1)"/>
+
+        <rect class="box-core" x="60" y="288" width="606" height="76" rx="8"/>
+        <text class="t-title" x="74" y="312">services/ — 115 files</text>
+        <text class="t-body" x="74" y="331">Every decision the product makes: scoring, readiness, planning,</text>
+        <text class="t-body" x="74" y="348">remediation, reports. Pure wherever it can be, so it tests without a cluster.</text>
+        <text class="t-mono" x="584" y="312">74k</text>
+
+        <path class="edge" d="M363,364 L363,392" marker-end="url(#b1)"/>
+
+        <rect class="box" x="60" y="394" width="606" height="52" rx="8"/>
+        <text class="t-title" x="74" y="416">utils/ — the only way out</text>
+        <text class="t-body" x="74" y="434">openshift · vcenter · servicenow · ansible · db · cache · otel · trust-store</text>
+        <text class="t-mono" x="584" y="416">3.3k</text>
+
+        <!-- agents band -->
+        <rect class="box" x="698" y="124" width="200" height="240" rx="8"/>
+        <text class="t-title" x="712" y="148">agents/ — 14 files</text>
+        <text class="t-body" x="712" y="170">registry · manifests</text>
+        <text class="t-body" x="712" y="190">governance · gatekeeper</text>
+        <text class="t-body" x="712" y="210">canaries · health sweep</text>
+        <text class="t-body" x="712" y="230">quarantine · promotion</text>
+        <text class="t-body" x="712" y="256">Decides which tools a</text>
+        <text class="t-body" x="712" y="273">session may register,</text>
+        <text class="t-body" x="712" y="290">and whether an agent</text>
+        <text class="t-body" x="712" y="307">is still behaving.</text>
+        <text class="t-mono" x="712" y="334">3.4k lines</text>
+        <path class="edge" d="M696,150 L540,150" marker-end="url(#b1)"/>
+        <path class="edge" d="M696,232 L670,232" marker-end="url(#b1)"/>
+
+        <!-- externals -->
+        <text class="t-group" x="60" y="478">REACHED THROUGH utils, NEVER FROM services DIRECTLY</text>
+        <path class="edge" d="M150,446 L150,492" marker-end="url(#b1)"/>
+        <path class="edge" d="M363,446 L363,492" marker-end="url(#b1)"/>
+        <path class="edge" d="M576,446 L576,492" marker-end="url(#b1)"/>
+
+        <rect class="box" x="60" y="494" width="186" height="48" rx="8"/>
+        <text class="t-body" x="74" y="514">OpenShift API · Prometheus</text>
+        <text class="t-body" x="74" y="531">Alertmanager</text>
+
+        <rect class="box" x="270" y="494" width="186" height="48" rx="8"/>
+        <text class="t-body" x="284" y="514">vCenter · MTV · MTA</text>
+        <text class="t-body" x="284" y="531">Velero · Tekton · ArgoCD</text>
+
+        <rect class="box" x="480" y="494" width="186" height="48" rx="8"/>
+        <text class="t-body" x="494" y="514">ServiceNow · Ansible</text>
+        <text class="t-body" x="494" y="531">PagerDuty · LLM providers</text>
+      </g>
+    </svg>
+    <figcaption><b>The tool layer is thin on purpose.</b> A tool validates and delegates; the logic underneath is reachable from a REST route and from a unit test without an MCP client, which is why 844 tests and 74 canaries run with no cluster attached.</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>Layer</th><th class="num">Files</th><th class="num">Lines</th><th>Holds</th></tr>
+    <tr><td><code>services/</code></td><td class="num">115</td><td class="num">74,196</td><td>All domain logic. The weight of the product</td></tr>
+    <tr><td><code>tools/</code></td><td class="num">50</td><td class="num">20,570</td><td>MCP tool definitions — validate, delegate</td></tr>
+    <tr><td><code>index.js</code></td><td class="num">1</td><td class="num">10,593</td><td>Entry point, route table, both transports</td></tr>
+    <tr><td><code>agents/</code></td><td class="num">14</td><td class="num">3,431</td><td>Registry, governance, canaries, quarantine</td></tr>
+    <tr><td><code>utils/</code></td><td class="num">14</td><td class="num">3,327</td><td>Every outbound client, plus db and cache</td></tr>
+    <tr><td><code>platform/</code></td><td class="num">8</td><td class="num">2,646</td><td>Multi-platform detect, route, orchestrate</td></tr>
+    <tr><td><code>security/</code></td><td class="num">2</td><td class="num">388</td><td>Command classification, component registry</td></tr>
+  </table>
+
+  <div class="notes">
+    <div class="note hit"><h4>Eleven runtime dependencies</h4><p>No Express, no ORM, no framework. The HTTP server is Node's own <code>createServer</code>; the rest is the MCP SDK, the Kubernetes client, <code>undici</code>, <code>pg</code>, <code>ioredis</code>, <code>zod</code>, <code>js-yaml</code> and four document libraries.</p></div>
+    <div class="note"><h4>Per-agent endpoints</h4><p>A client connecting to <code>/mcp/vm-migration/sse</code> gets a server with only that agent's tools registered. Everything outside the allow-list is not refused at runtime — it was never there.</p></div>
+    <div class="note"><h4>Why services stays pure</h4><p>Keeping the network in <code>utils</code> is what lets a scorer be called with a fixture. It is the reason the canaries can check seventeen agents without a cluster.</p></div>
+  </div>
+</section>
+
+<footer>
+  <span>Read from the repository at <code>e0b101b</code></span>
+  <span>227 files · 119,479 lines · 328 routes</span>
+</footer>
+</div>
+
+</body>
+</html>
