@@ -7859,3 +7859,222 @@ h3.widget-title {
   font-size: 11px; padding: 0 3px; border-radius: 4px;
   background: var(--bg); border: 1px solid var(--border);
 }
+
+/* ===========================================================================
+   SIGN-IN SCREEN — full-bleed artwork, form inside it
+   ===========================================================================
+   Added as its own `.lg-` namespace rather than by editing the old `.login-`
+   rules above. Nothing that existed changed, so reverting this screen is
+   deleting one block and one component — no archaeology through a diff.
+
+   Three things carry the design, and they are all here rather than in the JSX:
+
+     1. The veil is DIRECTIONAL. A flat wash either buries the picture or
+        leaves the form unreadable. The stops are placed against this specific
+        artwork: 0% is the card edge, and 22%-48% is the band holding the
+        image's own baked-in wordmark, which has to go quiet or it reads as a
+        word half-hidden behind the card.
+     2. The card sits RIGHT, over the darkest part of the plate. Centred, it
+        lands on the globe — the busiest pixels in the frame.
+     3. The artwork is dark in both themes, so the theme toggle flips the CARD,
+        not the page. Light theme gets an opaque panel, which is also the
+        higher-contrast answer for a form sitting over a photograph.
+   ======================================================================== */
+
+.lg-screen {
+  position: fixed; inset: 0; z-index: 99999;
+  /* The fallback, and it is a real one: if the file 404s this stays a
+     designed deep-neutral screen with the lockup and the form on it. */
+  background: #06080d;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.lg-art {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: 28% 36%;
+  display: block;
+}
+
+.lg-veil {
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(270deg,
+      rgba(4,6,11,.93) 0%, rgba(4,6,11,.91) 24%, rgba(4,6,11,.85) 40%,
+      rgba(4,6,11,.60) 56%, rgba(4,6,11,.22) 76%, rgba(4,6,11,.46) 100%),
+    radial-gradient(130% 110% at 26% 42%, transparent 32%, rgba(3,5,10,.66) 100%);
+}
+
+/* ── brand, top left over the quiet part of the plate ───────────────────── */
+.lg-brand { position: absolute; left: 4.6%; top: 8%; z-index: 3; color: #fff; }
+.lg-mark {
+  font-size: clamp(20px, 2.1vw, 34px); font-weight: 700;
+  letter-spacing: -.025em; line-height: 1.1;
+}
+.lg-tcs { color: #ff5c5c; font-weight: 800; }
+.lg-sub {
+  font-size: clamp(8px, .68vw, 11px); font-weight: 700;
+  letter-spacing: .2em; text-transform: uppercase;
+  color: rgba(255,255,255,.5); margin-top: 8px;
+}
+
+.lg-claim {
+  position: absolute; left: 4.6%; bottom: 9%; z-index: 3; margin: 0;
+  max-width: 28%; color: #fff;
+  font-size: clamp(15px, 1.45vw, 24px); font-weight: 600;
+  letter-spacing: -.018em; line-height: 1.35;
+  text-shadow: 0 2px 18px rgba(0,0,0,.7);
+}
+.lg-claim em { font-style: normal; color: #ff9a9a; }
+
+.lg-theme {
+  position: absolute; top: 20px; right: 20px; z-index: 6;
+  width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16);
+  color: #fff; font-size: 15px; line-height: 1;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.lg-theme:hover { background: rgba(255,255,255,.14); }
+
+/* ── the card ───────────────────────────────────────────────────────────── */
+.lg-card {
+  position: absolute; z-index: 4; right: 6%; top: 50%;
+  transform: translateY(-50%);
+  width: min(27%, 400px); min-width: 318px;
+  padding: 32px 30px; border-radius: 16px;
+  background: rgba(9,12,19,.56);
+  border: 1px solid rgba(255,255,255,.13);
+  box-shadow: 0 30px 72px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.07);
+  backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%);
+}
+.lg-title {
+  margin: 0; font-size: 21px; font-weight: 700;
+  letter-spacing: -.018em; color: #fff;
+}
+.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: rgba(255,255,255,.52); }
+
+.lg-tabs {
+  display: flex; gap: 2px; margin: 20px 0 4px;
+  border-bottom: 1px solid rgba(255,255,255,.13);
+}
+.lg-tab {
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  padding: 8px 14px; color: rgba(255,255,255,.46);
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.lg-tab.on { color: #fff; border-bottom-color: #ff5c5c; }
+.lg-tab:hover { color: rgba(255,255,255,.76); }
+
+.lg-label {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  color: rgba(255,255,255,.62); margin: 18px 0 7px;
+}
+.lg-input {
+  width: 100%; height: 40px; padding: 0 13px;
+  font: inherit; font-size: 13.5px; color: #fff;
+  background: rgba(255,255,255,.055);
+  border: 1px solid rgba(255,255,255,.17); border-radius: 9px;
+  transition: border-color .15s, background .15s;
+}
+.lg-input::placeholder { color: rgba(255,255,255,.34); }
+.lg-input:focus {
+  outline: none; border-color: rgba(255,92,92,.7);
+  background: rgba(255,255,255,.085);
+}
+
+.lg-btn {
+  width: 100%; height: 42px; margin-top: 22px;
+  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  color: #fff; background: #d93333; border: 0; border-radius: 9px;
+  box-shadow: 0 8px 22px rgba(217,51,51,.34);
+  transition: background .15s, transform .08s;
+}
+.lg-btn:hover:not(:disabled) { background: #e84444; }
+.lg-btn:active:not(:disabled) { transform: translateY(1px); }
+.lg-btn:disabled { opacity: .62; cursor: default; }
+
+.lg-error {
+  margin-top: 14px; padding: 9px 12px; border-radius: 8px;
+  font-size: 12.5px; color: #ffb4b4;
+  background: rgba(217,51,51,.16); border: 1px solid rgba(217,51,51,.36);
+}
+.lg-fine {
+  margin-top: 16px; text-align: center;
+  font-size: 10.5px; color: rgba(255,255,255,.4);
+}
+
+/* Keyboard focus has to survive the glass — the default ring disappears
+   against a blurred photograph. */
+.lg-tab:focus-visible, .lg-btn:focus-visible, .lg-theme:focus-visible {
+  outline: 2px solid #ff8f8f; outline-offset: 2px;
+}
+
+/* ── light theme: the picture stays, the card turns solid ───────────────── */
+body.light-theme .lg-card {
+  background: rgba(255,255,255,.96);
+  border-color: rgba(16,19,26,.1);
+  box-shadow: 0 30px 72px rgba(0,0,0,.34);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+body.light-theme .lg-title { color: #10131a; }
+body.light-theme .lg-lede { color: #5b6473; }
+body.light-theme .lg-tabs { border-bottom-color: rgba(16,19,26,.1); }
+body.light-theme .lg-tab { color: #8b93a1; }
+body.light-theme .lg-tab:hover { color: #4b5563; }
+body.light-theme .lg-tab.on { color: #10131a; border-bottom-color: #c42b2b; }
+body.light-theme .lg-label { color: #4b5563; }
+body.light-theme .lg-input {
+  color: #10131a; background: rgba(16,19,26,.035);
+  border-color: rgba(16,19,26,.14);
+}
+body.light-theme .lg-input::placeholder { color: #9aa1ad; }
+body.light-theme .lg-input:focus {
+  border-color: #c42b2b; background: #fff;
+}
+body.light-theme .lg-btn {
+  background: #c42b2b; box-shadow: 0 8px 22px rgba(196,43,43,.26);
+}
+body.light-theme .lg-btn:hover:not(:disabled) { background: #d93333; }
+body.light-theme .lg-error {
+  color: #9f1239; background: #fdecec; border-color: #f6c6c6;
+}
+body.light-theme .lg-fine { color: #8b93a1; }
+
+/* ── narrow ─────────────────────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .lg-claim { max-width: 34%; }
+  .lg-card { right: 5%; width: min(34%, 400px); }
+}
+
+/* The card stops floating and takes the lower half. The claim goes: at this
+   width it would sit behind the card, and a sign-in that needs scrolling to
+   reach the password field is worse than one without a tagline. */
+@media (max-width: 860px) {
+  .lg-art { object-position: 32% 30%; }
+  .lg-veil {
+    background:
+      linear-gradient(180deg, rgba(4,6,11,.62) 0%, rgba(4,6,11,.3) 30%,
+                              rgba(4,6,11,.86) 62%, rgba(4,6,11,.95) 100%);
+  }
+  .lg-brand { left: 24px; top: 26px; }
+  .lg-claim { display: none; }
+  .lg-card {
+    right: auto; left: 50%; top: auto; bottom: 0;
+    transform: translateX(-50%);
+    width: 100%; max-width: 460px; min-width: 0;
+    border-radius: 18px 18px 0 0;
+    border-bottom: 0;
+    padding: 26px 24px calc(26px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (max-width: 420px) {
+  .lg-mark { font-size: 20px; }
+  .lg-card { padding-left: 20px; padding-right: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-btn, .lg-input { transition: none; }
+}
