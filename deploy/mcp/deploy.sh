@@ -485,6 +485,15 @@ $(if [ "$PLATFORM" = "openshift" ]; then cat <<OSEOF
   - apiGroups: [tekton.dev]
     resources: [pipelines, pipelineruns, tasks, taskruns]
     verbs: [get, list, watch]
+  # Migration Toolkit for Applications. Without this the Workload
+  # Modernization Agent can see that the API group is served and still read
+  # nothing in it, which the toolchain panel reports as "MTA is installed,
+  # but this service account may not read its resources". Three groups
+  # because MTA has been renamed twice and all three are still in the field:
+  # tackle.konveyor.io (6.x), mta.konveyor.io (7.x+), konveyor.io (upstream).
+  - apiGroups: [tackle.konveyor.io, mta.konveyor.io, konveyor.io]
+    resources: [tackles]
+    verbs: [get, list, watch]
   - apiGroups: [authorization.k8s.io]
     resources: [subjectaccessreviews]
     verbs: [create]

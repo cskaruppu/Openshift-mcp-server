@@ -1,0 +1,63 @@
+# ---------------------------------------------------------------------------
+# Grant the agent read on the Migration Toolkit for Applications
+# ---------------------------------------------------------------------------
+# Apply this when the Workload Modernization Agent's toolchain panel shows:
+#
+#   "MTA is installed, but this service account may not read its resources.
+#    Grant read on the MTA API group — a cluster-side role binding, no image
+#    rebuild."
+#
+# That message means the readiness probe got a 403, not a 404 — the API group
+# is served, so MTA really is installed, and only RBAC is missing. The agent
+# deliberately tells those two apart rather than reporting "MTA not found",
+# which would send someone to install a product they already run.
+#
+#   oc apply -f deploy/rbac-mta.yaml
+#
+# Takes effect immediately. No restart, no redeploy, no image rebuild — the
+# next readiness check picks it up.
+#
+# Read-only, and only the kind the probe asks for. The analysis findings
+# themselves come from MTA's own Hub REST API over its Route, which the base
+# reader role already covers. This agent never writes an MTA object.
+#
+# If your ServiceAccount or namespace differ from the defaults, edit the
+# subjects at the bottom — nothing else changes.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentic-ai-server-mta
+  labels:
+    app.kubernetes.io/name: agentic-ai-server
+    app.kubernetes.io/component: mta-rbac
+rules:
+  # Three API groups because MTA has been renamed twice and all three are
+  # still in the field: tackle.konveyor.io is MTA 6.x, mta.konveyor.io is
+  # MTA 7.x and later, konveyor.io is upstream Konveyor. Granting all three
+  # costs nothing on a cluster that serves only one.
+  - apiGroups:
+      - "tackle.konveyor.io"
+      - "mta.konveyor.io"
+      - "konveyor.io"
+    resources: ["tackles"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentic-ai-server-mta-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: agentic-ai-server-mta
+subjects:
+  # The hub (dashboard) and the per-cluster MCP server. Both run the same
+  # readiness code, so both need the read or the panel disagrees with itself
+  # depending on which one answered.
+  - kind: ServiceAccount
+    name: agentic-ai-server
+    namespace: openshift-mcp
+  - kind: ServiceAccount
+    name: agentic-ai-agent
+    namespace: openshift-mcp
