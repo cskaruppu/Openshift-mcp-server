@@ -137,6 +137,7 @@ Its tools cannot shadow a built-in — dispatch resolves built-ins first.
 | Who owns it, and is it behaving? | Agent Registry → **Governance** |
 | Every endpoint, every tool, every framework | [`AGENT-CATALOG.md`](AGENT-CATALOG.md) |
 | The same, as a spreadsheet | `TCS-Agentic-AI-Agent-Catalog.xlsx` |
+| Prove the Workload Modernization Agent works, on one VMware VM | [`validate-workload-modernization.md`](validate-workload-modernization.md) |
 
 ---
 
