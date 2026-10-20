@@ -190,8 +190,6 @@ export function LoginOverlay() {
 
         {error && <div className="lg-error" role="alert">{error}</div>}
         </div>
-
-        <div className="lg-fine">MCP Gateway · Multi-cluster</div>
       </div>
     </div>
   );
