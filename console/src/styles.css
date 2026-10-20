@@ -8095,26 +8095,26 @@ h3.widget-title {
      That streak is what the eye actually reads as glass; without it a
      translucent rounded rectangle is just a dimmer with a border. */
   background:
-    linear-gradient(118deg, rgba(255,255,255,0) 20%,
-                            rgba(255,255,255,.12) 33%,
-                            rgba(255,255,255,.02) 44%,
-                            rgba(255,255,255,0) 52%,
-                            rgba(255,255,255,.05) 63%,
-                            rgba(255,255,255,0) 72%),
-    linear-gradient(152deg, rgba(255,255,255,.19), rgba(255,255,255,.04)),
-    linear-gradient(165deg, rgba(8,13,26,.46), rgba(5,8,16,.58));
-  border: 1px solid rgba(255,255,255,.20);
+    linear-gradient(118deg, rgba(190,228,255,0) 20%,
+                            rgba(190,228,255,.15) 33%,
+                            rgba(190,228,255,.025) 44%,
+                            rgba(190,228,255,0) 52%,
+                            rgba(190,228,255,.065) 63%,
+                            rgba(190,228,255,0) 72%),
+    linear-gradient(152deg, rgba(164,208,248,.22), rgba(120,170,220,.05)),
+    linear-gradient(165deg, rgba(10,26,48,.50), rgba(6,15,30,.62));
+  border: 1px solid rgba(152,202,246,.26);
   /* The bright rim is on the TOP edge only and the bottom one is a quarter of
      it. An even rim all the way round reads as a stroked box; an uneven one
      reads as a thickness catching the light. The last shadow is an ambient
      bloom in the brand blue — it is attached to the card, not painted into
      the ground, so it cannot disturb the page edges. */
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,.38),
-    inset 1px 0 0 rgba(255,255,255,.14),
+    inset 0 1px 0 rgba(198,232,255,.44),
+    inset 1px 0 0 rgba(172,216,252,.18),
     inset 0 -1px 0 rgba(255,255,255,.07),
     0 32px 80px rgba(0,0,0,.60),
-    0 0 140px -10px rgba(47,127,224,.20);
+    0 0 150px -10px rgba(56,142,230,.26);
   backdrop-filter: blur(80px) saturate(175%);
   -webkit-backdrop-filter: blur(80px) saturate(175%);
 }
@@ -8132,9 +8132,9 @@ h3.widget-title {
 .lg-tabs {
   display: flex; gap: 4px; margin: 28px 0 4px; padding: 4px;
   border-radius: 13px;
-  background: rgba(255,255,255,.05);
-  border: 1px solid rgba(255,255,255,.10);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+  background: rgba(150,200,245,.07);
+  border: 1px solid rgba(150,200,245,.13);
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.09);
 }
 .lg-tab {
   flex: 1; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -8145,8 +8145,8 @@ h3.widget-title {
 }
 .lg-tab.on {
   color: #fff;
-  background: linear-gradient(160deg, rgba(255,255,255,.17), rgba(255,255,255,.07));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.26),
+  background: linear-gradient(160deg, rgba(186,224,255,.20), rgba(140,190,235,.08));
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.30),
               inset 0 -2px 0 var(--lg-yellow),
               0 6px 16px rgba(0,0,0,.26);
 }
@@ -8159,19 +8159,19 @@ h3.widget-title {
 .lg-input {
   width: 100%; height: 48px; padding: 0 16px;
   font: inherit; font-size: 14px; color: #fff;
-  background: linear-gradient(170deg, rgba(255,255,255,.10), rgba(255,255,255,.045));
-  border: 1px solid rgba(255,255,255,.18); border-radius: 12px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+  background: linear-gradient(170deg, rgba(178,218,252,.13), rgba(140,186,230,.05));
+  border: 1px solid rgba(160,206,248,.24); border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.18);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   transition: border-color .15s, background .15s, box-shadow .15s;
 }
 .lg-input::placeholder { color: rgba(255,255,255,.68); }
-.lg-input:hover { border-color: rgba(255,255,255,.30); }
+.lg-input:hover { border-color: rgba(176,216,250,.38); }
 .lg-input:focus {
   outline: none; border-color: var(--lg-blue-2);
-  background: linear-gradient(170deg, rgba(255,255,255,.15), rgba(255,255,255,.07));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 0 0 3px rgba(47,127,224,.26);
+  background: linear-gradient(170deg, rgba(188,226,255,.19), rgba(150,196,240,.08));
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.26), 0 0 0 3px rgba(47,127,224,.30);
 }
 
 /* The one solid object on the page. Everything else is a sheet you can see
@@ -8263,13 +8263,13 @@ body.light-theme .lg-veil {
 body.light-theme .lg-form {
   background:
     linear-gradient(118deg, rgba(255,255,255,0) 20%,
-                            rgba(255,255,255,.42) 33%,
-                            rgba(255,255,255,.08) 44%,
+                            rgba(255,255,255,.46) 33%,
+                            rgba(255,255,255,.10) 44%,
                             rgba(255,255,255,0) 52%,
-                            rgba(255,255,255,.18) 63%,
+                            rgba(255,255,255,.20) 63%,
                             rgba(255,255,255,0) 72%),
-    linear-gradient(165deg, rgba(255,255,255,.50), rgba(236,242,250,.62));
-  border-color: rgba(255,255,255,.58);
+    linear-gradient(165deg, rgba(243,250,255,.54), rgba(219,234,250,.66));
+  border-color: rgba(255,255,255,.66);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,.85),
     inset 0 -1px 0 rgba(14,18,25,.07),
@@ -8327,9 +8327,9 @@ body.light-theme .lg-error {
    trades a gap for flat grey glass.
 
    Nothing fires below 1.8:1, so a 16:9 window looks exactly as it did. */
-@media (min-aspect-ratio: 9/5) { .lg-art { object-position: 22% 100%; } }
-@media (min-aspect-ratio: 2/1)  { .lg-art { object-position: 6%  100%; } }
-@media (min-aspect-ratio: 23/10){ .lg-art { object-position: 2%  100%; } }
+@media (min-aspect-ratio: 9/5) { .lg-art { object-position: 32% 100%; } }
+@media (min-aspect-ratio: 2/1)  { .lg-art { object-position: 20% 100%; } }
+@media (min-aspect-ratio: 23/10){ .lg-art { object-position: 15% 100%; } }
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {
