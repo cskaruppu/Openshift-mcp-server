@@ -7882,9 +7882,13 @@ h3.widget-title {
 .lg-screen {
   position: fixed; inset: 0; z-index: 99999;
   display: grid;
-  grid-template-columns: 1fr clamp(372px, 36%, 520px);
+  /* The card column's width, named once. The artwork is anchored off it, so
+     the two stay in register at every window size instead of drifting apart
+     and leaving the glass with nothing behind it. */
+  --lg-col: clamp(372px, 36%, 520px);
+  grid-template-columns: 1fr var(--lg-col);
   overflow: hidden;
-  background: var(--lg-black);
+  background: var(--lg-ground);
 
   /* Blue carries the action, yellow the one thing being pointed at, grey the
      supporting text, black the ground. Four roles, four colours — the moment a
@@ -7893,8 +7897,14 @@ h3.widget-title {
   --lg-blue-2: #4596ef;
   --lg-blue-d: #1559b4;
   --lg-yellow: #f2c230;
-  --lg-grey:   #97a1b2;
+  --lg-grey:   #a7b0be;   /* measured: 4.42:1 at #97a1b2 over the card's
+                              brightest composite, which fails 4.5 for the
+                              11.5px labels. This clears it at 5.2:1. */
   --lg-black:  #05070c;
+  /* The one ground colour, and it is not chosen by taste: it is the colour the
+     photograph's own background already is at its edges, so the picture has
+     nowhere to end. Every edge of the page is this, in both themes. */
+  --lg-ground: #010205;
   --lg-panel:  #080c14;
 
   /* Houschka Rounded Alt DemiBold is licensed and not servable from a public
@@ -7919,22 +7929,48 @@ h3.widget-title {
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */
 .lg-screen picture { display: contents; }
-.lg-art {
-  position: absolute; inset: 0; width: 100%; height: 88%;
-  /* `contain`, not `cover`. In the source the head IS the full height, so any
-     cover fit makes it fill the screen top to bottom and the composition
-     collapses to a close-up of a face. Contained — and at 88% of the height —
-     the whole artwork shows at something closer to the size it was composed
-     at: head, globe, HUD.
 
-     Anchored top-left on purpose. Centred, the leftover splits into gaps on
-     both sides and the picture's own left edge, which is the robot's body
-     rather than black, shows as a seam. Flush to the top-left, every bit of
-     leftover lands on the right, where the panel already covers it, and along
-     the bottom, where the veil fades the picture into the page. */
-  object-fit: contain;
-  object-position: 0% 0%;
+/* The picture is an object sitting IN the ground, not a backdrop filling it.
+   That distinction is the whole fix: a mask is resolved against the element's
+   own box, so while the box was the whole window and `contain` painted a small
+   letterboxed picture somewhere inside it, the mask's solid centre covered the
+   entire painted area and nothing ever faded. Giving the box the picture's own
+   aspect ratio makes box and picture the same rectangle, and the mask finally
+   lands where the pixels are.
+   `cover` rather than `contain` for the last rounding pixel: a half-pixel
+   mismatch crops instead of letterboxing, and a crop is invisible where a
+   hairline bar is not. */
+.lg-art {
+  position: absolute;
+  /* Tucked a little way under the card. Glass with nothing behind it is
+     just grey plastic — backdrop-filter has nothing to refract — so the
+     picture has to pass beneath it for the surface to read as glass at all.
+     Anchored to the column, not the window, so the overlap holds. */
+  right: calc(var(--lg-col) - 300px);
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(63%, 136vh);
+  aspect-ratio: 1220 / 634;
+  height: auto;
+  object-fit: cover;
   display: block;
+
+  /* Two edge fades intersected, not a vignette. A radial mask large enough to
+     leave the middle alone cannot reach the corners of a 1.92 rectangle, and
+     one small enough to reach them dims the robot. Per-edge linear fades do
+     exactly and only what is needed: the sides and top are already black in
+     the source (sampled: 0,0,0 to 3,6,11 against a 1,2,5 ground), so they
+     need a few percent to kill the seam; the bottom edge is the robot's lit
+     neck cut off mid-metal, so it gets a long dissolve instead. */
+  -webkit-mask-image:
+    linear-gradient(90deg,  transparent 0, #000 7%, #000 90%, transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 9%, #000 74%, transparent 100%);
+  mask-image:
+    linear-gradient(90deg,  transparent 0, #000 7%, #000 90%, transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 9%, #000 74%, transparent 100%);
+  -webkit-mask-composite: source-in;   /* the WebKit spelling of intersect */
+  mask-composite: intersect;
 }
 
 /* A grade, not a dimmer. It deepens the corners and cools the far side so the
@@ -7942,14 +7978,8 @@ h3.widget-title {
    the robot at full strength. */
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
-  background:
-    /* behind the lockup */
-    linear-gradient(180deg, rgba(5,7,12,.70) 0%, rgba(5,7,12,.10) 20%, rgba(5,7,12,0) 34%),
-    /* the bottom band: the picture fades into the page rather than stopping
-       at the edge of its own frame */
-    linear-gradient(0deg, #05070c 0%, rgba(5,7,12,.92) 7%,
-                          rgba(5,7,12,.45) 15%, rgba(5,7,12,0) 26%),
-    radial-gradient(136% 120% at 30% 40%, transparent 42%, rgba(2,4,9,.58) 100%);
+  background: linear-gradient(180deg,
+    rgba(1,2,5,.78) 0%, rgba(1,2,5,.18) 15%, rgba(1,2,5,0) 27%);
 }
 
 /* ── the lockup, over the photograph ────────────────────────────────────── */
@@ -7985,38 +8015,35 @@ h3.widget-title {
 .lg-panel {
   position: relative; z-index: 4;
   display: flex; flex-direction: column; justify-content: center;
-  padding: 48px clamp(34px, 3.4vw, 56px);
-  /* Frosted, not opaque. A solid slab beside a dark photograph reads as two
-     unrelated halves; letting the picture's light bleed through, blurred past
-     recognition, keeps them one screen. The blend at the left edge runs a long
-     way, because a short one reads as a soft-edged box and a long one reads as
-     depth. */
-  background: linear-gradient(90deg,
-    rgba(8,12,20,.44) 0%, rgba(8,12,20,.72) 7%,
-    rgba(8,12,20,.80) 15%, rgba(8,12,20,.80) 100%);
-  backdrop-filter: blur(30px) saturate(132%);
-  -webkit-backdrop-filter: blur(30px) saturate(132%);
+  padding: 48px clamp(28px, 3vw, 52px);
+  background: none;
 }
 /* Without backdrop-filter the translucency would just look washed out, so the
    panel goes opaque instead of half-finished. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .lg-panel {
-    background: linear-gradient(90deg,
-      rgba(8,12,20,.72) 0%, rgba(8,12,20,.93) 7%,
-      var(--lg-panel) 15%, var(--lg-panel) 100%);
-  }
-}
-/* Carried past its own column so the gradient starts over the photograph
-   rather than at the column edge, which is what makes the seam disappear. */
-.lg-panel::before {
-  content: ''; position: absolute; inset: 0 100% 0 auto;
-  width: clamp(150px, 16vw, 320px);
-  background: linear-gradient(90deg,
-    rgba(8,12,20,0) 0%, rgba(8,12,20,.26) 42%, rgba(8,12,20,.72) 100%);
-  pointer-events: none;
-}
 
-.lg-form { width: 100%; max-width: 352px; align-self: center; }
+
+/* The single piece of glass. Everything else is the flat ground or the
+   photograph dissolving into it, so this is the only thing that reads as a
+   surface — which is what makes it the thing you look at. */
+.lg-form {
+  width: 100%; max-width: 372px; align-self: center;
+  padding: 38px 34px; border-radius: 18px;
+  /* Two layers, and the order matters. The lower one is a dark scrim: real
+     frosted glass is translucent, not transparent, and without it the photo
+     behind comes through at full strength and the labels sit on whatever the
+     picture happens to be doing. The upper one is the white sheen that makes
+     it read as a surface rather than a dimmer. Measured against both extremes
+     of the picture — its black starfield and the blown-out "Ai" glyph — this
+     is where the grey label text clears 4.5:1 on BOTH. */
+  background:
+    linear-gradient(165deg, rgba(255,255,255,.10), rgba(255,255,255,.045)),
+    linear-gradient(165deg, rgba(6,10,20,.80), rgba(6,10,20,.88));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14),
+              0 28px 70px rgba(0,0,0,.52);
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
+}
 
 .lg-title {
   margin: 0; font-size: clamp(22px, 1.9vw, 30px); font-weight: 700;
@@ -8048,7 +8075,7 @@ h3.widget-title {
   border: 1px solid rgba(255,255,255,.15); border-radius: 10px;
   transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.lg-input::placeholder { color: rgba(255,255,255,.34); }
+.lg-input::placeholder { color: rgba(255,255,255,.42); }
 .lg-input:hover { border-color: rgba(255,255,255,.26); }
 .lg-input:focus {
   outline: none; border-color: var(--lg-blue);
@@ -8095,21 +8122,20 @@ h3.widget-title {
 
 /* ── light theme: the photograph stays, the panel turns to paper ────────── */
 .lg-screen { --lg-paper: #ffffff; }
-body.light-theme .lg-panel {
-  background: linear-gradient(90deg,
-    rgba(250,251,253,.50) 0%, rgba(250,251,253,.74) 7%,
-    rgba(250,251,253,.83) 15%, rgba(250,251,253,.83) 100%);
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  body.light-theme .lg-panel {
-    background: linear-gradient(90deg,
-      rgba(255,255,255,.78) 0%, rgba(255,255,255,.95) 7%,
-      var(--lg-paper) 15%, var(--lg-paper) 100%);
-  }
-}
-body.light-theme .lg-panel::before {
-  background: linear-gradient(90deg,
-    rgba(255,255,255,0) 0%, rgba(255,255,255,.3) 42%, rgba(255,255,255,.78) 100%);
+
+/* The ground does NOT flip. It is the photograph's own black, and lifting it
+   for light theme would put a visible rectangle back around the picture —
+   which is the one thing this layout exists to avoid. Light theme turns the
+   card to frosted paper; the room around it stays as it is. */
+body.light-theme .lg-screen { --lg-ground: #010205; }
+
+/* Without this the card keeps its dark glass while the type inside goes to
+   #0e1219 — near-black text on near-black glass. */
+body.light-theme .lg-form {
+  background: linear-gradient(165deg, rgba(255,255,255,.93), rgba(246,248,251,.86));
+  border-color: rgba(255,255,255,.7);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9),
+              0 28px 70px rgba(0,0,0,.52);
 }
 body.light-theme .lg-title { color: #0e1219; }
 body.light-theme .lg-lede { color: #4b5563; }
@@ -8117,6 +8143,7 @@ body.light-theme .lg-tabs { border-bottom-color: rgba(14,18,25,.1); }
 body.light-theme .lg-tab { color: #8b93a1; }
 body.light-theme .lg-tab:hover { color: #4b5563; }
 body.light-theme .lg-tab.on { color: #0e1219; border-bottom-color: var(--lg-blue-d); }
+body.light-theme .lg-tabs { box-shadow: 0 1px 0 rgba(255,255,255,.75); }
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
   color: #0e1219; background: #fff; border-color: rgba(14,18,25,.18);
@@ -8134,14 +8161,14 @@ body.light-theme .lg-btn:hover:not(:disabled) { background: var(--lg-blue); }
 body.light-theme .lg-error {
   color: #9f1239; background: #fdecec; border-color: #f6c6c6;
 }
-body.light-theme .lg-fine { color: #5b6473; opacity: 1; }
-body.light-theme .lg-theme {
-  background: rgba(14,18,25,.05); border-color: rgba(14,18,25,.12); color: #0e1219;
-}
+/* The fine print and the theme toggle sit on the ground, not on the card, and
+   the ground does not flip — so neither do they. Darkening them for light
+   theme put near-black text and a near-black glyph on near-black. */
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {
-  .lg-screen { grid-template-columns: 1fr clamp(340px, 44%, 460px); }
+  .lg-screen { --lg-col: clamp(340px, 44%, 460px);
+               grid-template-columns: 1fr var(--lg-col); }
   .lg-brand { max-width: 46%; }
 }
 
@@ -8153,33 +8180,28 @@ body.light-theme .lg-theme {
      band that is too short shows the back of the skull and nothing else. Taller
      band, anchored on the face. */
   .lg-screen { grid-template-columns: 1fr; grid-template-rows: 41vh 1fr; }
-  /* The picture is absolutely positioned against the whole screen, which is
-     right when it sits BESIDE the panel and wrong when it sits above it: at
-     phone proportions `cover` then scales it to fill 390x820 and the band
-     shows a quarter of the width blown up to four times its size — which is
-     why it was all cranium. Tied to the band, it covers 390x41vh instead and
-     the head fits. */
-  .lg-art { inset: 0 0 auto 0; height: 41vh; object-position: 44% 24%;
-            transform: none; }
+  /* Stacked, the picture stops being an object in a room and becomes a band
+     across the top, so the box is the band and `cover` crops it to fit. The
+     two-layer side mask goes with it — the band already runs edge to edge —
+     leaving one fade along the bottom where it meets the form. */
+  .lg-art {
+    left: 0; right: auto; top: 0; transform: none;
+    width: 100%; height: 41vh; aspect-ratio: auto;
+    object-fit: cover; object-position: 44% 24%;
+    -webkit-mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
+    -webkit-mask-composite: source-over;
+    mask-composite: add;
+  }
   .lg-brand { left: 24px; top: 24px; max-width: calc(100% - 48px); }
+  /* No scrim under the form on this layout. The band already dissolves into
+     the ground, and a second surface starting at 41vh would draw the very
+     horizontal line the fade is there to remove. The card is the only
+     surface here too. */
   .lg-panel {
     padding: 34px 24px calc(54px + env(safe-area-inset-bottom, 0px));
-    /* Reaches its working opacity fast: stacked, the blend sits directly
-       behind the heading and anything slower leaves "Sign in" floating. */
-    background: linear-gradient(180deg,
-      rgba(8,12,20,.60) 0%, rgba(8,12,20,.82) 9%, rgba(8,12,20,.82) 100%);
+    background: none;
     justify-content: center;
-  }
-  .lg-panel::before {
-    inset: auto 0 100% 0; width: auto; height: 110px;
-    background: linear-gradient(180deg, rgba(8,12,20,0), rgba(8,12,20,.86));
-  }
-  body.light-theme .lg-panel {
-    background: linear-gradient(180deg,
-      rgba(250,251,253,.66) 0%, rgba(250,251,253,.85) 9%, rgba(250,251,253,.85) 100%);
-  }
-  body.light-theme .lg-panel::before {
-    background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.9));
   }
   .lg-theme { top: 18px; right: 20px; }
   .lg-form { max-width: 440px; }

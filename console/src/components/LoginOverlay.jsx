@@ -5,15 +5,18 @@ import { useThemeStore } from "../store/themeStore";
 /**
  * The sign-in screen.
  *
- * The artwork fills the page and the card floats on it. The whole picture is
- * kept — globe, HUD, its own wordmark — so the only things removed are the
- * two that were never part of it: a five-pixel white strip the source
- * screenshot carried at the top, and a stray UI button below the robot's chin.
+ * One ground, one picture sitting in it, one piece of glass. The page is a
+ * single near-black — the colour the photograph's own background already is,
+ * so the picture has no edge to show — and the card is the only surface on
+ * it. The whole picture is kept: globe, HUD, its own wordmark. The only
+ * things removed are the two that were never part of it: a five-pixel white
+ * strip the source screenshot carried at the top, and a stray UI button
+ * below the robot's chin.
  *
  * What makes this read as composed rather than as a box dropped on a photo is
- * entirely in the CSS: the veil is light, so the blues survive, and it deepens
- * only under the card and behind the brand line, which are the two places
- * text has to stay legible over whatever the picture is doing.
+ * entirely in the CSS: the picture's four edges are dissolved rather than cut,
+ * and its right side runs on underneath the card, which is what gives the
+ * glass something to refract. Glass with nothing behind it is grey plastic.
  *
  * Nothing here is a statistic. Counts of agents, clusters and tools are real
  * after sign-in and decoration on the door.
@@ -70,9 +73,8 @@ export function LoginOverlay() {
 
   return (
     <div className="lg-screen">
-      {/* The photograph fills the window. A deep neutral sits behind it in
-          CSS, so a missing file leaves a designed screen rather than a broken
-          frame. */}
+      {/* The ground colour is on .lg-screen, not on the image, so a missing
+          file leaves a designed screen rather than a broken frame. */}
       <picture>
         <source srcSet="/brand/login-hero.webp" type="image/webp" />
         <img
@@ -103,10 +105,9 @@ export function LoginOverlay() {
       </div>
 
 
-      {/* The form sits on a panel, not in a box floating on a photograph.
-          The panel's left edge is a long gradient rather than a line, so the
-          picture dissolves into it — which is also what stops the artwork's
-          own wordmark reading as a word someone cut in half. */}
+      {/* The panel is now only a column — it has no surface of its own. The
+          form inside it is the single piece of glass on the page, which is
+          what makes it the thing you look at. */}
       <div className="lg-panel">
         <button
           className="lg-theme"
