@@ -7982,8 +7982,8 @@ h3.widget-title {
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(1,2,5,.70) 0%, rgba(1,2,5,.16) 14%, rgba(1,2,5,0) 26%),
-    linear-gradient(0deg,   rgba(1,2,5,.46) 0%, rgba(1,2,5,.10) 10%, rgba(1,2,5,0) 20%),
+    linear-gradient(180deg, rgba(1,2,5,.22) 0%, rgba(1,2,5,.05) 14%, rgba(1,2,5,0) 26%),
+    linear-gradient(0deg,   rgba(1,2,5,.10) 0%, rgba(1,2,5,.02) 10%, rgba(1,2,5,0) 20%),
     linear-gradient(90deg,  rgba(1,2,5,0) 0%,   rgba(1,2,5,0) 44%,
                             rgba(1,2,5,.16) 70%, rgba(1,2,5,.34) 92%,
                             rgba(1,2,5,.38) 100%);
@@ -8016,11 +8016,15 @@ h3.widget-title {
     radial-gradient(ellipse 44% 52% at 6% 88%,
       rgba(118,150,190,.15), rgba(118,150,190,0) 70%),
     radial-gradient(ellipse 34% 62% at 86% 40%,
-      rgba(132,166,208,.30), rgba(132,166,208,0) 74%),
+      rgba(132,166,208,.26), rgba(132,166,208,0) 74%),
     radial-gradient(ellipse 52% 86% at 96% 54%,
-      rgba(108,140,184,.20), rgba(108,140,184,0) 76%),
+      rgba(108,140,184,.12), rgba(108,140,184,0) 76%),
     radial-gradient(ellipse 36% 40% at 88% 96%,
       rgba(104,134,172,.13), rgba(104,134,172,0) 70%),
+    radial-gradient(ellipse 72% 28% at 50% -6%,
+      rgba(128,160,202,.25), rgba(128,160,202,0) 74%),
+    radial-gradient(ellipse 84% 26% at 50% 106%,
+      rgba(112,144,186,.31), rgba(112,144,186,0) 74%),
     linear-gradient(118deg, rgba(205,225,245,0) 17%,
                             rgba(205,225,245,.075) 26%,
                             rgba(205,225,245,0) 36%),
