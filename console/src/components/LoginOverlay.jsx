@@ -70,18 +70,9 @@ export function LoginOverlay() {
 
   return (
     <div className="lg-screen">
-      {/* The plate. A deep neutral sits behind it in CSS, so a missing file
-          leaves a designed screen rather than a broken frame. */}
-      {/* Two copies of the same file. The back one fills the window and is
-          blurred past recognition; the front one is contained, so the whole
-          picture is always visible and never cropped. What would otherwise be
-          a black letterbox bar is a soft continuation of the image instead —
-          the browser caches one download and paints it twice. */}
-      <picture>
-        <source srcSet="/brand/login-hero.webp" type="image/webp" />
-        <img className="lg-art-bg" src="/brand/login-hero.jpg"
-             alt="" aria-hidden="true" decoding="async" />
-      </picture>
+      {/* The photograph fills the window. A deep neutral sits behind it in
+          CSS, so a missing file leaves a designed screen rather than a broken
+          frame. */}
       <picture>
         <source srcSet="/brand/login-hero.webp" type="image/webp" />
         <img
@@ -111,15 +102,21 @@ export function LoginOverlay() {
         <h1 className="lg-mark">TCS Agentic AI for Hybrid Infrastructure</h1>
       </div>
 
-      <button
-        className="lg-theme"
-        onClick={toggleTheme}
-        title="Toggle light/dark theme"
-        aria-label="Toggle light and dark theme"
-        dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
-      />
 
-      <div className="lg-card">
+      {/* The form sits on a panel, not in a box floating on a photograph.
+          The panel's left edge is a long gradient rather than a line, so the
+          picture dissolves into it — which is also what stops the artwork's
+          own wordmark reading as a word someone cut in half. */}
+      <div className="lg-panel">
+        <button
+          className="lg-theme"
+          onClick={toggleTheme}
+          title="Toggle light/dark theme"
+          aria-label="Toggle light and dark theme"
+          dangerouslySetInnerHTML={{ __html: theme === "light" ? "&#x2600;" : "&#x263E;" }}
+        />
+
+        <div className="lg-form">
         <h2 className="lg-title">Sign in</h2>
         <p className="lg-lede">Platform account or API token</p>
 
@@ -191,6 +188,8 @@ export function LoginOverlay() {
         </form>
 
         {error && <div className="lg-error" role="alert">{error}</div>}
+        </div>
+
         <div className="lg-fine">MCP Gateway · Multi-cluster</div>
       </div>
     </div>

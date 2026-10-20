@@ -7861,44 +7861,46 @@ h3.widget-title {
 }
 
 /* ===========================================================================
-   SIGN-IN SCREEN — the artwork behind, the card in front
+   SIGN-IN SCREEN
    ===========================================================================
    Its own `.lg-` namespace; every older `.login-` rule above is untouched, so
    reverting this screen is deleting this block and restoring one component.
 
-   The whole picture is kept. Only two things were cropped away, and neither
-   was part of the artwork: a five-pixel white strip the source screenshot
-   carried along its top edge, and a stray UI button below the robot's chin.
+   The photograph fills the window and the form sits on a panel beside it. That
+   shape is the whole design, and it is chosen for a structural reason rather
+   than a stylistic one: a 1.92:1 picture cannot fill an arbitrary browser
+   window and stay whole, so either it crops or it letterboxes. A panel settles
+   the argument — the picture crops against an edge it never reaches, because
+   the panel is already there.
 
-   The veil is the thing that decides whether this looks composed or cheap. It
-   is light almost everywhere, so the blues that make the picture worth using
-   survive; it deepens in exactly two places, under the card and behind the
-   brand line, because those are the only places text has to stay legible over
-   whatever the image happens to be doing there.
+   The panel's left edge is a long gradient, not a line. That is what makes the
+   picture dissolve into the form's surface instead of being cut by it, and it
+   is also what stops the artwork's own wordmark reading as a word someone
+   sliced in half.
    ======================================================================== */
 
 .lg-screen {
   position: fixed; inset: 0; z-index: 99999;
+  display: grid;
+  grid-template-columns: 1fr clamp(372px, 36%, 520px);
   overflow: hidden;
-  /* A real fallback: if the file 404s this is still a designed dark screen
-     with the lockup and the form on it, not a broken frame. */
   background: var(--lg-black);
 
   /* Blue carries the action, yellow the one thing being pointed at, grey the
      supporting text, black the ground. Four roles, four colours — the moment a
      fifth appears, none of them means anything. */
-  --lg-blue:   #2f7fe0;   /* primary action; steps lighter on dark */
-  --lg-blue-2: #4596ef;   /* hover */
-  --lg-blue-d: #1559b4;   /* the same blue on a light card */
-  --lg-yellow: #f2c230;   /* accent — active tab, focus, the emphasised word */
-  --lg-grey:   #97a1b2;   /* secondary text */
-  --lg-black:  #05070c;   /* ground */
+  --lg-blue:   #2f7fe0;
+  --lg-blue-2: #4596ef;
+  --lg-blue-d: #1559b4;
+  --lg-yellow: #f2c230;
+  --lg-grey:   #97a1b2;
+  --lg-black:  #05070c;
+  --lg-panel:  #080c14;
 
   /* Houschka Rounded Alt DemiBold is licensed and not servable from a public
      CDN, so it is named first and WILL be used the moment the webfont files
      are dropped in (see the commented @font-face below). Until then Nunito
-     carries it: geometric and rounded, which is the shape Houschka has, rather
-     than silently falling back to Inter and looking like nothing was asked. */
+     carries it: geometric and rounded, which is the shape Houschka has. */
   --lg-font: "Houschka Rounded Alt", "Houschka Rounded",
              "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-family: var(--lg-font);
@@ -7917,60 +7919,35 @@ h3.widget-title {
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */
 .lg-screen picture { display: contents; }
-/* The fill. Scaled past the edges so the blur has pixels to work with rather
-   than smearing the frame border inward. */
-.lg-art-bg {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; object-position: center;
-  display: block;
-  transform: scale(1.12);
-  filter: blur(42px) saturate(130%) brightness(.62);
-}
-
 .lg-art {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  /* `contain`, not `cover`. cover fills the window and discards whatever
-     hangs over the edge, so on a window that is not 1.92:1 it was cutting the
-     robot's chest and the top of its head. contain scales the picture until
-     the WHOLE of it fits and leaves the remainder as background — and because
-     the artwork's own edges are near-black and the screen behind it is
-     #05070c, that remainder does not read as letterboxing. Nothing is ever
-     cropped, at any window shape. */
-  object-fit: contain;
-  object-position: center;
+  object-fit: cover;
+  /* The head runs the full height of the artwork, so a vertical crop takes
+     either the cranium or the chin. Anchored high it takes neither; what goes
+     is the robot's chest and the HUD strip along the bottom. */
+  object-position: 34% 14%;
   display: block;
 }
 
+/* A grade, not a dimmer. It deepens the corners and cools the far side so the
+   photograph reads as a designed backdrop rather than a wallpaper, and leaves
+   the robot at full strength. */
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
   background:
-    /* under the card */
-    linear-gradient(270deg, rgba(4,7,14,.80) 0%, rgba(4,7,14,.56) 26%,
-                            rgba(4,7,14,.12) 46%, rgba(4,7,14,0) 62%),
-    /* The one local shadow, and the reason it exists: the card's left edge
-       falls inside the artwork's own wordmark, so a few letters of it sit in
-       the open and read as a word cut in half rather than as a decision.
-       Dimming that band alone leaves the robot and the globe at full strength
-       — which is the difference between this and veiling the whole picture. */
-    radial-gradient(31% 23% at 57% 69%, rgba(4,7,14,.88) 0%,
-                                        rgba(4,7,14,.52) 56%, rgba(4,7,14,0) 100%),
-    /* behind the brand lockup */
-    linear-gradient(180deg, rgba(4,7,14,.66) 0%, rgba(4,7,14,.08) 22%, rgba(4,7,14,0) 38%),
-    /* a vignette, so the picture does not fight the browser chrome */
-    radial-gradient(128% 112% at 38% 46%, transparent 40%, rgba(2,4,9,.56) 100%);
+    linear-gradient(180deg, rgba(4,7,14,.70) 0%, rgba(4,7,14,.10) 24%, rgba(4,7,14,0) 42%),
+    radial-gradient(132% 116% at 30% 44%, transparent 38%, rgba(2,4,9,.62) 100%);
 }
 
-/* ── brand and claim ────────────────────────────────────────────────────── */
+/* ── the lockup, over the photograph ────────────────────────────────────── */
 .lg-brand {
-  position: absolute; left: 4.4%; top: 7.5%; z-index: 3; color: #fff;
+  position: absolute; left: 4.2%; top: 7.5%; z-index: 3; color: #fff;
   display: flex; align-items: center; gap: clamp(14px, 1.5vw, 24px);
-  max-width: 56%;
+  max-width: 52%;
 }
 .lg-logo {
   display: block; height: auto; flex: none;
-  width: clamp(118px, 11.5vw, 184px);
-  /* The one thing on this screen that must not be restyled, so it gets a drop
-     shadow for legibility rather than a colour. */
+  width: clamp(118px, 11vw, 178px);
   filter: drop-shadow(0 2px 14px rgba(0,0,0,.72));
 }
 /* The hairline is what makes this one lockup rather than two things that
@@ -7978,174 +7955,210 @@ h3.widget-title {
    so it stays tied to the mark when the product name wraps. */
 .lg-rule {
   flex: none; width: 1px; align-self: stretch;
-  min-height: clamp(34px, 3.4vw, 54px);
+  min-height: clamp(34px, 3.3vw, 52px);
   background: linear-gradient(180deg,
     rgba(255,255,255,0), rgba(255,255,255,.42) 22%,
     rgba(255,255,255,.42) 78%, rgba(255,255,255,0));
 }
 .lg-mark {
   margin: 0; min-width: 0;
-  font-size: clamp(15px, 1.45vw, 24px); font-weight: 600;
+  font-size: clamp(15px, 1.4vw, 23px); font-weight: 600;
   letter-spacing: -.012em; line-height: 1.26; max-width: 22ch;
   color: #fff;
   text-shadow: 0 2px 18px rgba(0,0,0,.78);
 }
 
-/* ── the card, in front ─────────────────────────────────────────────────── */
-.lg-card {
-  position: absolute; z-index: 4; right: 5.5%; top: 50%;
-  transform: translateY(-50%);
-  width: min(27%, 400px); min-width: 330px;
-  padding: 34px 32px; border-radius: 16px;
-  background: rgba(8,12,22,.60);
-  border: 1px solid rgba(255,255,255,.14);
-  box-shadow: 0 34px 80px rgba(0,0,0,.62), inset 0 1px 0 rgba(255,255,255,.07);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
+/* ── the panel ──────────────────────────────────────────────────────────── */
+.lg-panel {
+  position: relative; z-index: 4;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 48px clamp(34px, 3.4vw, 56px);
+  /* The blend runs a long way — roughly a fifth of the panel — because a short
+     one reads as a soft-edged box and a long one reads as depth. */
+  background: linear-gradient(90deg,
+    rgba(8,12,20,.72) 0%, rgba(8,12,20,.93) 7%,
+    var(--lg-panel) 15%, var(--lg-panel) 100%);
 }
+/* Carried past its own column so the gradient starts over the photograph
+   rather than at the column edge, which is what makes the seam disappear. */
+.lg-panel::before {
+  content: ''; position: absolute; inset: 0 100% 0 auto;
+  width: clamp(150px, 16vw, 320px);
+  background: linear-gradient(90deg,
+    rgba(8,12,20,0) 0%, rgba(8,12,20,.26) 42%, rgba(8,12,20,.72) 100%);
+  pointer-events: none;
+}
+
+.lg-form { width: 100%; max-width: 352px; margin: 0 auto; }
+
 .lg-title {
-  margin: 0; font-size: 22px; font-weight: 700;
-  letter-spacing: -.018em; color: #fff;
+  margin: 0; font-size: clamp(22px, 1.9vw, 30px); font-weight: 700;
+  letter-spacing: -.02em; color: #fff;
 }
-.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: var(--lg-grey); }
+.lg-lede { margin: 6px 0 0; font-size: 13.5px; color: var(--lg-grey); }
 
 .lg-tabs {
-  display: flex; gap: 2px; margin: 22px 0 4px;
-  border-bottom: 1px solid rgba(255,255,255,.14);
+  display: flex; gap: 2px; margin: 30px 0 6px;
+  border-bottom: 1px solid rgba(255,255,255,.12);
 }
 .lg-tab {
-  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  padding: 8px 14px; color: rgba(255,255,255,.46);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 9px 15px; color: rgba(255,255,255,.46);
   background: none; border: 0; border-bottom: 2px solid transparent;
   margin-bottom: -1px;
 }
 .lg-tab.on { color: #fff; border-bottom-color: var(--lg-yellow); }
-.lg-tab:hover { color: rgba(255,255,255,.78); }
+.lg-tab:hover { color: rgba(255,255,255,.8); }
 
 .lg-label {
-  display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
-  color: var(--lg-grey); margin: 18px 0 7px;
+  display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .03em;
+  color: var(--lg-grey); margin: 22px 0 8px;
 }
 .lg-input {
-  width: 100%; height: 40px; padding: 0 13px;
-  font: inherit; font-size: 13.5px; color: #fff;
-  background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.18); border-radius: 9px;
-  transition: border-color .15s, background .15s;
+  width: 100%; height: 46px; padding: 0 15px;
+  font: inherit; font-size: 14px; color: #fff;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.15); border-radius: 10px;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.lg-input::placeholder { color: rgba(255,255,255,.36); }
+.lg-input::placeholder { color: rgba(255,255,255,.34); }
+.lg-input:hover { border-color: rgba(255,255,255,.26); }
 .lg-input:focus {
   outline: none; border-color: var(--lg-blue);
-  background: rgba(255,255,255,.09);
-  box-shadow: 0 0 0 3px rgba(47,127,224,.22);
+  background: rgba(255,255,255,.08);
+  box-shadow: 0 0 0 3px rgba(47,127,224,.2);
 }
 
 .lg-btn {
-  width: 100%; height: 42px; margin-top: 24px;
-  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
-  color: #fff; background: var(--lg-blue); border: 0; border-radius: 9px;
-  box-shadow: 0 8px 24px rgba(47,127,224,.36);
-  transition: background .15s, transform .08s;
+  width: 100%; height: 48px; margin-top: 30px;
+  font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer;
+  color: #fff; background: var(--lg-blue); border: 0; border-radius: 10px;
+  box-shadow: 0 10px 26px rgba(47,127,224,.3);
+  transition: background .15s, transform .08s, box-shadow .15s;
 }
-.lg-btn:hover:not(:disabled) { background: var(--lg-blue-2); }
+.lg-btn:hover:not(:disabled) {
+  background: var(--lg-blue-2); box-shadow: 0 12px 30px rgba(47,127,224,.38);
+}
 .lg-btn:active:not(:disabled) { transform: translateY(1px); }
-.lg-btn:disabled { opacity: .62; cursor: default; }
+.lg-btn:disabled { opacity: .6; cursor: default; box-shadow: none; }
 
 .lg-error {
-  margin-top: 14px; padding: 9px 12px; border-radius: 8px;
-  font-size: 12.5px; color: #ffb4b4;
-  background: rgba(217,51,51,.18); border: 1px solid rgba(217,51,51,.38);
+  margin-top: 16px; padding: 10px 13px; border-radius: 9px;
+  font-size: 13px; color: #ffb4b4;
+  background: rgba(217,51,51,.16); border: 1px solid rgba(217,51,51,.34);
 }
+
 .lg-fine {
-  margin-top: 16px; text-align: center;
-  font-size: 10.5px; color: var(--lg-grey); opacity: .8;
+  position: absolute; left: 0; right: 0; bottom: 26px;
+  text-align: center; font-size: 11px; color: var(--lg-grey); opacity: .62;
 }
 
 .lg-theme {
-  position: absolute; top: 20px; right: 20px; z-index: 6;
+  position: absolute; top: 22px; right: clamp(34px, 3.4vw, 56px); z-index: 6;
   width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
-  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
   color: #fff; font-size: 15px; line-height: 1;
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: background .15s;
 }
-.lg-theme:hover { background: rgba(255,255,255,.16); }
+.lg-theme:hover { background: rgba(255,255,255,.13); }
 
-/* The default focus ring disappears against glass. */
 .lg-tab:focus-visible, .lg-btn:focus-visible, .lg-theme:focus-visible {
   outline: 2px solid var(--lg-yellow); outline-offset: 2px;
 }
 
-/* ── light theme: the picture stays, the card turns solid ───────────────── */
-/* Flipping the page would mean a second asset. Flipping the card also happens
-   to be the higher-contrast answer for a form over a photograph. */
-body.light-theme .lg-card {
-  background: rgba(255,255,255,.97);
-  border-color: rgba(16,19,26,.1);
-  box-shadow: 0 34px 80px rgba(0,0,0,.42);
-  backdrop-filter: none; -webkit-backdrop-filter: none;
+/* ── light theme: the photograph stays, the panel turns to paper ────────── */
+.lg-screen { --lg-paper: #ffffff; }
+body.light-theme .lg-panel {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,.78) 0%, rgba(255,255,255,.95) 7%,
+    var(--lg-paper) 15%, var(--lg-paper) 100%);
 }
-body.light-theme .lg-title { color: #10131a; }
+body.light-theme .lg-panel::before {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0) 0%, rgba(255,255,255,.3) 42%, rgba(255,255,255,.78) 100%);
+}
+body.light-theme .lg-title { color: #0e1219; }
 body.light-theme .lg-lede { color: #5b6473; }
-body.light-theme .lg-tabs { border-bottom-color: rgba(16,19,26,.1); }
+body.light-theme .lg-tabs { border-bottom-color: rgba(14,18,25,.1); }
 body.light-theme .lg-tab { color: #8b93a1; }
 body.light-theme .lg-tab:hover { color: #4b5563; }
-body.light-theme .lg-tab.on { color: #10131a; border-bottom-color: var(--lg-blue-d); }
+body.light-theme .lg-tab.on { color: #0e1219; border-bottom-color: var(--lg-blue-d); }
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
-  color: #10131a; background: #f7f8fa; border-color: rgba(16,19,26,.14);
+  color: #0e1219; background: #f6f7f9; border-color: rgba(14,18,25,.14);
 }
 body.light-theme .lg-input::placeholder { color: #9aa1ad; }
+body.light-theme .lg-input:hover { border-color: rgba(14,18,25,.24); }
 body.light-theme .lg-input:focus {
   border-color: var(--lg-blue-d); background: #fff;
-  box-shadow: 0 0 0 3px rgba(21,89,180,.16);
+  box-shadow: 0 0 0 3px rgba(21,89,180,.15);
 }
 body.light-theme .lg-btn {
-  background: var(--lg-blue-d); box-shadow: 0 8px 24px rgba(21,89,180,.3);
+  background: var(--lg-blue-d); box-shadow: 0 10px 26px rgba(21,89,180,.26);
 }
 body.light-theme .lg-btn:hover:not(:disabled) { background: var(--lg-blue); }
 body.light-theme .lg-error {
   color: #9f1239; background: #fdecec; border-color: #f6c6c6;
 }
-body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
+body.light-theme .lg-fine { color: #6b7280; opacity: .9; }
+body.light-theme .lg-theme {
+  background: rgba(14,18,25,.05); border-color: rgba(14,18,25,.12); color: #0e1219;
+}
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
-@media (max-width: 1100px) {
-  .lg-card { right: 4.5%; width: min(36%, 400px); }
+@media (max-width: 1080px) {
+  .lg-screen { grid-template-columns: 1fr clamp(340px, 44%, 460px); }
+  .lg-brand { max-width: 46%; }
 }
 
-/* The card stops floating and takes the lower half; the claim would sit behind
-   it, and a sign-in that needs scrolling to reach the password field is worse
-   than one without a tagline. */
-@media (max-width: 860px) {
-  /* On a phone the plate is a band, and containing a 1.92 image inside a
-     short band leaves most of it empty — so the band crops, and the head is
-     what it keeps. With the front copy filling the band the fill has nothing
-     to do. */
-  .lg-art { object-fit: cover; object-position: 40% 14%; }
-  .lg-art-bg { display: none; }
-  .lg-veil {
-    background:
-      linear-gradient(180deg, rgba(4,7,14,.56) 0%, rgba(4,7,14,.18) 26%,
-                              rgba(4,7,14,.84) 58%, rgba(4,7,14,.95) 100%);
+/* The photograph becomes a band across the top and the panel takes the rest.
+   The gradient flips with it, because a left-to-right blend under a stacked
+   layout would fade in the wrong direction. */
+@media (max-width: 820px) {
+  /* A 1.92 picture inside a short band is cropped hard from the sides, so a
+     band that is too short shows the back of the skull and nothing else. Taller
+     band, anchored on the face. */
+  .lg-screen { grid-template-columns: 1fr; grid-template-rows: 41vh 1fr; }
+  /* The picture is absolutely positioned against the whole screen, which is
+     right when it sits BESIDE the panel and wrong when it sits above it: at
+     phone proportions `cover` then scales it to fill 390x820 and the band
+     shows a quarter of the width blown up to four times its size — which is
+     why it was all cranium. Tied to the band, it covers 390x41vh instead and
+     the head fits. */
+  .lg-art { inset: 0 0 auto 0; height: 41vh; object-position: 44% 24%; }
+  .lg-brand { left: 24px; top: 24px; max-width: calc(100% - 48px); }
+  .lg-panel {
+    padding: 34px 24px calc(54px + env(safe-area-inset-bottom, 0px));
+    /* Reaches solid fast: stacked, the blend sits directly behind the heading
+       and anything slower leaves "Sign in" floating on the photograph. */
+    background: linear-gradient(180deg,
+      rgba(8,12,20,.86) 0%, var(--lg-panel) 9%, var(--lg-panel) 100%);
+    justify-content: flex-start;
   }
-  .lg-brand { left: 24px; top: 26px; }
-  .lg-card {
-    right: auto; left: 50%; top: auto; bottom: 0;
-    transform: translateX(-50%);
-    width: 100%; max-width: 470px; min-width: 0;
-    border-radius: 18px 18px 0 0; border-bottom: 0;
-    padding: 28px 24px calc(26px + env(safe-area-inset-bottom, 0px));
+  .lg-panel::before {
+    inset: auto 0 100% 0; width: auto; height: 110px;
+    background: linear-gradient(180deg, rgba(8,12,20,0), rgba(8,12,20,.86));
   }
+  body.light-theme .lg-panel {
+    background: linear-gradient(180deg,
+      rgba(255,255,255,.9) 0%, var(--lg-paper) 9%, var(--lg-paper) 100%);
+  }
+  body.light-theme .lg-panel::before {
+    background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.9));
+  }
+  .lg-theme { top: 18px; right: 20px; }
+  .lg-form { max-width: 420px; }
 }
 
-@media (max-width: 420px) {
-  .lg-brand { flex-direction: column; align-items: flex-start; gap: 12px; max-width: 78%; }
+@media (max-width: 460px) {
+  .lg-screen { grid-template-rows: 34vh 1fr; }
+  .lg-art { height: 34vh; }
+  .lg-brand { flex-direction: column; align-items: flex-start; gap: 11px; }
   .lg-rule { display: none; }
-  .lg-mark { font-size: 17px; max-width: 22ch; }
-  .lg-logo { width: 124px; }
-  .lg-card { padding-left: 20px; padding-right: 20px; }
+  .lg-logo { width: 118px; }
+  .lg-mark { font-size: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lg-btn, .lg-input { transition: none; }
+  .lg-btn, .lg-input, .lg-theme { transition: none; }
 }
