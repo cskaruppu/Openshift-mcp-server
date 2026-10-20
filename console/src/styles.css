@@ -7919,7 +7919,13 @@ h3.widget-title {
 .lg-screen picture { display: contents; }
 .lg-art {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; object-position: 42% 44%;
+  object-fit: cover;
+  /* The head fills the artwork top to bottom, so any vertical crop takes
+     either the cranium or the chin. Anchored near the top it takes neither —
+     what goes instead is the robot's chest and the HUD panels along the
+     bottom, which nobody is looking at. 44% was cutting the top of the head
+     on a short browser window. */
+  object-position: 38% 16%;
   display: block;
 }
 
@@ -8099,7 +8105,7 @@ body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
    it, and a sign-in that needs scrolling to reach the password field is worse
    than one without a tagline. */
 @media (max-width: 860px) {
-  .lg-art { object-position: 36% 36%; }
+  .lg-art { object-position: 40% 14%; }
   .lg-veil {
     background:
       linear-gradient(180deg, rgba(4,7,14,.56) 0%, rgba(4,7,14,.18) 26%,
