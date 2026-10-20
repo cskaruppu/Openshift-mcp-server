@@ -7925,7 +7925,14 @@ h3.widget-title {
   /* The head runs the full height of the artwork, so a vertical crop takes
      either the cranium or the chin. Anchored high it takes neither; what goes
      is the robot's chest and the HUD strip along the bottom. */
-  object-position: 34% 14%;
+  object-position: 30% 12%;
+  /* Zoomed past `cover`. Fitted exactly, the artwork leaves a dead black strip
+     down the far left and a large unlit area at the bottom left where the
+     robot's neck is — which read as empty corners once the tagline that used
+     to sit there was removed. Enlarging about the head pushes both off the
+     frame and lets the subject carry the space instead. */
+  transform: scale(1.16);
+  transform-origin: 30% 22%;
   display: block;
 }
 
@@ -7989,7 +7996,7 @@ h3.widget-title {
   pointer-events: none;
 }
 
-.lg-form { width: 100%; max-width: 352px; margin: 0 auto; }
+.lg-form { width: 100%; max-width: 352px; align-self: center; }
 
 .lg-title {
   margin: 0; font-size: clamp(22px, 1.9vw, 30px); font-weight: 700;
@@ -8125,7 +8132,8 @@ body.light-theme .lg-theme {
      shows a quarter of the width blown up to four times its size — which is
      why it was all cranium. Tied to the band, it covers 390x41vh instead and
      the head fits. */
-  .lg-art { inset: 0 0 auto 0; height: 41vh; object-position: 44% 24%; }
+  .lg-art { inset: 0 0 auto 0; height: 41vh; object-position: 44% 24%;
+            transform: none; }
   .lg-brand { left: 24px; top: 24px; max-width: calc(100% - 48px); }
   .lg-panel {
     padding: 34px 24px calc(54px + env(safe-area-inset-bottom, 0px));
@@ -8133,7 +8141,7 @@ body.light-theme .lg-theme {
        and anything slower leaves "Sign in" floating on the photograph. */
     background: linear-gradient(180deg,
       rgba(8,12,20,.86) 0%, var(--lg-panel) 9%, var(--lg-panel) 100%);
-    justify-content: flex-start;
+    justify-content: center;
   }
   .lg-panel::before {
     inset: auto 0 100% 0; width: auto; height: 110px;
@@ -8147,7 +8155,7 @@ body.light-theme .lg-theme {
     background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.9));
   }
   .lg-theme { top: 18px; right: 20px; }
-  .lg-form { max-width: 420px; }
+  .lg-form { max-width: 440px; }
 }
 
 @media (max-width: 460px) {
