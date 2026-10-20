@@ -7885,7 +7885,7 @@ h3.widget-title {
   /* The card column's width, named once. The artwork is anchored off it, so
      the two stay in register at every window size instead of drifting apart
      and leaving the glass with nothing behind it. */
-  --lg-col: clamp(372px, 36%, 520px);
+  --lg-col: calc(var(--lg-u) * 34.5);
   grid-template-columns: 1fr var(--lg-col);
   overflow: hidden;
   background: var(--lg-ground);
@@ -7906,6 +7906,35 @@ h3.widget-title {
      nowhere to end. Every edge of the page is this, in both themes. */
   --lg-ground: #010205;
   --lg-panel:  #080c14;
+
+  /* ONE unit for the whole sign-in panel, and it comes from the window.
+
+     This is the fix for "the picture does not zoom but the box does". They
+     were never two components — they were two unit systems. The artwork is
+     sized to the window (100% + contain), so it is by definition the same
+     size at every browser-zoom step. The card was sized in px, and px is
+     exactly what browser zoom scales. So zoom moved one and could not move
+     the other, and their proportion drifted at 90%, 80%, 70%.
+
+     Driving the card from vh/vw puts it on the same footing as the picture:
+     both now describe themselves as a fraction of the window, so the
+     composition is identical at every zoom step. The px clamp bounds stop it
+     becoming silly on a phone or a 4K panel.
+
+     It is a SUM of vh and vw, not a min() of them. Both scale identically
+     with zoom, so either form keeps the lock — but min() hands the whole
+     decision to whichever axis is tighter, and on a wide-but-short window
+     that is height alone, which drove the card down to 266px. The sum lets
+     the width carry some of it: 324px on the same window, and the lock is
+     untouched because the arithmetic is still pure viewport units. The clamp bounds are set
+     wide enough to stay off the rails across 70%-125% zoom, which is where
+     the lock has to hold; past 150% the floor engages and the card drifts
+     up a little, which is the right way for it to fail.
+
+     The limit worth knowing: CSS cannot tell a small window from a zoomed
+     large one — a 1280x580 CSS viewport is both. So the floor is a
+     compromise between those two readings, not an oversight. */
+  --lg-u: clamp(11px, calc(0.56vh + 0.52vw), 24px);
 
   /* Houschka Rounded Alt DemiBold is licensed and not servable from a public
      CDN, so it is named first and WILL be used the moment the webfont files
@@ -8035,8 +8064,8 @@ h3.widget-title {
                             rgba(34,96,208,0) 16%),
     linear-gradient(0deg,   rgba(34,96,208,.29) 0%, rgba(34,96,208,.09) 7%,
                             rgba(34,96,208,0) 16%),
-    radial-gradient(ellipse 30% 58% at 92% 44%,
-      rgba(34,96,208,.15), rgba(34,96,208,0) 76%),
+    radial-gradient(ellipse 44% 70% at 88% 46%,
+      rgba(34,96,208,.10), rgba(34,96,208,0) 78%),
     linear-gradient(118deg, rgba(200,232,255,0) 17%,
                             rgba(200,232,255,.06) 26%,
                             rgba(200,232,255,0) 36%);
@@ -8050,10 +8079,10 @@ h3.widget-title {
    work. */
 .lg-brand {
   position: absolute; left: 4.2%; top: 7.5%; z-index: 3; color: #fff;
-  display: flex; align-items: center; gap: clamp(14px, 1.5vw, 24px);
+  display: flex; align-items: center; gap: calc(var(--lg-u) * 1.59);
   max-width: 52%;
-  padding: clamp(12px, 1.1vw, 18px) clamp(18px, 1.7vw, 26px);
-  border-radius: 16px;
+  padding: calc(var(--lg-u) * 1.19) calc(var(--lg-u) * 1.72);
+  border-radius: calc(var(--lg-u) * 1.06);
   background:
     linear-gradient(140deg, rgba(255,255,255,.12), rgba(255,255,255,.035)),
     linear-gradient(140deg, rgba(6,10,20,.50), rgba(6,10,20,.62));
@@ -8065,21 +8094,21 @@ h3.widget-title {
 }
 .lg-logo {
   display: block; height: auto; flex: none;
-  width: clamp(118px, 11vw, 178px);
+  width: calc(var(--lg-u) * 11.8);
 }
 /* The hairline is what makes this one lockup rather than two things that
    happen to sit near each other. It matches the logo's height, not the text's,
    so it stays tied to the mark when the product name wraps. */
 .lg-rule {
   flex: none; width: 1px; align-self: stretch;
-  min-height: clamp(34px, 3.3vw, 52px);
+  min-height: calc(var(--lg-u) * 3.44);
   background: linear-gradient(180deg,
     rgba(255,255,255,0), rgba(255,255,255,.42) 22%,
     rgba(255,255,255,.42) 78%, rgba(255,255,255,0));
 }
 .lg-mark {
   margin: 0; min-width: 0;
-  font-size: clamp(15px, 1.4vw, 23px); font-weight: 600;
+  font-size: calc(var(--lg-u) * 1.52); font-weight: 600;
   letter-spacing: -.012em; line-height: 1.26; max-width: 22ch;
   color: #fff;
 }
@@ -8094,7 +8123,8 @@ h3.widget-title {
      padding box, so reserving 72px there is what keeps the card off it.
      Without this they collide below roughly 560px of viewport height —
      measured at 18px of overlap at 540px, 58px at 500px. */
-  padding: 48px clamp(28px, 3vw, 52px) 72px;
+  padding: calc(var(--lg-u) * 2.6) calc(var(--lg-u) * 3.44)
+           calc(var(--lg-u) * 4.4);
   background: none;
 
   /* `safe center` and not plain `center`. Centred flex content that outgrows
@@ -8116,8 +8146,9 @@ h3.widget-title {
    photograph dissolving into it, so this is the only thing that reads as a
    surface — which is what makes it the thing you look at. */
 .lg-form {
-  width: 100%; max-width: 372px; align-self: center;
-  padding: 38px 34px; border-radius: 18px;
+  width: 100%; max-width: calc(var(--lg-u) * 24); align-self: center;
+  padding: calc(var(--lg-u) * 1.86) calc(var(--lg-u) * 1.86);
+  border-radius: calc(var(--lg-u) * 1.15);
   /* Three layers, bottom to top as listed last to first.
 
      A dark scrim, because frosted glass is translucent and not transparent.
@@ -8133,7 +8164,7 @@ h3.widget-title {
                             rgba(190,228,255,.065) 63%,
                             rgba(190,228,255,0) 72%),
     linear-gradient(152deg, rgba(164,208,248,.22), rgba(120,170,220,.05)),
-    linear-gradient(165deg, rgba(10,26,48,.50), rgba(6,15,30,.62));
+    linear-gradient(165deg, rgba(10,26,48,.60), rgba(6,15,30,.72));
   border: 1px solid rgba(152,202,246,.26);
   /* The bright rim is on the TOP edge only and the bottom one is a quarter of
      it. An even rim all the way round reads as a stroked box; an uneven one
@@ -8151,25 +8182,32 @@ h3.widget-title {
 }
 
 .lg-title {
-  margin: 0; font-size: clamp(22px, 1.9vw, 30px); font-weight: 700;
+  margin: 0; font-size: calc(var(--lg-u) * 1.62); font-weight: 700;
   letter-spacing: -.02em; color: #fff;
 }
-.lg-lede { margin: 6px 0 0; font-size: 13.5px; color: var(--lg-grey); }
+.lg-lede {
+  margin: calc(var(--lg-u) * 0.4) 0 0;
+  font-size: calc(var(--lg-u) * 0.89); color: var(--lg-grey);
+}
 
 /* A segmented rail rather than an underline, because an underline on glass
    reads as a scratch. The yellow survives as a 2px bar inside the selected
    pill — it follows the pill's radius, so it reads as part of the object
    instead of a line ruled across it. */
 .lg-tabs {
-  display: flex; gap: 4px; margin: 28px 0 4px; padding: 4px;
-  border-radius: 13px;
+  display: flex; gap: calc(var(--lg-u) * 0.26);
+  margin: calc(var(--lg-u) * 1.32) 0 calc(var(--lg-u) * 0.14);
+  padding: calc(var(--lg-u) * 0.26);
+  border-radius: calc(var(--lg-u) * 0.86);
   background: rgba(150,200,245,.07);
   border: 1px solid rgba(150,200,245,.13);
   box-shadow: inset 0 1px 0 rgba(198,232,255,.09);
 }
 .lg-tab {
-  flex: 1; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-  padding: 8px 12px; border-radius: 9px;
+  flex: 1; font: inherit; font-size: calc(var(--lg-u) * 0.86);
+  font-weight: 600; cursor: pointer;
+  padding: calc(var(--lg-u) * 0.53) calc(var(--lg-u) * 0.79);
+  border-radius: calc(var(--lg-u) * 0.6);
   color: rgba(255,255,255,.52);
   background: none; border: 0;
   transition: background .15s, color .15s, box-shadow .15s;
@@ -8184,14 +8222,17 @@ h3.widget-title {
 .lg-tab:hover:not(.on) { color: rgba(255,255,255,.84); background: rgba(255,255,255,.06); }
 
 .lg-label {
-  display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .03em;
-  color: var(--lg-grey); margin: 22px 0 8px;
+  display: block; font-size: calc(var(--lg-u) * 0.78); font-weight: 600;
+  letter-spacing: .03em; color: var(--lg-grey);
+  margin: calc(var(--lg-u) * 1.06) 0 calc(var(--lg-u) * 0.4);
 }
 .lg-input {
-  width: 100%; height: 48px; padding: 0 16px;
-  font: inherit; font-size: 14px; color: #fff;
+  width: 100%; height: calc(var(--lg-u) * 2.9);
+  padding: 0 calc(var(--lg-u) * 1.06);
+  font: inherit; font-size: calc(var(--lg-u) * 0.94); color: #fff;
   background: linear-gradient(170deg, rgba(178,218,252,.13), rgba(140,186,230,.05));
-  border: 1px solid rgba(160,206,248,.24); border-radius: 12px;
+  border: 1px solid rgba(160,206,248,.24);
+  border-radius: calc(var(--lg-u) * 0.8);
   box-shadow: inset 0 1px 0 rgba(198,232,255,.18);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -8208,9 +8249,11 @@ h3.widget-title {
 /* The one solid object on the page. Everything else is a sheet you can see
    through; the thing you press is the thing that is not. */
 .lg-btn {
-  width: 100%; height: 48px; margin-top: 28px;
-  font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer;
-  color: #fff; border: 0; border-radius: 12px;
+  width: 100%; height: calc(var(--lg-u) * 2.9);
+  margin-top: calc(var(--lg-u) * 1.5);
+  font: inherit; font-size: calc(var(--lg-u) * 0.97); font-weight: 600;
+  cursor: pointer; color: #fff; border: 0;
+  border-radius: calc(var(--lg-u) * 0.8);
   background: linear-gradient(170deg, var(--lg-blue-2), var(--lg-blue) 52%, var(--lg-blue-d));
   box-shadow: inset 0 1px 0 rgba(255,255,255,.32),
               0 12px 30px rgba(47,127,224,.34);
@@ -8231,9 +8274,12 @@ h3.widget-title {
 }
 
 .lg-fine {
-  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
-  padding: 7px 15px; border-radius: 999px; white-space: nowrap;
-  font-size: 11px; letter-spacing: .02em; color: rgba(255,255,255,.80);
+  position: absolute; left: 50%; bottom: calc(var(--lg-u) * 1.5);
+  transform: translateX(-50%);
+  padding: calc(var(--lg-u) * 0.46) calc(var(--lg-u) * 1.0);
+  border-radius: 999px; white-space: nowrap;
+  font-size: calc(var(--lg-u) * 0.74); letter-spacing: .02em;
+  color: rgba(255,255,255,.80);
   background: rgba(255,255,255,.07);
   border: 1px solid rgba(255,255,255,.12);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
@@ -8242,14 +8288,16 @@ h3.widget-title {
 }
 
 .lg-theme {
-  position: absolute; top: 22px; right: clamp(34px, 3.4vw, 56px); z-index: 6;
-  width: 38px; height: 38px; border-radius: 999px; cursor: pointer;
+  position: absolute; top: calc(var(--lg-u) * 1.45);
+  right: calc(var(--lg-u) * 3.7); z-index: 6;
+  width: calc(var(--lg-u) * 2.4); height: calc(var(--lg-u) * 2.4);
+  border-radius: 999px; cursor: pointer;
   background: linear-gradient(150deg, rgba(255,255,255,.15), rgba(255,255,255,.05));
   border: 1px solid rgba(255,255,255,.17);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.26), 0 10px 26px rgba(0,0,0,.34);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
-  color: #fff; font-size: 15px; line-height: 1;
+  color: #fff; font-size: calc(var(--lg-u) * 0.95); line-height: 1;
   transition: background .15s, box-shadow .15s;
 }
 .lg-theme:hover {
@@ -8299,7 +8347,7 @@ body.light-theme .lg-form {
                             rgba(255,255,255,0) 52%,
                             rgba(255,255,255,.20) 63%,
                             rgba(255,255,255,0) 72%),
-    linear-gradient(165deg, rgba(243,250,255,.54), rgba(219,234,250,.66));
+    linear-gradient(165deg, rgba(243,250,255,.62), rgba(219,234,250,.74));
   border-color: rgba(255,255,255,.66);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,.85),
@@ -8346,36 +8394,6 @@ body.light-theme .lg-error {
    the ground does not flip — so neither do they. Darkening them for light
    theme put near-black text and a near-black glyph on near-black. */
 
-/* ── short windows ───────────────────────────────────────────────────────
-   A laptop at 100% zoom is commonly 600-700 CSS px tall once the browser
-   chrome and the taskbar are taken out, and at full size the card was
-   filling 75-85% of that — which is why the page looked right at 80% zoom
-   and cramped at 100%. The card is not a fixed object; it steps down when
-   the window is short, so 100% on a laptop looks like 80% did.
-
-   Height queries, not width: the problem is vertical and a wide-but-short
-   window has it just as badly as a narrow one. */
-@media (max-height: 820px) {
-  .lg-form  { padding: 28px 28px; max-width: 356px; }
-  .lg-title { font-size: clamp(21px, 1.7vw, 25px); }
-  .lg-lede  { font-size: 13px; }
-  .lg-tabs  { margin: 20px 0 2px; }
-  .lg-label { margin: 16px 0 6px; }
-  .lg-input { height: 44px; }
-  .lg-btn   { height: 44px; margin-top: 22px; }
-  .lg-panel { padding-top: 32px; padding-bottom: 66px; }
-}
-@media (max-height: 620px) {
-  .lg-form  { padding: 22px 24px; }
-  .lg-title { font-size: 20px; }
-  .lg-tabs  { margin: 16px 0 0; }
-  .lg-label { margin: 13px 0 5px; }
-  .lg-input { height: 40px; }
-  .lg-btn   { height: 42px; margin-top: 18px; }
-  .lg-panel { padding-top: 24px; padding-bottom: 60px; }
-  .lg-fine  { bottom: 16px; }
-}
-
 /* ── wide-and-short windows ─────────────────────────────────────────────
    The picture is 3:2; a laptop viewport is nearer 2.2:1. Showing all of it
    therefore leaves empty space somewhere, and right-anchoring put every bit
@@ -8394,7 +8412,7 @@ body.light-theme .lg-error {
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1080px) {
-  .lg-screen { --lg-col: clamp(340px, 44%, 460px);
+  .lg-screen { --lg-col: calc(var(--lg-u) * 30.5);
                grid-template-columns: 1fr var(--lg-col); }
   .lg-brand { max-width: 46%; }
 }
@@ -8431,7 +8449,11 @@ body.light-theme .lg-error {
     justify-content: center;
   }
   .lg-theme { top: 18px; right: 20px; }
-  .lg-form { max-width: 440px; }
+  /* Touch targets do not shrink with the window. On a phone the vw term
+     would drive the unit down to its floor and give a 35px input, so the
+     stacked layout sets its own unit from width alone. */
+  .lg-screen { --lg-u: clamp(15px, 4.2vw, 19px); }
+  .lg-form { max-width: min(440px, 100%); }
 }
 
 @media (max-width: 460px) {
