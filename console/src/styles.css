@@ -7980,11 +7980,25 @@ h3.widget-title {
   position: relative; z-index: 4;
   display: flex; flex-direction: column; justify-content: center;
   padding: 48px clamp(34px, 3.4vw, 56px);
-  /* The blend runs a long way — roughly a fifth of the panel — because a short
-     one reads as a soft-edged box and a long one reads as depth. */
+  /* Frosted, not opaque. A solid slab beside a dark photograph reads as two
+     unrelated halves; letting the picture's light bleed through, blurred past
+     recognition, keeps them one screen. The blend at the left edge runs a long
+     way, because a short one reads as a soft-edged box and a long one reads as
+     depth. */
   background: linear-gradient(90deg,
-    rgba(8,12,20,.72) 0%, rgba(8,12,20,.93) 7%,
-    var(--lg-panel) 15%, var(--lg-panel) 100%);
+    rgba(8,12,20,.44) 0%, rgba(8,12,20,.72) 7%,
+    rgba(8,12,20,.80) 15%, rgba(8,12,20,.80) 100%);
+  backdrop-filter: blur(30px) saturate(132%);
+  -webkit-backdrop-filter: blur(30px) saturate(132%);
+}
+/* Without backdrop-filter the translucency would just look washed out, so the
+   panel goes opaque instead of half-finished. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .lg-panel {
+    background: linear-gradient(90deg,
+      rgba(8,12,20,.72) 0%, rgba(8,12,20,.93) 7%,
+      var(--lg-panel) 15%, var(--lg-panel) 100%);
+  }
 }
 /* Carried past its own column so the gradient starts over the photograph
    rather than at the column edge, which is what makes the seam disappear. */
@@ -8057,7 +8071,7 @@ h3.widget-title {
 
 .lg-fine {
   position: absolute; left: 0; right: 0; bottom: 26px;
-  text-align: center; font-size: 11px; color: var(--lg-grey); opacity: .62;
+  text-align: center; font-size: 11px; color: var(--lg-grey); opacity: .85;
 }
 
 .lg-theme {
@@ -8077,24 +8091,31 @@ h3.widget-title {
 .lg-screen { --lg-paper: #ffffff; }
 body.light-theme .lg-panel {
   background: linear-gradient(90deg,
-    rgba(255,255,255,.78) 0%, rgba(255,255,255,.95) 7%,
-    var(--lg-paper) 15%, var(--lg-paper) 100%);
+    rgba(250,251,253,.50) 0%, rgba(250,251,253,.74) 7%,
+    rgba(250,251,253,.83) 15%, rgba(250,251,253,.83) 100%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  body.light-theme .lg-panel {
+    background: linear-gradient(90deg,
+      rgba(255,255,255,.78) 0%, rgba(255,255,255,.95) 7%,
+      var(--lg-paper) 15%, var(--lg-paper) 100%);
+  }
 }
 body.light-theme .lg-panel::before {
   background: linear-gradient(90deg,
     rgba(255,255,255,0) 0%, rgba(255,255,255,.3) 42%, rgba(255,255,255,.78) 100%);
 }
 body.light-theme .lg-title { color: #0e1219; }
-body.light-theme .lg-lede { color: #5b6473; }
+body.light-theme .lg-lede { color: #4b5563; }
 body.light-theme .lg-tabs { border-bottom-color: rgba(14,18,25,.1); }
 body.light-theme .lg-tab { color: #8b93a1; }
 body.light-theme .lg-tab:hover { color: #4b5563; }
 body.light-theme .lg-tab.on { color: #0e1219; border-bottom-color: var(--lg-blue-d); }
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
-  color: #0e1219; background: #f6f7f9; border-color: rgba(14,18,25,.14);
+  color: #0e1219; background: #fff; border-color: rgba(14,18,25,.18);
 }
-body.light-theme .lg-input::placeholder { color: #9aa1ad; }
+body.light-theme .lg-input::placeholder { color: #6b7280; }
 body.light-theme .lg-input:hover { border-color: rgba(14,18,25,.24); }
 body.light-theme .lg-input:focus {
   border-color: var(--lg-blue-d); background: #fff;
@@ -8107,7 +8128,7 @@ body.light-theme .lg-btn:hover:not(:disabled) { background: var(--lg-blue); }
 body.light-theme .lg-error {
   color: #9f1239; background: #fdecec; border-color: #f6c6c6;
 }
-body.light-theme .lg-fine { color: #6b7280; opacity: .9; }
+body.light-theme .lg-fine { color: #5b6473; opacity: 1; }
 body.light-theme .lg-theme {
   background: rgba(14,18,25,.05); border-color: rgba(14,18,25,.12); color: #0e1219;
 }
@@ -8137,10 +8158,10 @@ body.light-theme .lg-theme {
   .lg-brand { left: 24px; top: 24px; max-width: calc(100% - 48px); }
   .lg-panel {
     padding: 34px 24px calc(54px + env(safe-area-inset-bottom, 0px));
-    /* Reaches solid fast: stacked, the blend sits directly behind the heading
-       and anything slower leaves "Sign in" floating on the photograph. */
+    /* Reaches its working opacity fast: stacked, the blend sits directly
+       behind the heading and anything slower leaves "Sign in" floating. */
     background: linear-gradient(180deg,
-      rgba(8,12,20,.86) 0%, var(--lg-panel) 9%, var(--lg-panel) 100%);
+      rgba(8,12,20,.60) 0%, rgba(8,12,20,.82) 9%, rgba(8,12,20,.82) 100%);
     justify-content: center;
   }
   .lg-panel::before {
@@ -8149,7 +8170,7 @@ body.light-theme .lg-theme {
   }
   body.light-theme .lg-panel {
     background: linear-gradient(180deg,
-      rgba(255,255,255,.9) 0%, var(--lg-paper) 9%, var(--lg-paper) 100%);
+      rgba(250,251,253,.66) 0%, rgba(250,251,253,.85) 9%, rgba(250,251,253,.85) 100%);
   }
   body.light-theme .lg-panel::before {
     background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.9));
