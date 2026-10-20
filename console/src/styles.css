@@ -7920,19 +7920,20 @@ h3.widget-title {
    empty line and pushes a strip across the top of the screen. */
 .lg-screen picture { display: contents; }
 .lg-art {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover;
-  /* The head runs the full height of the artwork, so a vertical crop takes
-     either the cranium or the chin. Anchored high it takes neither; what goes
-     is the robot's chest and the HUD strip along the bottom. */
-  object-position: 30% 12%;
-  /* Zoomed past `cover`. Fitted exactly, the artwork leaves a dead black strip
-     down the far left and a large unlit area at the bottom left where the
-     robot's neck is — which read as empty corners once the tagline that used
-     to sit there was removed. Enlarging about the head pushes both off the
-     frame and lets the subject carry the space instead. */
-  transform: scale(1.16);
-  transform-origin: 30% 22%;
+  position: absolute; inset: 0; width: 100%; height: 88%;
+  /* `contain`, not `cover`. In the source the head IS the full height, so any
+     cover fit makes it fill the screen top to bottom and the composition
+     collapses to a close-up of a face. Contained — and at 88% of the height —
+     the whole artwork shows at something closer to the size it was composed
+     at: head, globe, HUD.
+
+     Anchored top-left on purpose. Centred, the leftover splits into gaps on
+     both sides and the picture's own left edge, which is the robot's body
+     rather than black, shows as a seam. Flush to the top-left, every bit of
+     leftover lands on the right, where the panel already covers it, and along
+     the bottom, where the veil fades the picture into the page. */
+  object-fit: contain;
+  object-position: 0% 0%;
   display: block;
 }
 
@@ -7942,8 +7943,13 @@ h3.widget-title {
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(4,7,14,.70) 0%, rgba(4,7,14,.10) 24%, rgba(4,7,14,0) 42%),
-    radial-gradient(132% 116% at 30% 44%, transparent 38%, rgba(2,4,9,.62) 100%);
+    /* behind the lockup */
+    linear-gradient(180deg, rgba(5,7,12,.70) 0%, rgba(5,7,12,.10) 20%, rgba(5,7,12,0) 34%),
+    /* the bottom band: the picture fades into the page rather than stopping
+       at the edge of its own frame */
+    linear-gradient(0deg, #05070c 0%, rgba(5,7,12,.92) 7%,
+                          rgba(5,7,12,.45) 15%, rgba(5,7,12,0) 26%),
+    radial-gradient(136% 120% at 30% 40%, transparent 42%, rgba(2,4,9,.58) 100%);
 }
 
 /* ── the lockup, over the photograph ────────────────────────────────────── */
