@@ -7882,9 +7882,37 @@ h3.widget-title {
   overflow: hidden;
   /* A real fallback: if the file 404s this is still a designed dark screen
      with the lockup and the form on it, not a broken frame. */
-  background: #05070c;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--lg-black);
+
+  /* Blue carries the action, yellow the one thing being pointed at, grey the
+     supporting text, black the ground. Four roles, four colours — the moment a
+     fifth appears, none of them means anything. */
+  --lg-blue:   #2f7fe0;   /* primary action; steps lighter on dark */
+  --lg-blue-2: #4596ef;   /* hover */
+  --lg-blue-d: #1559b4;   /* the same blue on a light card */
+  --lg-yellow: #f2c230;   /* accent — active tab, focus, the emphasised word */
+  --lg-grey:   #97a1b2;   /* secondary text */
+  --lg-black:  #05070c;   /* ground */
+
+  /* Houschka Rounded Alt DemiBold is licensed and not servable from a public
+     CDN, so it is named first and WILL be used the moment the webfont files
+     are dropped in (see the commented @font-face below). Until then Nunito
+     carries it: geometric and rounded, which is the shape Houschka has, rather
+     than silently falling back to Inter and looking like nothing was asked. */
+  --lg-font: "Houschka Rounded Alt", "Houschka Rounded",
+             "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--lg-font);
 }
+
+/* Drop the licensed files into console/public/brand/ and uncomment. Nothing
+   else changes — every rule below already asks for the family by name.
+@font-face {
+  font-family: "Houschka Rounded Alt";
+  src: url("/brand/houschka-rounded-alt-demibold.woff2") format("woff2"),
+       url("/brand/houschka-rounded-alt-demibold.woff")  format("woff");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+*/
 
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */
@@ -7916,18 +7944,34 @@ h3.widget-title {
 }
 
 /* ── brand and claim ────────────────────────────────────────────────────── */
-.lg-brand { position: absolute; left: 4.4%; top: 7.5%; z-index: 3; color: #fff; }
-.lg-mark {
-  font-size: clamp(20px, 2.1vw, 34px); font-weight: 700;
-  letter-spacing: -.025em; line-height: 1.1;
-  text-shadow: 0 2px 18px rgba(0,0,0,.72);
+.lg-brand {
+  position: absolute; left: 4.4%; top: 7.5%; z-index: 3; color: #fff;
+  display: flex; align-items: center; gap: clamp(14px, 1.5vw, 24px);
+  max-width: 56%;
 }
-.lg-tcs { color: #ff5c5c; font-weight: 800; }
-.lg-sub {
-  font-size: clamp(8px, .66vw, 11px); font-weight: 700;
-  letter-spacing: .2em; text-transform: uppercase;
-  color: rgba(255,255,255,.62); margin-top: 8px;
-  text-shadow: 0 1px 12px rgba(0,0,0,.8);
+.lg-logo {
+  display: block; height: auto; flex: none;
+  width: clamp(118px, 11.5vw, 184px);
+  /* The one thing on this screen that must not be restyled, so it gets a drop
+     shadow for legibility rather than a colour. */
+  filter: drop-shadow(0 2px 14px rgba(0,0,0,.72));
+}
+/* The hairline is what makes this one lockup rather than two things that
+   happen to sit near each other. It matches the logo's height, not the text's,
+   so it stays tied to the mark when the product name wraps. */
+.lg-rule {
+  flex: none; width: 1px; align-self: stretch;
+  min-height: clamp(34px, 3.4vw, 54px);
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0), rgba(255,255,255,.42) 22%,
+    rgba(255,255,255,.42) 78%, rgba(255,255,255,0));
+}
+.lg-mark {
+  margin: 0; min-width: 0;
+  font-size: clamp(15px, 1.45vw, 24px); font-weight: 600;
+  letter-spacing: -.012em; line-height: 1.26; max-width: 22ch;
+  color: #fff;
+  text-shadow: 0 2px 18px rgba(0,0,0,.78);
 }
 
 .lg-claim {
@@ -7937,7 +7981,7 @@ h3.widget-title {
   letter-spacing: -.018em; line-height: 1.35;
   text-shadow: 0 2px 22px rgba(0,0,0,.85);
 }
-.lg-claim em { font-style: normal; color: #7fe3ff; }
+.lg-claim em { font-style: normal; color: var(--lg-yellow); }
 
 /* ── the card, in front ─────────────────────────────────────────────────── */
 .lg-card {
@@ -7955,7 +7999,7 @@ h3.widget-title {
   margin: 0; font-size: 22px; font-weight: 700;
   letter-spacing: -.018em; color: #fff;
 }
-.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: rgba(255,255,255,.54); }
+.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: var(--lg-grey); }
 
 .lg-tabs {
   display: flex; gap: 2px; margin: 22px 0 4px;
@@ -7967,12 +8011,12 @@ h3.widget-title {
   background: none; border: 0; border-bottom: 2px solid transparent;
   margin-bottom: -1px;
 }
-.lg-tab.on { color: #fff; border-bottom-color: #ff5c5c; }
+.lg-tab.on { color: #fff; border-bottom-color: var(--lg-yellow); }
 .lg-tab:hover { color: rgba(255,255,255,.78); }
 
 .lg-label {
   display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
-  color: rgba(255,255,255,.64); margin: 18px 0 7px;
+  color: var(--lg-grey); margin: 18px 0 7px;
 }
 .lg-input {
   width: 100%; height: 40px; padding: 0 13px;
@@ -7983,18 +8027,19 @@ h3.widget-title {
 }
 .lg-input::placeholder { color: rgba(255,255,255,.36); }
 .lg-input:focus {
-  outline: none; border-color: rgba(255,92,92,.72);
+  outline: none; border-color: var(--lg-blue);
   background: rgba(255,255,255,.09);
+  box-shadow: 0 0 0 3px rgba(47,127,224,.22);
 }
 
 .lg-btn {
   width: 100%; height: 42px; margin-top: 24px;
   font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
-  color: #fff; background: #d93333; border: 0; border-radius: 9px;
-  box-shadow: 0 8px 24px rgba(217,51,51,.38);
+  color: #fff; background: var(--lg-blue); border: 0; border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(47,127,224,.36);
   transition: background .15s, transform .08s;
 }
-.lg-btn:hover:not(:disabled) { background: #e84444; }
+.lg-btn:hover:not(:disabled) { background: var(--lg-blue-2); }
 .lg-btn:active:not(:disabled) { transform: translateY(1px); }
 .lg-btn:disabled { opacity: .62; cursor: default; }
 
@@ -8005,7 +8050,7 @@ h3.widget-title {
 }
 .lg-fine {
   margin-top: 16px; text-align: center;
-  font-size: 10.5px; color: rgba(255,255,255,.42);
+  font-size: 10.5px; color: var(--lg-grey); opacity: .8;
 }
 
 .lg-theme {
@@ -8019,7 +8064,7 @@ h3.widget-title {
 
 /* The default focus ring disappears against glass. */
 .lg-tab:focus-visible, .lg-btn:focus-visible, .lg-theme:focus-visible {
-  outline: 2px solid #ff8f8f; outline-offset: 2px;
+  outline: 2px solid var(--lg-yellow); outline-offset: 2px;
 }
 
 /* ── light theme: the picture stays, the card turns solid ───────────────── */
@@ -8036,21 +8081,24 @@ body.light-theme .lg-lede { color: #5b6473; }
 body.light-theme .lg-tabs { border-bottom-color: rgba(16,19,26,.1); }
 body.light-theme .lg-tab { color: #8b93a1; }
 body.light-theme .lg-tab:hover { color: #4b5563; }
-body.light-theme .lg-tab.on { color: #10131a; border-bottom-color: #c42b2b; }
+body.light-theme .lg-tab.on { color: #10131a; border-bottom-color: var(--lg-blue-d); }
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
   color: #10131a; background: #f7f8fa; border-color: rgba(16,19,26,.14);
 }
 body.light-theme .lg-input::placeholder { color: #9aa1ad; }
-body.light-theme .lg-input:focus { border-color: #c42b2b; background: #fff; }
-body.light-theme .lg-btn {
-  background: #c42b2b; box-shadow: 0 8px 24px rgba(196,43,43,.3);
+body.light-theme .lg-input:focus {
+  border-color: var(--lg-blue-d); background: #fff;
+  box-shadow: 0 0 0 3px rgba(21,89,180,.16);
 }
-body.light-theme .lg-btn:hover:not(:disabled) { background: #d93333; }
+body.light-theme .lg-btn {
+  background: var(--lg-blue-d); box-shadow: 0 8px 24px rgba(21,89,180,.3);
+}
+body.light-theme .lg-btn:hover:not(:disabled) { background: var(--lg-blue); }
 body.light-theme .lg-error {
   color: #9f1239; background: #fdecec; border-color: #f6c6c6;
 }
-body.light-theme .lg-fine { color: #8b93a1; }
+body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
@@ -8080,7 +8128,10 @@ body.light-theme .lg-fine { color: #8b93a1; }
 }
 
 @media (max-width: 420px) {
-  .lg-mark { font-size: 20px; }
+  .lg-brand { flex-direction: column; align-items: flex-start; gap: 12px; max-width: 78%; }
+  .lg-rule { display: none; }
+  .lg-mark { font-size: 17px; max-width: 22ch; }
+  .lg-logo { width: 124px; }
   .lg-card { padding-left: 20px; padding-right: 20px; }
 }
 

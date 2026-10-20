@@ -85,11 +85,20 @@ export function LoginOverlay() {
       </picture>
       <div className="lg-veil" aria-hidden="true" />
 
+      {/* A co-brand lockup: the corporate mark, a hairline, then the product.
+          Side by side rather than stacked, because stacked puts the TCS of the
+          logo directly above the TCS of the product name and reads as a
+          stutter. The rule is what makes it one lockup instead of two things
+          that happen to be near each other.
+
+          The white logo, because the photograph behind it is dark in both
+          themes — only the card flips. The black one ships alongside for
+          anywhere this lands on a light ground. */}
       <div className="lg-brand">
-        <div className="lg-mark">
-          <span className="lg-tcs">TCS</span> Agentic AI
-        </div>
-        <div className="lg-sub">Enterprise Intelligence Platform</div>
+        <img className="lg-logo" src="/brand/tcs-logo-white.png"
+             alt="Tata Consultancy Services" width="1000" height="238" />
+        <span className="lg-rule" aria-hidden="true" />
+        <h1 className="lg-mark">TCS Agentic AI for Hybrid Infrastructure</h1>
       </div>
 
       <p className="lg-claim">
@@ -105,7 +114,7 @@ export function LoginOverlay() {
       />
 
       <div className="lg-card">
-        <h1 className="lg-title">Sign in</h1>
+        <h2 className="lg-title">Sign in</h2>
         <p className="lg-lede">Platform account or API token</p>
 
         {authMode !== "none" && (
