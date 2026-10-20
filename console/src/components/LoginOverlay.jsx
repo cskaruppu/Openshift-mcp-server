@@ -3,7 +3,7 @@ import { useAuthStore } from "../store/authStore";
 import { useThemeStore } from "../store/themeStore";
 
 /**
- * The sign-in screen.
+ * The login screen.
  *
  * One ground, one picture sitting in it, one piece of glass. The page is a
  * single near-black — the colour the photograph's own background already is,
@@ -19,7 +19,7 @@ import { useThemeStore } from "../store/themeStore";
  * glass something to refract. Glass with nothing behind it is grey plastic.
  *
  * Nothing here is a statistic. Counts of agents, clusters and tools are real
- * after sign-in and decoration on the door.
+ * after login and decoration on the door.
  *
  * Behaviour is unchanged: same endpoint, same two modes, same error handling.
  */
@@ -118,7 +118,7 @@ export function LoginOverlay() {
         />
 
         <div className="lg-form">
-        <h2 className="lg-title">Sign in</h2>
+        <h2 className="lg-title">Login</h2>
         <p className="lg-lede">Platform account or API token</p>
 
         {authMode !== "none" && (
@@ -184,7 +184,7 @@ export function LoginOverlay() {
             </>
           )}
           <button className="lg-btn" type="submit" disabled={loading}>
-            {loading ? "Signing in…" : "Sign In"}
+            {loading ? "Logging in…" : "Login"}
           </button>
         </form>
 
