@@ -101,10 +101,6 @@ export function LoginOverlay() {
         <h1 className="lg-mark">TCS Agentic AI for Hybrid Infrastructure</h1>
       </div>
 
-      <p className="lg-claim">
-        Humans and <em>intelligent agents</em>, running one hybrid estate.
-      </p>
-
       <button
         className="lg-theme"
         onClick={toggleTheme}

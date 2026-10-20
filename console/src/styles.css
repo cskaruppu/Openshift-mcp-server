@@ -7936,9 +7936,8 @@ h3.widget-title {
        — which is the difference between this and veiling the whole picture. */
     radial-gradient(31% 23% at 57% 69%, rgba(4,7,14,.88) 0%,
                                         rgba(4,7,14,.52) 56%, rgba(4,7,14,0) 100%),
-    /* behind the brand line and the claim */
+    /* behind the brand lockup */
     linear-gradient(180deg, rgba(4,7,14,.66) 0%, rgba(4,7,14,.08) 22%, rgba(4,7,14,0) 38%),
-    linear-gradient(0deg,   rgba(4,7,14,.70) 0%, rgba(4,7,14,.10) 20%, rgba(4,7,14,0) 36%),
     /* a vignette, so the picture does not fight the browser chrome */
     radial-gradient(128% 112% at 38% 46%, transparent 40%, rgba(2,4,9,.56) 100%);
 }
@@ -7973,15 +7972,6 @@ h3.widget-title {
   color: #fff;
   text-shadow: 0 2px 18px rgba(0,0,0,.78);
 }
-
-.lg-claim {
-  position: absolute; left: 4.4%; bottom: 8%; z-index: 3; margin: 0;
-  max-width: 30%; color: #fff;
-  font-size: clamp(15px, 1.4vw, 23px); font-weight: 600;
-  letter-spacing: -.018em; line-height: 1.35;
-  text-shadow: 0 2px 22px rgba(0,0,0,.85);
-}
-.lg-claim em { font-style: normal; color: var(--lg-yellow); }
 
 /* ── the card, in front ─────────────────────────────────────────────────── */
 .lg-card {
@@ -8102,7 +8092,6 @@ body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
 
 /* ── narrow ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
-  .lg-claim { max-width: 38%; }
   .lg-card { right: 4.5%; width: min(36%, 400px); }
 }
 
@@ -8117,7 +8106,6 @@ body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
                               rgba(4,7,14,.84) 58%, rgba(4,7,14,.95) 100%);
   }
   .lg-brand { left: 24px; top: 26px; }
-  .lg-claim { display: none; }
   .lg-card {
     right: auto; left: 50%; top: auto; bottom: 0;
     transform: translateX(-50%);
