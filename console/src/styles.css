@@ -8087,9 +8087,20 @@ h3.widget-title {
 /* ── the panel ──────────────────────────────────────────────────────────── */
 .lg-panel {
   position: relative; z-index: 4;
-  display: flex; flex-direction: column; justify-content: center;
+  display: flex; flex-direction: column;
   padding: 48px clamp(28px, 3vw, 52px);
   background: none;
+
+  /* `safe center` and not plain `center`. Centred flex content that outgrows
+     its container overflows in BOTH directions, and the half above the top
+     edge is unreachable — no scrollbar will take you to it. `safe` falls back
+     to flex-start the moment that would happen, so the overflow goes one way
+     and the scroll can reach it. Measured: at 200% browser zoom on a 1920x870
+     window the card is 450px tall in a 435px viewport, and the Sign In button
+     sat 24px below the fold with no way to reach it. */
+  justify-content: safe center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* Without backdrop-filter the translucency would just look washed out, so the
    panel goes opaque instead of half-finished. */
