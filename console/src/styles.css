@@ -7942,33 +7942,32 @@ h3.widget-title {
    hairline bar is not. */
 .lg-art {
   position: absolute;
-  /* Tucked a little way under the card. Glass with nothing behind it is
-     just grey plastic — backdrop-filter has nothing to refract — so the
-     picture has to pass beneath it for the surface to read as glass at all.
-     Anchored to the column, not the window, so the overlap holds. */
-  right: calc(var(--lg-col) - 300px);
-  left: auto;
+  left: clamp(20px, 8vw, 220px);
+  right: auto;
   top: 50%;
   transform: translateY(-50%);
-  width: min(63%, 136vh);
-  aspect-ratio: 1220 / 634;
-  height: auto;
+
+  /* Driven by HEIGHT, not width. The portrait is 0.97:1, so sizing it off the
+     window's width is what made it outgrow the window on a short screen — the
+     complaint every time. Bound to vh it can never be taller than the window,
+     and the px ceiling stops it ballooning on a very tall display. */
+  height: min(84vh, 900px);
+  width: auto;
+  aspect-ratio: 1500 / 1550;
   object-fit: cover;
   display: block;
 
-  /* Two edge fades intersected, not a vignette. A radial mask large enough to
-     leave the middle alone cannot reach the corners of a 1.92 rectangle, and
-     one small enough to reach them dims the robot. Per-edge linear fades do
-     exactly and only what is needed: the sides and top are already black in
-     the source (sampled: 0,0,0 to 3,6,11 against a 1,2,5 ground), so they
-     need a few percent to kill the seam; the bottom edge is the robot's lit
-     neck cut off mid-metal, so it gets a long dissolve instead. */
+  /* Two edge fades intersected, not a vignette, and tuned to THIS picture:
+     the left quarter and the top ninth are the source's own black and need
+     only a few percent to kill the seam; the nose reaches 93% across, so the
+     right fade starts past it at 96%; the bottom is the lit chest running
+     into the frame, so it gets a long dissolve. */
   -webkit-mask-image:
-    linear-gradient(90deg,  transparent 0, #000 7%, #000 90%, transparent 100%),
-    linear-gradient(180deg, transparent 0, #000 9%, #000 74%, transparent 100%);
+    linear-gradient(90deg,  transparent 0, #000 6%, #000 96%, transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 5%, #000 70%, transparent 100%);
   mask-image:
-    linear-gradient(90deg,  transparent 0, #000 7%, #000 90%, transparent 100%),
-    linear-gradient(180deg, transparent 0, #000 9%, #000 74%, transparent 100%);
+    linear-gradient(90deg,  transparent 0, #000 6%, #000 96%, transparent 100%),
+    linear-gradient(180deg, transparent 0, #000 5%, #000 70%, transparent 100%);
   -webkit-mask-composite: source-in;   /* the WebKit spelling of intersect */
   mask-composite: intersect;
 }
@@ -8028,21 +8027,32 @@ h3.widget-title {
 .lg-form {
   width: 100%; max-width: 372px; align-self: center;
   padding: 38px 34px; border-radius: 18px;
-  /* Two layers, and the order matters. The lower one is a dark scrim: real
-     frosted glass is translucent, not transparent, and without it the photo
-     behind comes through at full strength and the labels sit on whatever the
-     picture happens to be doing. The upper one is the white sheen that makes
-     it read as a surface rather than a dimmer. Measured against both extremes
-     of the picture — its black starfield and the blown-out "Ai" glyph — this
-     is where the grey label text clears 4.5:1 on BOTH. */
+  /* Three layers, bottom to top as listed last to first.
+
+     A dark scrim, because frosted glass is translucent and not transparent.
+     Then a soft top-left-to-bottom-right lift, which is the light falling on
+     the sheet. Then one narrow diagonal streak — the specular reflection.
+     That streak is what the eye actually reads as glass; without it a
+     translucent rounded rectangle is just a dimmer with a border. */
   background:
-    linear-gradient(165deg, rgba(255,255,255,.10), rgba(255,255,255,.045)),
-    linear-gradient(165deg, rgba(6,10,20,.80), rgba(6,10,20,.88));
-  border: 1px solid rgba(255,255,255,.16);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.14),
-              0 28px 70px rgba(0,0,0,.52);
-  backdrop-filter: blur(26px) saturate(135%);
-  -webkit-backdrop-filter: blur(26px) saturate(135%);
+    linear-gradient(118deg, rgba(255,255,255,0) 30%,
+                            rgba(255,255,255,.075) 45%,
+                            rgba(255,255,255,0) 62%),
+    linear-gradient(152deg, rgba(255,255,255,.13), rgba(255,255,255,.03)),
+    linear-gradient(165deg, rgba(8,13,26,.74), rgba(5,8,16,.86));
+  border: 1px solid rgba(255,255,255,.17);
+  /* The bright rim is on the TOP edge only and the bottom one is a quarter of
+     it. An even rim all the way round reads as a stroked box; an uneven one
+     reads as a thickness catching the light. The last shadow is an ambient
+     bloom in the brand blue — it is attached to the card, not painted into
+     the ground, so it cannot disturb the page edges. */
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.26),
+    inset 0 -1px 0 rgba(255,255,255,.06),
+    0 32px 80px rgba(0,0,0,.60),
+    0 0 120px -10px rgba(47,127,224,.16);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
 }
 
 .lg-title {
@@ -8132,10 +8142,17 @@ body.light-theme .lg-screen { --lg-ground: #010205; }
 /* Without this the card keeps its dark glass while the type inside goes to
    #0e1219 — near-black text on near-black glass. */
 body.light-theme .lg-form {
-  background: linear-gradient(165deg, rgba(255,255,255,.93), rgba(246,248,251,.86));
-  border-color: rgba(255,255,255,.7);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.9),
-              0 28px 70px rgba(0,0,0,.52);
+  background:
+    linear-gradient(118deg, rgba(255,255,255,0) 30%,
+                            rgba(255,255,255,.55) 45%,
+                            rgba(255,255,255,0) 62%),
+    linear-gradient(165deg, rgba(255,255,255,.93), rgba(240,244,249,.85));
+  border-color: rgba(255,255,255,.75);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95),
+    inset 0 -1px 0 rgba(14,18,25,.05),
+    0 32px 80px rgba(0,0,0,.62),
+    0 0 120px -10px rgba(47,127,224,.20);
 }
 body.light-theme .lg-title { color: #0e1219; }
 body.light-theme .lg-lede { color: #4b5563; }
@@ -8187,7 +8204,7 @@ body.light-theme .lg-error {
   .lg-art {
     left: 0; right: auto; top: 0; transform: none;
     width: 100%; height: 41vh; aspect-ratio: auto;
-    object-fit: cover; object-position: 44% 24%;
+    object-fit: cover; object-position: 50% 14%;
     -webkit-mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
     mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
     -webkit-mask-composite: source-over;
