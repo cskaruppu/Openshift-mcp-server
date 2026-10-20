@@ -8088,7 +8088,13 @@ h3.widget-title {
 .lg-panel {
   position: relative; z-index: 4;
   display: flex; flex-direction: column;
-  padding: 48px clamp(28px, 3vw, 52px);
+  /* The bottom padding is not symmetry, it is clearance. `.lg-fine` is
+     absolutely positioned 24px off the panel's bottom edge and is about 31px
+     tall, so it owns the bottom 55px. Centred content is laid out inside the
+     padding box, so reserving 72px there is what keeps the card off it.
+     Without this they collide below roughly 560px of viewport height —
+     measured at 18px of overlap at 540px, 58px at 500px. */
+  padding: 48px clamp(28px, 3vw, 52px) 72px;
   background: none;
 
   /* `safe center` and not plain `center`. Centred flex content that outgrows
@@ -8339,6 +8345,36 @@ body.light-theme .lg-error {
 /* The fine print and the theme toggle sit on the ground, not on the card, and
    the ground does not flip — so neither do they. Darkening them for light
    theme put near-black text and a near-black glyph on near-black. */
+
+/* ── short windows ───────────────────────────────────────────────────────
+   A laptop at 100% zoom is commonly 600-700 CSS px tall once the browser
+   chrome and the taskbar are taken out, and at full size the card was
+   filling 75-85% of that — which is why the page looked right at 80% zoom
+   and cramped at 100%. The card is not a fixed object; it steps down when
+   the window is short, so 100% on a laptop looks like 80% did.
+
+   Height queries, not width: the problem is vertical and a wide-but-short
+   window has it just as badly as a narrow one. */
+@media (max-height: 820px) {
+  .lg-form  { padding: 28px 28px; max-width: 356px; }
+  .lg-title { font-size: clamp(21px, 1.7vw, 25px); }
+  .lg-lede  { font-size: 13px; }
+  .lg-tabs  { margin: 20px 0 2px; }
+  .lg-label { margin: 16px 0 6px; }
+  .lg-input { height: 44px; }
+  .lg-btn   { height: 44px; margin-top: 22px; }
+  .lg-panel { padding-top: 32px; padding-bottom: 66px; }
+}
+@media (max-height: 620px) {
+  .lg-form  { padding: 22px 24px; }
+  .lg-title { font-size: 20px; }
+  .lg-tabs  { margin: 16px 0 0; }
+  .lg-label { margin: 13px 0 5px; }
+  .lg-input { height: 40px; }
+  .lg-btn   { height: 42px; margin-top: 18px; }
+  .lg-panel { padding-top: 24px; padding-bottom: 60px; }
+  .lg-fine  { bottom: 16px; }
+}
 
 /* ── wide-and-short windows ─────────────────────────────────────────────
    The picture is 3:2; a laptop viewport is nearer 2.2:1. Showing all of it
