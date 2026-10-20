@@ -72,6 +72,16 @@ export function LoginOverlay() {
     <div className="lg-screen">
       {/* The plate. A deep neutral sits behind it in CSS, so a missing file
           leaves a designed screen rather than a broken frame. */}
+      {/* Two copies of the same file. The back one fills the window and is
+          blurred past recognition; the front one is contained, so the whole
+          picture is always visible and never cropped. What would otherwise be
+          a black letterbox bar is a soft continuation of the image instead —
+          the browser caches one download and paints it twice. */}
+      <picture>
+        <source srcSet="/brand/login-hero.webp" type="image/webp" />
+        <img className="lg-art-bg" src="/brand/login-hero.jpg"
+             alt="" aria-hidden="true" decoding="async" />
+      </picture>
       <picture>
         <source srcSet="/brand/login-hero.webp" type="image/webp" />
         <img

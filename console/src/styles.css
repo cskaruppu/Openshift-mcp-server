@@ -7917,15 +7917,27 @@ h3.widget-title {
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */
 .lg-screen picture { display: contents; }
+/* The fill. Scaled past the edges so the blur has pixels to work with rather
+   than smearing the frame border inward. */
+.lg-art-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  display: block;
+  transform: scale(1.12);
+  filter: blur(42px) saturate(130%) brightness(.62);
+}
+
 .lg-art {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover;
-  /* The head fills the artwork top to bottom, so any vertical crop takes
-     either the cranium or the chin. Anchored near the top it takes neither —
-     what goes instead is the robot's chest and the HUD panels along the
-     bottom, which nobody is looking at. 44% was cutting the top of the head
-     on a short browser window. */
-  object-position: 38% 16%;
+  /* `contain`, not `cover`. cover fills the window and discards whatever
+     hangs over the edge, so on a window that is not 1.92:1 it was cutting the
+     robot's chest and the top of its head. contain scales the picture until
+     the WHOLE of it fits and leaves the remainder as background — and because
+     the artwork's own edges are near-black and the screen behind it is
+     #05070c, that remainder does not read as letterboxing. Nothing is ever
+     cropped, at any window shape. */
+  object-fit: contain;
+  object-position: center;
   display: block;
 }
 
@@ -8105,7 +8117,12 @@ body.light-theme .lg-fine { color: #6b7280; opacity: 1; }
    it, and a sign-in that needs scrolling to reach the password field is worse
    than one without a tagline. */
 @media (max-width: 860px) {
-  .lg-art { object-position: 40% 14%; }
+  /* On a phone the plate is a band, and containing a 1.92 image inside a
+     short band leaves most of it empty — so the band crops, and the head is
+     what it keeps. With the front copy filling the band the fill has nothing
+     to do. */
+  .lg-art { object-fit: cover; object-position: 40% 14%; }
+  .lg-art-bg { display: none; }
   .lg-veil {
     background:
       linear-gradient(180deg, rgba(4,7,14,.56) 0%, rgba(4,7,14,.18) 26%,
