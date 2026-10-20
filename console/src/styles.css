@@ -7897,7 +7897,7 @@ h3.widget-title {
   --lg-blue-2: #4596ef;
   --lg-blue-d: #1559b4;
   --lg-yellow: #f2c230;
-  --lg-grey:   #a7b0be;   /* measured: 4.42:1 at #97a1b2 over the card's
+  --lg-grey:   #c3cad6;   /* measured: 4.42:1 at #97a1b2 over the card's
                               brightest composite, which fails 4.5 for the
                               11.5px labels. This clears it at 5.2:1. */
   --lg-black:  #05070c;
@@ -7940,57 +7940,79 @@ h3.widget-title {
    `cover` rather than `contain` for the last rounding pixel: a half-pixel
    mismatch crops instead of letterboxing, and a crop is invisible where a
    hairline bar is not. */
+/* The picture IS the page. Not an object placed in a ground, not anchored to
+   the card — it fills the window, which is also what retires every problem
+   the floating version had: there is no rectangle to dissolve, no seam to
+   match, and the four edges are identical because they are all the same
+   photograph. Nothing is masked; there are no edges to hide.
+
+   `cover` crops, and at 1.5 against a 1.78 window the crop is vertical and
+   modest — about 100px off the top and bottom at 1920x1080. The head and the
+   HUD both survive it, which is why this picture tolerates full-bleed and the
+   old 1.92 one did not. */
 .lg-art {
   position: absolute;
-  left: clamp(20px, 8vw, 220px);
-  right: auto;
-  top: 50%;
-  transform: translateY(-50%);
-
-  /* Driven by HEIGHT, not width. The portrait is 0.97:1, so sizing it off the
-     window's width is what made it outgrow the window on a short screen — the
-     complaint every time. Bound to vh it can never be taller than the window,
-     and the px ceiling stops it ballooning on a very tall display. */
-  height: min(84vh, 900px);
-  width: auto;
-  aspect-ratio: 1500 / 1550;
-  object-fit: cover;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* `contain`, not `cover`. Cover crops, and at 1.5 inside a 1.78 window it
+     takes 125px off the top and bottom — which is the crown of the head and
+     the shoulder. Contain shows the whole composition exactly as supplied,
+     and the bars it leaves are invisible: the page ground IS the picture's
+     own black, remapped to it channel by channel when the asset was built.
+     That is what buys the complete picture here and could not be done before.
+     Pushed right, so the glass always has the HUD behind it. */
+  object-fit: contain;
+  /* Pinned to the BOTTOM. Any letterboxing then lands at the top, where the
+     picture is its own black and invisible, and the shoulder always runs off
+     the bottom of the window instead of being cut across the middle of it. */
+  object-position: 82% 100%;
   display: block;
-
-  /* Two edge fades intersected, not a vignette, and tuned to THIS picture:
-     the left quarter and the top ninth are the source's own black and need
-     only a few percent to kill the seam; the nose reaches 93% across, so the
-     right fade starts past it at 96%; the bottom is the lit chest running
-     into the frame, so it gets a long dissolve. */
-  -webkit-mask-image:
-    linear-gradient(90deg,  transparent 0, #000 6%, #000 96%, transparent 100%),
-    linear-gradient(180deg, transparent 0, #000 5%, #000 70%, transparent 100%);
-  mask-image:
-    linear-gradient(90deg,  transparent 0, #000 6%, #000 96%, transparent 100%),
-    linear-gradient(180deg, transparent 0, #000 5%, #000 70%, transparent 100%);
-  -webkit-mask-composite: source-in;   /* the WebKit spelling of intersect */
-  mask-composite: intersect;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
-/* A grade, not a dimmer. It deepens the corners and cools the far side so the
-   photograph reads as a designed backdrop rather than a wallpaper, and leaves
-   the robot at full strength. */
+/* A grade, not a dimmer. Three passes, and each one exists for a piece of
+   text: the top for the lockup, the bottom for the fine print, and a long
+   lean into the right-hand side so the glass has a predictable backdrop
+   instead of whatever the photograph happens to be doing there.
+
+   The left 46% is untouched. That is deliberate — the robot stays at full
+   strength, and the grade only begins where the form does. */
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(180deg,
-    rgba(1,2,5,.78) 0%, rgba(1,2,5,.18) 15%, rgba(1,2,5,0) 27%);
+  background:
+    linear-gradient(180deg, rgba(1,2,5,.70) 0%, rgba(1,2,5,.16) 14%, rgba(1,2,5,0) 26%),
+    linear-gradient(0deg,   rgba(1,2,5,.46) 0%, rgba(1,2,5,.10) 10%, rgba(1,2,5,0) 20%),
+    linear-gradient(90deg,  rgba(1,2,5,0) 0%,   rgba(1,2,5,0) 40%,
+                            rgba(1,2,5,.30) 66%, rgba(1,2,5,.62) 92%,
+                            rgba(1,2,5,.66) 100%);
 }
 
 /* ── the lockup, over the photograph ────────────────────────────────────── */
+/* The lockup sits on its own piece of glass too. Over a photograph a bare
+   wordmark has to carry a heavy text-shadow to stay legible, and a heavy
+   text-shadow is the thing that makes a sign-in page look pasted together.
+   A chip solves it honestly: the type stays clean and the surface does the
+   work. */
 .lg-brand {
   position: absolute; left: 4.2%; top: 7.5%; z-index: 3; color: #fff;
   display: flex; align-items: center; gap: clamp(14px, 1.5vw, 24px);
   max-width: 52%;
+  padding: clamp(12px, 1.1vw, 18px) clamp(18px, 1.7vw, 26px);
+  border-radius: 16px;
+  background:
+    linear-gradient(140deg, rgba(255,255,255,.12), rgba(255,255,255,.035)),
+    linear-gradient(140deg, rgba(6,10,20,.34), rgba(6,10,20,.46));
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22),
+              0 18px 44px rgba(0,0,0,.42);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
 .lg-logo {
   display: block; height: auto; flex: none;
   width: clamp(118px, 11vw, 178px);
-  filter: drop-shadow(0 2px 14px rgba(0,0,0,.72));
 }
 /* The hairline is what makes this one lockup rather than two things that
    happen to sit near each other. It matches the logo's height, not the text's,
@@ -8007,7 +8029,6 @@ h3.widget-title {
   font-size: clamp(15px, 1.4vw, 23px); font-weight: 600;
   letter-spacing: -.012em; line-height: 1.26; max-width: 22ch;
   color: #fff;
-  text-shadow: 0 2px 18px rgba(0,0,0,.78);
 }
 
 /* ── the panel ──────────────────────────────────────────────────────────── */
@@ -8035,12 +8056,12 @@ h3.widget-title {
      That streak is what the eye actually reads as glass; without it a
      translucent rounded rectangle is just a dimmer with a border. */
   background:
-    linear-gradient(118deg, rgba(255,255,255,0) 30%,
-                            rgba(255,255,255,.075) 45%,
-                            rgba(255,255,255,0) 62%),
-    linear-gradient(152deg, rgba(255,255,255,.13), rgba(255,255,255,.03)),
-    linear-gradient(165deg, rgba(8,13,26,.74), rgba(5,8,16,.86));
-  border: 1px solid rgba(255,255,255,.17);
+    linear-gradient(118deg, rgba(255,255,255,0) 28%,
+                            rgba(255,255,255,.085) 44%,
+                            rgba(255,255,255,0) 61%),
+    linear-gradient(152deg, rgba(255,255,255,.15), rgba(255,255,255,.035)),
+    linear-gradient(165deg, rgba(8,13,26,.46), rgba(5,8,16,.58));
+  border: 1px solid rgba(255,255,255,.20);
   /* The bright rim is on the TOP edge only and the bottom one is a quarter of
      it. An even rim all the way round reads as a stroked box; an uneven one
      reads as a thickness catching the light. The last shadow is an ambient
@@ -8051,8 +8072,8 @@ h3.widget-title {
     inset 0 -1px 0 rgba(255,255,255,.06),
     0 32px 80px rgba(0,0,0,.60),
     0 0 120px -10px rgba(47,127,224,.16);
-  backdrop-filter: blur(30px) saturate(150%);
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  backdrop-filter: blur(34px) saturate(165%);
+  -webkit-backdrop-filter: blur(34px) saturate(165%);
 }
 
 .lg-title {
@@ -8061,47 +8082,70 @@ h3.widget-title {
 }
 .lg-lede { margin: 6px 0 0; font-size: 13.5px; color: var(--lg-grey); }
 
+/* A segmented rail rather than an underline, because an underline on glass
+   reads as a scratch. The yellow survives as a 2px bar inside the selected
+   pill — it follows the pill's radius, so it reads as part of the object
+   instead of a line ruled across it. */
 .lg-tabs {
-  display: flex; gap: 2px; margin: 30px 0 6px;
-  border-bottom: 1px solid rgba(255,255,255,.12);
+  display: flex; gap: 4px; margin: 28px 0 4px; padding: 4px;
+  border-radius: 13px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
 }
 .lg-tab {
-  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-  padding: 9px 15px; color: rgba(255,255,255,.46);
-  background: none; border: 0; border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  flex: 1; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 8px 12px; border-radius: 9px;
+  color: rgba(255,255,255,.52);
+  background: none; border: 0;
+  transition: background .15s, color .15s, box-shadow .15s;
 }
-.lg-tab.on { color: #fff; border-bottom-color: var(--lg-yellow); }
-.lg-tab:hover { color: rgba(255,255,255,.8); }
+.lg-tab.on {
+  color: #fff;
+  background: linear-gradient(160deg, rgba(255,255,255,.17), rgba(255,255,255,.07));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.26),
+              inset 0 -2px 0 var(--lg-yellow),
+              0 6px 16px rgba(0,0,0,.26);
+}
+.lg-tab:hover:not(.on) { color: rgba(255,255,255,.84); background: rgba(255,255,255,.06); }
 
 .lg-label {
   display: block; font-size: 11.5px; font-weight: 600; letter-spacing: .03em;
   color: var(--lg-grey); margin: 22px 0 8px;
 }
 .lg-input {
-  width: 100%; height: 46px; padding: 0 15px;
+  width: 100%; height: 48px; padding: 0 16px;
   font: inherit; font-size: 14px; color: #fff;
-  background: rgba(255,255,255,.05);
-  border: 1px solid rgba(255,255,255,.15); border-radius: 10px;
+  background: linear-gradient(170deg, rgba(255,255,255,.10), rgba(255,255,255,.045));
+  border: 1px solid rgba(255,255,255,.18); border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.lg-input::placeholder { color: rgba(255,255,255,.42); }
-.lg-input:hover { border-color: rgba(255,255,255,.26); }
+.lg-input::placeholder { color: rgba(255,255,255,.55); }
+.lg-input:hover { border-color: rgba(255,255,255,.30); }
 .lg-input:focus {
-  outline: none; border-color: var(--lg-blue);
-  background: rgba(255,255,255,.08);
-  box-shadow: 0 0 0 3px rgba(47,127,224,.2);
+  outline: none; border-color: var(--lg-blue-2);
+  background: linear-gradient(170deg, rgba(255,255,255,.15), rgba(255,255,255,.07));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 0 0 3px rgba(47,127,224,.26);
 }
 
+/* The one solid object on the page. Everything else is a sheet you can see
+   through; the thing you press is the thing that is not. */
 .lg-btn {
-  width: 100%; height: 48px; margin-top: 30px;
+  width: 100%; height: 48px; margin-top: 28px;
   font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer;
-  color: #fff; background: var(--lg-blue); border: 0; border-radius: 10px;
-  box-shadow: 0 10px 26px rgba(47,127,224,.3);
-  transition: background .15s, transform .08s, box-shadow .15s;
+  color: #fff; border: 0; border-radius: 12px;
+  background: linear-gradient(170deg, var(--lg-blue-2), var(--lg-blue) 52%, var(--lg-blue-d));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.32),
+              0 12px 30px rgba(47,127,224,.34);
+  transition: filter .15s, transform .08s, box-shadow .15s;
 }
 .lg-btn:hover:not(:disabled) {
-  background: var(--lg-blue-2); box-shadow: 0 12px 30px rgba(47,127,224,.38);
+  filter: brightness(1.09);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.38),
+              0 14px 36px rgba(47,127,224,.44);
 }
 .lg-btn:active:not(:disabled) { transform: translateY(1px); }
 .lg-btn:disabled { opacity: .6; cursor: default; box-shadow: none; }
@@ -8113,18 +8157,30 @@ h3.widget-title {
 }
 
 .lg-fine {
-  position: absolute; left: 0; right: 0; bottom: 26px;
-  text-align: center; font-size: 11px; color: var(--lg-grey); opacity: .85;
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
+  padding: 7px 15px; border-radius: 999px; white-space: nowrap;
+  font-size: 11px; letter-spacing: .02em; color: rgba(255,255,255,.80);
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
 }
 
 .lg-theme {
   position: absolute; top: 22px; right: clamp(34px, 3.4vw, 56px); z-index: 6;
-  width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
-  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+  width: 38px; height: 38px; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(150deg, rgba(255,255,255,.15), rgba(255,255,255,.05));
+  border: 1px solid rgba(255,255,255,.17);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.26), 0 10px 26px rgba(0,0,0,.34);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   color: #fff; font-size: 15px; line-height: 1;
-  transition: background .15s;
+  transition: background .15s, box-shadow .15s;
 }
-.lg-theme:hover { background: rgba(255,255,255,.13); }
+.lg-theme:hover {
+  background: linear-gradient(150deg, rgba(255,255,255,.22), rgba(255,255,255,.09));
+}
 
 .lg-tab:focus-visible, .lg-btn:focus-visible, .lg-theme:focus-visible {
   outline: 2px solid var(--lg-yellow); outline-offset: 2px;
@@ -8156,11 +8212,17 @@ body.light-theme .lg-form {
 }
 body.light-theme .lg-title { color: #0e1219; }
 body.light-theme .lg-lede { color: #4b5563; }
-body.light-theme .lg-tabs { border-bottom-color: rgba(14,18,25,.1); }
-body.light-theme .lg-tab { color: #8b93a1; }
-body.light-theme .lg-tab:hover { color: #4b5563; }
-body.light-theme .lg-tab.on { color: #0e1219; border-bottom-color: var(--lg-blue-d); }
-body.light-theme .lg-tabs { box-shadow: 0 1px 0 rgba(255,255,255,.75); }
+body.light-theme .lg-tabs {
+  background: rgba(14,18,25,.05); border-color: rgba(14,18,25,.09);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+body.light-theme .lg-tab { color: #6b7280; }
+body.light-theme .lg-tab:hover:not(.on) { color: #374151; background: rgba(255,255,255,.55); }
+body.light-theme .lg-tab.on {
+  color: #0e1219;
+  background: linear-gradient(160deg, #ffffff, #f3f6fa);
+  box-shadow: inset 0 -2px 0 var(--lg-blue-d), 0 4px 12px rgba(14,18,25,.12);
+}
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
   color: #0e1219; background: #fff; border-color: rgba(14,18,25,.18);
@@ -8204,7 +8266,7 @@ body.light-theme .lg-error {
   .lg-art {
     left: 0; right: auto; top: 0; transform: none;
     width: 100%; height: 41vh; aspect-ratio: auto;
-    object-fit: cover; object-position: 50% 14%;
+    object-fit: cover; object-position: 32% 50%;
     -webkit-mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
     mask-image: linear-gradient(180deg, #000 0, #000 76%, transparent 100%);
     -webkit-mask-composite: source-over;

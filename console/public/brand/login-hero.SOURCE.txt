@@ -1,5 +1,11 @@
-Photo: Gabriele Malaspina, via Unsplash.
-https://unsplash.com/photos/a-white-robot-is-standing-in-front-of-a-black-background-CjWsslYVnPI
-Unsplash License — free for commercial use, no attribution required.
-Retrieved 2026-10-20. Cropped (right margin removed) and extended with black
-at the top so the head is not shaved by the frame. Not otherwise retouched.
+Artwork supplied by the product owner, 2026-10-20 (1200x800).
+Third-party stock composition carrying its own "AGENTIC Ai" wordmark.
+LICENCE NOT VERIFIED BY THIS REPOSITORY — confirm the stock licence covers
+customer-facing use before this fronts a customer demo.
+
+Build steps applied (scripted, reproducible):
+  1. Tonal floor remapped onto the page ground (1,2,5) so the picture s
+     background and the page are the same colour at every window shape.
+  2. Edges feathered 3% left / 2% top / 2% right. Bottom NOT feathered: the
+     shoulder is the subject and the picture is pinned to the bottom of the
+     window in CSS, so that edge is never seen.
