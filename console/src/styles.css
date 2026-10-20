@@ -7861,101 +7861,123 @@ h3.widget-title {
 }
 
 /* ===========================================================================
-   SIGN-IN SCREEN — full-bleed artwork, form inside it
+   SIGN-IN SCREEN — artwork panel beside the form
    ===========================================================================
-   Added as its own `.lg-` namespace rather than by editing the old `.login-`
-   rules above. Nothing that existed changed, so reverting this screen is
-   deleting one block and one component — no archaeology through a diff.
+   Its own `.lg-` namespace; every older `.login-` rule above is untouched, so
+   reverting this screen is deleting this block and restoring one component.
 
-   Three things carry the design, and they are all here rather than in the JSX:
-
-     1. The veil is DIRECTIONAL. A flat wash either buries the picture or
-        leaves the form unreadable. The stops are placed against this specific
-        artwork: 0% is the card edge, and 22%-48% is the band holding the
-        image's own baked-in wordmark, which has to go quiet or it reads as a
-        word half-hidden behind the card.
-     2. The card sits RIGHT, over the darkest part of the plate. Centred, it
-        lands on the globe — the busiest pixels in the frame.
-     3. The artwork is dark in both themes, so the theme toggle flips the CARD,
-        not the page. Light theme gets an opaque panel, which is also the
-        higher-contrast answer for a form sitting over a photograph.
+   Why a panel and not full bleed, since full bleed was tried first: the usable
+   crop of the artwork is 598 x 646. Right of it sits a baked-in "AGENTIC AI"
+   wordmark that cannot be retouched off circuitry, and below it sat a stray UI
+   button, so both were cropped away rather than patched. Stretching what is
+   left across a 2560px screen is a four-times upscale — dull, soft, and the
+   earlier veil had to be heavy enough to hide the wordmark, which drained the
+   colour that made the picture worth using. In a panel the same crop is scaled
+   about 1.2x, needs almost no veil, and keeps its blues.
    ======================================================================== */
 
 .lg-screen {
   position: fixed; inset: 0; z-index: 99999;
-  /* The fallback, and it is a real one: if the file 404s this stays a
-     designed deep-neutral screen with the lockup and the form on it. */
+  display: grid; grid-template-columns: 52% 48%;
+  /* The fallback, and a real one: if the file 404s this is still a designed
+     screen with the lockup and the form on it. */
   background: #06080d;
   overflow: hidden;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.lg-plate { position: relative; overflow: hidden; background: #06080d; }
+.lg-plate picture { display: contents; }
 .lg-art {
   position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; object-position: 28% 36%;
+  object-fit: cover; object-position: 52% 40%;
   display: block;
 }
 
+/* Almost nothing — just enough under the two text blocks to hold them legible.
+   The picture is allowed to be the picture. */
 .lg-veil {
   position: absolute; inset: 0; pointer-events: none;
   background:
-    linear-gradient(270deg,
-      rgba(4,6,11,.93) 0%, rgba(4,6,11,.91) 24%, rgba(4,6,11,.85) 40%,
-      rgba(4,6,11,.60) 56%, rgba(4,6,11,.22) 76%, rgba(4,6,11,.46) 100%),
-    radial-gradient(130% 110% at 26% 42%, transparent 32%, rgba(3,5,10,.66) 100%);
+    linear-gradient(180deg, rgba(4,8,16,.62) 0%, rgba(4,8,16,.12) 26%, rgba(4,8,16,0) 46%),
+    linear-gradient(0deg,   rgba(4,8,16,.74) 0%, rgba(4,8,16,.16) 24%, rgba(4,8,16,0) 44%),
+    linear-gradient(90deg,  rgba(4,8,16,.34) 0%, rgba(4,8,16,0) 32%);
 }
 
-/* ── brand, top left over the quiet part of the plate ───────────────────── */
-.lg-brand { position: absolute; left: 4.6%; top: 8%; z-index: 3; color: #fff; }
+/* The field. Deep blue lifted from the artwork so the halves read as one
+   screen, with the seam softened rather than ruled. */
+.lg-field {
+  position: relative; display: grid; place-items: center;
+  padding: 32px 5% 32px 4%;
+  background:
+    radial-gradient(120% 90% at 0% 50%, #11203a 0%, #0a1322 42%, #06080d 100%);
+}
+.lg-field::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 90px;
+  background: linear-gradient(90deg, rgba(6,8,13,.55), rgba(6,8,13,0));
+  pointer-events: none;
+}
+
+/* ── brand and claim, on the plate ──────────────────────────────────────── */
+.lg-brand { position: absolute; left: 8%; top: 8%; z-index: 3; color: #fff; }
 .lg-mark {
-  font-size: clamp(20px, 2.1vw, 34px); font-weight: 700;
+  font-size: clamp(20px, 2.1vw, 33px); font-weight: 700;
   letter-spacing: -.025em; line-height: 1.1;
+  text-shadow: 0 2px 16px rgba(0,0,0,.6);
 }
 .lg-tcs { color: #ff5c5c; font-weight: 800; }
 .lg-sub {
-  font-size: clamp(8px, .68vw, 11px); font-weight: 700;
+  font-size: clamp(8px, .66vw, 11px); font-weight: 700;
   letter-spacing: .2em; text-transform: uppercase;
-  color: rgba(255,255,255,.5); margin-top: 8px;
+  color: rgba(255,255,255,.62); margin-top: 8px;
+  text-shadow: 0 1px 10px rgba(0,0,0,.7);
 }
 
 .lg-claim {
-  position: absolute; left: 4.6%; bottom: 9%; z-index: 3; margin: 0;
-  max-width: 28%; color: #fff;
-  font-size: clamp(15px, 1.45vw, 24px); font-weight: 600;
+  position: absolute; left: 8%; right: 10%; bottom: 8%; z-index: 3; margin: 0;
+  color: #fff;
+  font-size: clamp(15px, 1.35vw, 22px); font-weight: 600;
   letter-spacing: -.018em; line-height: 1.35;
-  text-shadow: 0 2px 18px rgba(0,0,0,.7);
+  text-shadow: 0 2px 20px rgba(0,0,0,.8);
 }
-.lg-claim em { font-style: normal; color: #ff9a9a; }
+.lg-claim em { font-style: normal; color: #7fe3ff; }
 
-.lg-theme {
-  position: absolute; top: 20px; right: 20px; z-index: 6;
-  width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
-  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16);
-  color: #fff; font-size: 15px; line-height: 1;
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+/* ── the pointers ───────────────────────────────────────────────────────── */
+/* Cyan, because the artwork already draws the gaze beam in it — the arcs read
+   as that beam continuing rather than as chrome added on top. */
+.lg-point {
+  position: absolute; z-index: 5; pointer-events: none;
+  left: 52%; top: 59%; transform: translate(-44%, -50%);
+  width: clamp(150px, 15vw, 250px); height: auto;
+  color: #5fd3f0;
 }
-.lg-theme:hover { background: rgba(255,255,255,.14); }
+.lg-arc {
+  stroke: #5fd3f0; stroke-width: 1.6; fill: none; opacity: .72;
+  stroke-dasharray: 7 7;
+  filter: drop-shadow(0 0 5px rgba(95,211,240,.55));
+  animation: lg-flow 2.6s linear infinite;
+}
+.lg-arc2 { animation-delay: -1.3s; }
+@keyframes lg-flow { to { stroke-dashoffset: -28; } }
 
 /* ── the card ───────────────────────────────────────────────────────────── */
 .lg-card {
-  position: absolute; z-index: 4; right: 6%; top: 50%;
-  transform: translateY(-50%);
-  width: min(27%, 400px); min-width: 318px;
-  padding: 32px 30px; border-radius: 16px;
-  background: rgba(9,12,19,.56);
-  border: 1px solid rgba(255,255,255,.13);
-  box-shadow: 0 30px 72px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.07);
-  backdrop-filter: blur(22px) saturate(135%);
-  -webkit-backdrop-filter: blur(22px) saturate(135%);
+  width: 100%; max-width: 392px;
+  padding: 34px 32px; border-radius: 16px;
+  background: rgba(10,16,28,.62);
+  border: 1px solid rgba(132,200,230,.16);
+  box-shadow: 0 30px 72px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
 }
 .lg-title {
-  margin: 0; font-size: 21px; font-weight: 700;
+  margin: 0; font-size: 22px; font-weight: 700;
   letter-spacing: -.018em; color: #fff;
 }
-.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: rgba(255,255,255,.52); }
+.lg-lede { margin: 4px 0 0; font-size: 12.5px; color: rgba(255,255,255,.54); }
 
 .lg-tabs {
-  display: flex; gap: 2px; margin: 20px 0 4px;
+  display: flex; gap: 2px; margin: 22px 0 4px;
   border-bottom: 1px solid rgba(255,255,255,.13);
 }
 .lg-tab {
@@ -7965,11 +7987,11 @@ h3.widget-title {
   margin-bottom: -1px;
 }
 .lg-tab.on { color: #fff; border-bottom-color: #ff5c5c; }
-.lg-tab:hover { color: rgba(255,255,255,.76); }
+.lg-tab:hover { color: rgba(255,255,255,.78); }
 
 .lg-label {
   display: block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
-  color: rgba(255,255,255,.62); margin: 18px 0 7px;
+  color: rgba(255,255,255,.64); margin: 18px 0 7px;
 }
 .lg-input {
   width: 100%; height: 40px; padding: 0 13px;
@@ -7980,12 +8002,12 @@ h3.widget-title {
 }
 .lg-input::placeholder { color: rgba(255,255,255,.34); }
 .lg-input:focus {
-  outline: none; border-color: rgba(255,92,92,.7);
+  outline: none; border-color: rgba(255,92,92,.72);
   background: rgba(255,255,255,.085);
 }
 
 .lg-btn {
-  width: 100%; height: 42px; margin-top: 22px;
+  width: 100%; height: 42px; margin-top: 24px;
   font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
   color: #fff; background: #d93333; border: 0; border-radius: 9px;
   box-shadow: 0 8px 22px rgba(217,51,51,.34);
@@ -8005,17 +8027,30 @@ h3.widget-title {
   font-size: 10.5px; color: rgba(255,255,255,.4);
 }
 
-/* Keyboard focus has to survive the glass — the default ring disappears
-   against a blurred photograph. */
+.lg-theme {
+  position: absolute; top: 20px; right: 20px; z-index: 6;
+  width: 34px; height: 34px; border-radius: 9px; cursor: pointer;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16);
+  color: #fff; font-size: 15px; line-height: 1;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.lg-theme:hover { background: rgba(255,255,255,.14); }
+
+/* The default focus ring vanishes against glass. */
 .lg-tab:focus-visible, .lg-btn:focus-visible, .lg-theme:focus-visible {
   outline: 2px solid #ff8f8f; outline-offset: 2px;
 }
 
-/* ── light theme: the picture stays, the card turns solid ───────────────── */
+/* ── light theme: the picture stays, the field and card turn light ──────── */
+body.light-theme .lg-field {
+  background: radial-gradient(120% 90% at 0% 50%, #e8edf5 0%, #f4f6f9 46%, #fbfcfe 100%);
+}
+body.light-theme .lg-field::before {
+  background: linear-gradient(90deg, rgba(10,18,32,.22), rgba(10,18,32,0));
+}
 body.light-theme .lg-card {
-  background: rgba(255,255,255,.96);
-  border-color: rgba(16,19,26,.1);
-  box-shadow: 0 30px 72px rgba(0,0,0,.34);
+  background: #fff; border-color: rgba(16,19,26,.09);
+  box-shadow: 0 24px 60px rgba(16,24,40,.16);
   backdrop-filter: none; -webkit-backdrop-filter: none;
 }
 body.light-theme .lg-title { color: #10131a; }
@@ -8026,55 +8061,59 @@ body.light-theme .lg-tab:hover { color: #4b5563; }
 body.light-theme .lg-tab.on { color: #10131a; border-bottom-color: #c42b2b; }
 body.light-theme .lg-label { color: #4b5563; }
 body.light-theme .lg-input {
-  color: #10131a; background: rgba(16,19,26,.035);
-  border-color: rgba(16,19,26,.14);
+  color: #10131a; background: #f7f8fa; border-color: rgba(16,19,26,.14);
 }
 body.light-theme .lg-input::placeholder { color: #9aa1ad; }
-body.light-theme .lg-input:focus {
-  border-color: #c42b2b; background: #fff;
-}
+body.light-theme .lg-input:focus { border-color: #c42b2b; background: #fff; }
 body.light-theme .lg-btn {
-  background: #c42b2b; box-shadow: 0 8px 22px rgba(196,43,43,.26);
+  background: #c42b2b; box-shadow: 0 8px 22px rgba(196,43,43,.24);
 }
 body.light-theme .lg-btn:hover:not(:disabled) { background: #d93333; }
 body.light-theme .lg-error {
   color: #9f1239; background: #fdecec; border-color: #f6c6c6;
 }
 body.light-theme .lg-fine { color: #8b93a1; }
-
-/* ── narrow ─────────────────────────────────────────────────────────────── */
-@media (max-width: 1100px) {
-  .lg-claim { max-width: 34%; }
-  .lg-card { right: 5%; width: min(34%, 400px); }
+body.light-theme .lg-theme {
+  background: rgba(16,19,26,.06); border-color: rgba(16,19,26,.12); color: #10131a;
+}
+/* The cyan that glows on the dark field nearly vanishes on the light one, and
+   the arcs are the part of this screen most worth keeping legible. */
+body.light-theme .lg-point { color: #0e7490; }
+body.light-theme .lg-arc {
+  stroke: #0e7490; opacity: .8;
+  filter: drop-shadow(0 0 3px rgba(14,116,144,.3));
 }
 
-/* The card stops floating and takes the lower half. The claim goes: at this
-   width it would sit behind the card, and a sign-in that needs scrolling to
-   reach the password field is worse than one without a tagline. */
-@media (max-width: 860px) {
-  .lg-art { object-position: 32% 30%; }
-  .lg-veil {
-    background:
-      linear-gradient(180deg, rgba(4,6,11,.62) 0%, rgba(4,6,11,.3) 30%,
-                              rgba(4,6,11,.86) 62%, rgba(4,6,11,.95) 100%);
+/* ── narrow ─────────────────────────────────────────────────────────────── */
+@media (max-width: 1180px) {
+  .lg-screen { grid-template-columns: 46% 54%; }
+  .lg-point { width: clamp(120px, 12vw, 180px); }
+}
+
+/* The plate becomes a band and the form takes the rest. The pointers go: they
+   only mean anything when the robot is beside the form, not above it. */
+@media (max-width: 880px) {
+  .lg-screen { grid-template-columns: 1fr; grid-template-rows: 38vh 1fr; }
+  .lg-art { object-position: 52% 32%; }
+  .lg-point { display: none; }
+  .lg-field {
+    padding: 26px 20px calc(26px + env(safe-area-inset-bottom, 0px));
+    align-items: start;
   }
+  .lg-field::before { inset: 0 0 auto 0; width: auto; height: 70px;
+    background: linear-gradient(180deg, rgba(6,8,13,.5), rgba(6,8,13,0)); }
   .lg-brand { left: 24px; top: 26px; }
-  .lg-claim { display: none; }
-  .lg-card {
-    right: auto; left: 50%; top: auto; bottom: 0;
-    transform: translateX(-50%);
-    width: 100%; max-width: 460px; min-width: 0;
-    border-radius: 18px 18px 0 0;
-    border-bottom: 0;
-    padding: 26px 24px calc(26px + env(safe-area-inset-bottom, 0px));
-  }
+  .lg-claim { left: 24px; right: 24px; bottom: 22px; font-size: 15px; }
+  .lg-card { max-width: 460px; margin: 0 auto; }
 }
 
 @media (max-width: 420px) {
+  .lg-screen { grid-template-rows: 30vh 1fr; }
   .lg-mark { font-size: 20px; }
-  .lg-card { padding-left: 20px; padding-right: 20px; }
+  .lg-card { padding: 26px 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .lg-arc { animation: none; }
   .lg-btn, .lg-input { transition: none; }
 }
