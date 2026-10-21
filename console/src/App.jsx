@@ -206,8 +206,11 @@ export default function App() {
                   onClick={() => setActiveView(t.key)}
                 >
                   {t.label}
+                  {/* The badge's colour used to be inline (#6366f1), which
+                      beats any stylesheet rule — the reason it stayed indigo
+                      after the palette change. It lives in CSS now. */}
                   {t.key === "intelligence" && (
-                    <span className="alerts-badge" style={{ background: "#6366f1", marginLeft: 6 }}>0</span>
+                    <span className="alerts-badge" style={{ marginLeft: 6 }}>0</span>
                   )}
                 </button>
               ))}

@@ -8713,3 +8713,62 @@ body.light-theme .lg-error {
   background: rgba(255,255,255,.10); color: var(--tcs-grey-200);
   border-color: rgba(195,202,214,.22);
 }
+
+/* ============================================================================
+   STAGE 3 — accents and widget colour
+   ============================================================================
+   Retokenised rather than hunted. `--accent` is referenced 245 times and
+   `--accent2` throughout, and both are purely decorative — brand mark, tabs,
+   hovers, badges, card borders. I grepped every `var(--accent)` for semantic
+   use (crit/error/danger/alert/fail) and found none, which is what makes
+   redefining them safe and is why this block is short rather than 130 edits.
+
+   `--accent3` (green) is deliberately LEFT alone: its five uses are
+   remediation and fix-command hints, where green is carrying meaning.
+   --crit/--warn/--ok likewise. */
+:root, .light-theme {
+  --accent:  var(--tcs-blue);
+  --accent2: var(--tcs-blue-light);
+}
+
+/* The five hero bars were green, blue, blue, violet, amber — a rainbow with
+   no scheme behind it. A ramp instead, ending on the accent, which reads as
+   a deliberate sequence rather than five unrelated choices.
+
+   Worth flagging rather than silently changing: the health card's bar was
+   hardcoded `--ok` GREEN regardless of the actual health score. A fixed
+   green bar on a card whose number can say 40% is a false signal, so losing
+   it is a gain. The value carries the state; the bar carries the category.
+   And the amber one sat next to --warn amber elsewhere on the same page,
+   meaning two identical colours with different jobs. */
+.hero-health .widget-card { border-left-color: var(--tcs-blue-dark); }
+.hero-nodes  .widget-card { border-left-color: var(--tcs-blue); }
+.hero-pods   .widget-card { border-left-color: var(--tcs-blue-light); }
+.hero-ns     .widget-card { border-left-color: #7fb3ef; }
+.hero-ops    .widget-card { border-left-color: var(--tcs-yellow); }
+
+/* The six governance cards were red, green, amber, blue, violet, pink —
+   category bars wearing STATUS colours, and hardcoded, so CIS Compliance was
+   permanently red at 100/100 and GitOps Sync permanently green while out of
+   sync. That is worse than ugly; it is a status indicator that never
+   changes. Brand steps instead, so the score carries the state and the bar
+   carries only the category. */
+.score-cis   .widget-card { border-top-color: var(--tcs-blue-dark); }
+.score-gitops .widget-card { border-top-color: var(--tcs-blue); }
+.score-dr    .widget-card { border-top-color: var(--tcs-blue-light); }
+.score-opt   .widget-card { border-top-color: #7fb3ef; }
+.score-vuln  .widget-card { border-top-color: var(--tcs-grey-600); }
+.score-app   .widget-card { border-top-color: var(--tcs-yellow); }
+
+/* The last three off-palette elements, found by walking the rendered DOM of
+   all four tabs for indigo, violet, cyan and pink rather than by reading the
+   stylesheet — 130 hex literals are in the file but only these three
+   actually paint. */
+.alerts-badge, .light-theme .alerts-badge { background: var(--tcs-blue); }
+.ivs-badge-count, .light-theme .ivs-badge-count {
+  color: var(--tcs-blue-light);
+  border-color: rgba(69,150,239,.35);
+  background: rgba(47,127,224,.12);
+}
+.intel-stat-box, .light-theme .intel-stat-box { border-left-color: var(--tcs-blue); }
+.intel-stat-val, .light-theme .intel-stat-val { color: var(--tcs-blue-light); }
