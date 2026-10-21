@@ -8239,12 +8239,37 @@ h3.widget-title {
 }
 
 .lg-title {
-  margin: 0; font-size: calc(var(--lg-u) * 1.62); font-weight: 700;
-  letter-spacing: -.02em; color: #fff;
+  margin: 0; font-size: calc(var(--lg-u) * 1.28); font-weight: 700;
+  color: #fff;
+
+  /* Caps, centred. Two things make this work rather than shout.
+
+     Tracking: capitals are wider and squarer than lowercase and jam together
+     at the spacing a title case word wants, so the size comes DOWN and the
+     letter-spacing goes up. At 1.62u with default tracking "LOGIN" sets
+     tight and reads as a raised voice; at 1.28u with .14em it reads as a
+     label.
+
+     No margin correction. The usual advice is that letter-spacing adds a
+     gap after the LAST character which text-align:center counts as part of
+     the word, so a tracked centred word needs pushing back. I wrote that,
+     then measured the rendered glyphs against the card's centre: without
+     any margin the ink sits +1.5px right, with .07em +2.5px, with .14em
+     +3.5px. Chrome already trims the trailing space, so the "correction"
+     was a double correction pushing it the wrong way. The residual 1.5px
+     is glyph side bearings — N carries more right bearing than L carries
+     left — and at 0.4% of the card it is below perception. */
+  text-transform: uppercase;
+  text-align: center;
+  letter-spacing: .14em;
 }
+/* The lede centres with the heading. Centring the heading alone leaves it
+   floating over a form whose every other element — labels, fields, tabs —
+   is flush left, and that reads as a stray line rather than a masthead. */
 .lg-lede {
   margin: calc(var(--lg-u) * 0.4) 0 0;
   font-size: calc(var(--lg-u) * 0.89); color: var(--lg-grey);
+  text-align: center;
 }
 
 /* A segmented rail rather than an underline, because an underline on glass
