@@ -8831,3 +8831,72 @@ body.light-theme .lg-error {
 @media (max-width: 1150px) {
   .app-header .conn-label { display: none; }
 }
+
+/* ============================================================================
+   The lockup gets a plate
+   ============================================================================
+   Bare type and a bare mark sitting directly on the header read as two
+   things placed there; on a plate they read as one object, and the plate is
+   what carries the "applied to the surface" quality the login card has.
+
+   The risk with glass on glass is mud — the header is already a blurred
+   sheet. So this plate is LIGHTER than the header rather than darker, with
+   a crisp rim and a short specular streak, which is what separates a raised
+   plate from a smudge. Same material language as the login card, one step
+   down in weight because a header is not a focal point. */
+.app-header .tcs-lock, .cp-header .tcs-lock {
+  padding: 7px 14px 7px 12px;
+  border-radius: 12px;
+  background:
+    linear-gradient(112deg, rgba(200,232,255,0) 16%,
+                            rgba(200,232,255,.10) 30%,
+                            rgba(200,232,255,0) 46%),
+    linear-gradient(140deg, rgba(190,228,255,.14), rgba(120,170,220,.045));
+  border: 1px solid rgba(152,202,246,.22);
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.28),
+              inset 1px 0 0 rgba(172,216,252,.12),
+              0 6px 18px rgba(0,0,0,.30);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+
+/* The hairline picks up the plate's blue instead of staying neutral white,
+   so it belongs to the object rather than sitting on it. */
+.app-header .tcs-lock-rule, .cp-header .tcs-lock-rule,
+.light-theme .app-header .tcs-lock-rule, .light-theme .cp-header .tcs-lock-rule {
+  background: linear-gradient(180deg,
+    rgba(172,216,252,0), rgba(172,216,252,.52) 20%,
+    rgba(172,216,252,.52) 80%, rgba(172,216,252,0));
+}
+
+/* A cool fall across the product name rather than flat white. It is two
+   stops and shallow on purpose — a steep gradient on UI type looks like a
+   logo someone pasted in. Darkest stop measured on the header: 13.8:1. */
+.app-header .tcs-lock-name, .cp-header .tcs-lock-name,
+.light-theme .app-header .tcs-lock-name, .light-theme .cp-header .tcs-lock-name {
+  background: linear-gradient(104deg, #ffffff 0%, #ffffff 42%, #cfe3f8 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -.1px;
+}
+
+/* The mark gets the faintest backlight so it does not read as flat on a
+   lit plate. */
+.app-header .tcs-lock-logo, .cp-header .tcs-lock-logo {
+  filter: drop-shadow(0 1px 6px rgba(140,190,240,.30));
+}
+.light-theme .app-header .tcs-lock-logo,
+.light-theme .cp-header  .tcs-lock-logo {
+  filter: drop-shadow(0 1px 6px rgba(140,190,240,.30));
+}
+
+/* The plate gives back its padding before the name gives back letters — it
+   costs 26px, which is the entire margin at 1100px. This has to sit AFTER
+   the plate rule: both are (0,2,0), so source order is what decides, and
+   the same declaration inside the earlier fitting block lost silently. */
+@media (max-width: 1280px) {
+  .app-header .tcs-lock { padding: 6px 9px; border-radius: 10px; }
+}
+@media (max-width: 1150px) {
+  .app-header .tcs-lock { padding: 5px 7px; gap: 8px; }
+}
