@@ -8536,10 +8536,9 @@ body.light-theme .lg-error {
 .cp-header .tcs-lock-logo { height: 30px; }
 .cp-header .tcs-lock-name { font-size: 19px; }
 
-@media (max-width: 1180px) {
-  .app-header .tcs-lock-name { font-size: 14px; white-space: normal; }
-  .app-header .tcs-lock-logo { height: 22px; }
-}
+/* (the 1180px step is superseded by the fitting rules at the end of this
+   file — it allowed the name to wrap, which is the opposite of what the
+   header needs) */
 
 /* Light theme. Both headers flip to near-white, so a white mark on a white
    gradient is invisible — which is exactly what shipped. My regression: the
@@ -8772,3 +8771,54 @@ body.light-theme .lg-error {
 }
 .intel-stat-box, .light-theme .intel-stat-box { border-left-color: var(--tcs-blue); }
 .intel-stat-val, .light-theme .intel-stat-val { color: var(--tcs-blue-light); }
+
+/* ============================================================================
+   The in-cluster header fits on one line again
+   ============================================================================
+   The lockup took the header's left side from about 215px ("TCS Agentic AI"
+   over a strapline) to 430px, and the header had no slack for it. Measured
+   before this block: at 1366 CSS px four nav tabs wrapped to two lines each,
+   and at 1280 the document overflowed to 1321 and grew a horizontal
+   scrollbar. The three groups wanted 1281px of a 1216px budget.
+
+   Three fixes, each aimed at one of those.
+
+   A tab must never become two lines — that is what made the row look broken
+   before anything actually overflowed. */
+.nav-tabs { flex-wrap: nowrap; }
+.nav-tab  { white-space: nowrap; }
+
+/* The lockup yields before anything else does. It is the only element here
+   that can lose width without losing a control, so it is the one that
+   shrinks — min-width:0 is what lets a flex item shrink below its content
+   at all, and without it the overflow has nowhere to go. */
+.app-header { flex-wrap: nowrap; gap: 16px; }
+.app-header .header-left { flex: 0 1 auto; min-width: 0; }
+.app-header .tcs-lock { min-width: 0; }
+.app-header .tcs-lock-name {
+  font-size: clamp(12.5px, 1.02vw, 16px);
+  overflow: hidden; text-overflow: ellipsis;
+}
+.app-header .tcs-lock-logo { height: clamp(18px, 1.45vw, 26px); }
+.app-header .nav-tabs, .app-header .header-actions { flex: 0 0 auto; }
+
+/* And the controls give up their padding before the lockup gives up words.
+   The old breakpoint was 1180px, which is far too late: the row was already
+   wrapping at 1366. */
+@media (max-width: 1460px) {
+  .app-header { padding: 16px 20px; }
+  .nav-tab { padding: 8px 12px; font-size: 12.5px; }
+}
+@media (max-width: 1280px) {
+  .nav-tab { padding: 7px 9px; font-size: 12px; }
+  .app-header .tcs-lock { gap: 9px; }
+  .app-header { gap: 12px; }
+  /* The actions block is a fixed 438px and is the real hog down here. The
+     word "Search" goes before the product name does — the magnifier and the
+     shortcut still say what the control is, and the product name is the one
+     thing on this row that cannot be inferred from an icon. */
+  .app-header .cmdk-trigger-label { display: none; }
+}
+@media (max-width: 1150px) {
+  .app-header .conn-label { display: none; }
+}
