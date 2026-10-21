@@ -55,9 +55,17 @@
 }
 */
 
-/* `--card-bg` was used twice and defined nowhere. Line 1608 carries its own
-   fallback; the other did not, so that background resolved to nothing. */
-:root { --card-bg: var(--card); }
+/* `--card-bg` was used twice and defined nowhere. Line 1608 carried its own
+   fallback, `var(--bg2)`, which flips with the theme; the other did not, so
+   that background resolved to nothing.
+
+   It MUST be declared once per theme, not once on :root. A custom property
+   whose value is another var() is substituted where it is DECLARED, not
+   where it is used — so `--card-bg: var(--card)` on :root bakes in the dark
+   #1a1d27 and inherits that into light theme, which turned the Image
+   Vulnerability Scanner widget black on a white page. Declared in both
+   places, it resolves against whichever --card is in force. */
+:root { --card-bg: #1a1d27; }
 
 :root {
   --bg: #0f1117;
@@ -2820,6 +2828,7 @@ h3.widget-title {
 .light-theme {
   --bg: #f8f9fc; --bg-deep: #f0f2f6; --bg-alt: #ffffff; --bg2: #f1f5f9;
   --card: #ffffff; --card-deep: #f9fafb; --border: #e5e7eb; --border2: #d1d5db;
+  --card-bg: #ffffff;
   --hover: #f3f4f6; --text: #1e293b; --text2: #6b7280;
 }
 .light-theme .app-header {
