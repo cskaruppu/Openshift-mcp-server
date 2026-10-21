@@ -8574,3 +8574,142 @@ body.light-theme .lg-error {
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+/* ============================================================================
+   STAGE 2 — chrome on the brand palette, and dark glass chrome in both themes
+   ============================================================================
+   Additive. Every rule here overrides by cascade order; nothing above is
+   edited, so reverting is deleting this block.
+
+   Two things at once, because they are the same decision. The chrome moves
+   off indigo/violet/red onto blue-yellow-grey-black, AND it stays dark in
+   light theme — a light canvas with dark chrome, rather than a light theme
+   that washes the header out to #f8f9fc and loses the lockup against it.
+
+   Status colours are untouched. Red, amber and green still mean critical,
+   warning and healthy on every card and alert in the product.
+   ========================================================================= */
+
+/* The header is sticky so the glass has something to refract. Without that,
+   backdrop-filter sits over a flat page background and blurs nothing — the
+   "glassy" is only real while content passes underneath. z-index 100 clears
+   the page's own layers (max 3) and stays far below the modals at 500 and
+   the overlays at 9999. */
+.app-header,
+.light-theme .app-header {
+  position: sticky; top: 0; z-index: 100;
+  background: linear-gradient(135deg,
+    rgba(5,7,12,.90) 0%, rgba(10,24,48,.86) 45%, rgba(6,14,30,.92) 100%);
+  border-bottom: 2px solid transparent;
+  border-image: linear-gradient(90deg,
+    var(--tcs-blue-dark), var(--tcs-blue) 55%, var(--tcs-yellow)) 1;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+/* The picker's header the same way. */
+.cp-header,
+.light-theme .cp-header {
+  position: sticky; top: 0; z-index: 100;
+  background: linear-gradient(135deg,
+    rgba(5,7,12,.90) 0%, rgba(10,24,48,.84) 55%, rgba(6,14,30,.92) 100%);
+  border-bottom: 1px solid rgba(47,127,224,.22);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+/* Dark chrome in both themes means the lockup is white in both themes, so
+   the light-theme inversion from the previous commit has to be undone for
+   these two headers — it was correct for a white header and is wrong now. */
+.light-theme .app-header .tcs-lock-logo,
+.light-theme .cp-header  .tcs-lock-logo { filter: none; }
+.light-theme .app-header .tcs-lock-name,
+.light-theme .cp-header  .tcs-lock-name { color: #fff; }
+.light-theme .app-header .tcs-lock-rule,
+.light-theme .cp-header  .tcs-lock-rule {
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0), rgba(255,255,255,.38) 20%,
+    rgba(255,255,255,.38) 80%, rgba(255,255,255,0));
+}
+
+/* The selected tab was brand red — the one colour the brief does not have,
+   and the same red that means "critical" four inches below it. */
+.nav-tab, .light-theme .nav-tab {
+  border-color: rgba(195,202,214,.22);
+  color: var(--tcs-grey-400);
+}
+.nav-tab:hover:not(.active), .light-theme .nav-tab:hover:not(.active) {
+  border-color: rgba(47,127,224,.55); color: #fff;
+  background: rgba(47,127,224,.10);
+}
+.nav-tab.active, .light-theme .nav-tab.active {
+  background: linear-gradient(170deg, var(--tcs-blue-light), var(--tcs-blue) 55%, var(--tcs-blue-dark));
+  border-color: transparent; color: #fff; font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.28), 0 4px 14px rgba(47,127,224,.34);
+}
+/* Yellow does exactly one job on this page too: it marks what has focus. */
+.nav-tab:focus-visible { outline: 2px solid var(--tcs-yellow); outline-offset: 2px; }
+
+/* The footer, dark in both themes with a lit top rim rather than a border. */
+.app-footer, .light-theme .app-footer {
+  background: linear-gradient(0deg, rgba(5,7,12,.94), rgba(8,16,32,.88));
+  border-top: 1px solid rgba(47,127,224,.20);
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.10);
+  color: var(--tcs-grey-400);
+  opacity: 1;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+.app-footer strong, .light-theme .app-footer strong { color: var(--tcs-grey-200); }
+
+/* The picker's header buttons were indigo. */
+.cp-icon-btn, .light-theme .cp-icon-btn {
+  border-color: rgba(195,202,214,.22);
+  background: rgba(255,255,255,.06);
+  color: var(--tcs-grey-400);
+}
+.cp-icon-btn:hover, .light-theme .cp-icon-btn:hover {
+  border-color: rgba(47,127,224,.55);
+  background: rgba(47,127,224,.14);
+  color: #fff;
+}
+.cp-icon-btn.agents-icon-btn, .light-theme .cp-icon-btn.agents-icon-btn {
+  border-color: rgba(47,127,224,.45); color: var(--tcs-blue-light);
+}
+.cp-logout-btn, .light-theme .cp-logout-btn {
+  border-color: rgba(195,202,214,.24); color: var(--tcs-grey-200);
+  background: rgba(255,255,255,.05);
+}
+.cp-user, .light-theme .cp-user { color: var(--tcs-grey-200); }
+
+/* The header controls follow the header, not the theme. They were styled for
+   a white header in light theme — var(--card) flips to paper — so against
+   dark glass they read as white blobs. Scoped to the two headers only; the
+   same classes elsewhere in the light theme are untouched. */
+.light-theme .app-header .icon-btn,
+.light-theme .app-header .cmdk-trigger,
+.light-theme .app-header .user-badge,
+.light-theme .app-header .back-pill,
+.light-theme .cp-header  .icon-btn {
+  background: rgba(255,255,255,.07);
+  border-color: rgba(195,202,214,.22);
+  color: var(--tcs-grey-400);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.light-theme .app-header .icon-btn:hover,
+.light-theme .app-header .cmdk-trigger:hover,
+.light-theme .app-header .back-pill:hover,
+.light-theme .cp-header  .icon-btn:hover {
+  background: rgba(47,127,224,.16);
+  border-color: rgba(47,127,224,.55);
+  color: #fff;
+}
+.light-theme .app-header .conn-label,
+.light-theme .app-header .cmdk-trigger-label,
+.light-theme .cp-header  .cp-user,
+.light-theme .cp-header  .cp-user * { color: var(--tcs-grey-400); }
+.app-header .cmdk-trigger kbd, .light-theme .app-header .cmdk-trigger kbd {
+  background: rgba(255,255,255,.10); color: var(--tcs-grey-200);
+  border-color: rgba(195,202,214,.22);
+}
