@@ -8900,3 +8900,50 @@ body.light-theme .lg-error {
 @media (max-width: 1150px) {
   .app-header .tcs-lock { padding: 5px 7px; gap: 8px; }
 }
+
+/* ============================================================================
+   LETTERS — the theme palette applied to type
+   ============================================================================
+   PROVISIONAL VALUES. These three are recovered from a photograph of the
+   Office colour picker, white-balanced against its own white swatch, which
+   read #dcdbd9 rather than white — the camera was 16% under-exposed with a
+   warm cast. The yellow of that row is NOT here: glare clipped its red
+   channel and there is no honest way to reconstruct it, so brand yellow
+   stays as it was. Replace the three below from theme1.xml and everything
+   downstream follows; nothing else needs touching.
+
+   The palette cannot be used literally on type, and that is measured rather
+   than assumed. Against white and against the dark card:
+
+     their black #262632   14.94:1 on white    1.13:1 on dark
+     their grey  #828180    3.89:1 FAIL         4.32:1 FAIL
+     their blue  #87beee    1.98:1 FAIL         8.51:1 pass
+
+   So each role gets the step of its own colour that actually passes, found
+   by walking lightness while holding hue and saturation. Secondary text
+   targets 6:1 rather than the 4.5 floor, because labels and captions are
+   small and 4.5 is a minimum, not a reading comfort. */
+:root {
+  --tcs-theme-ink:  #262632;   /* their black */
+  --tcs-theme-grey: #828180;   /* their grey  */
+  --tcs-theme-blue: #87beee;   /* their blue  */
+}
+
+/* dark theme: their black cannot be body text on a dark card (1.13:1), so
+   body goes to white and the grey comes UP to meet the surface */
+:root {
+  --text:  #f1f2f4;            /* 15.01:1 on the card */
+  --text2: #9c9b9b;            /* their grey, lightened — 6.07:1 */
+  --link:  var(--tcs-theme-blue);  /* 8.51:1 */
+}
+.light-theme {
+  --text:  var(--tcs-theme-ink);   /* 14.94:1 on white */
+  --text2: #636261;            /* their grey, darkened — 6.09:1 */
+  --link:  #1c78c7;            /* their blue, darkened — 4.60:1 */
+}
+
+/* Yellow stays out of running text entirely. There is no step of it that
+   reads on white without turning brown, and amber already means "warning"
+   on the alert cards — two identical colours with different jobs is worse
+   than one colour doing fewer jobs. It keeps focus rings and the selected
+   tab, where it is a mark rather than a word. */
