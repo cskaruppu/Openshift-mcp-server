@@ -1,3 +1,64 @@
+/* ============================================================================
+   TCS BRAND TOKENS — one definition for the whole product
+   ============================================================================
+   The brief: blue, yellow, grey, black, and Houschka Rounded Alt DemiBold.
+   Until now that lived only on the login as a private `--lg-*` set, which is
+   why the rest of the console is indigo and violet. These are the shared
+   source; `--lg-*` now points at them rather than keeping its own copies.
+
+   FOUR colours, not four hundred — but grey has to be a ramp. One grey
+   cannot serve both white type on dark glass and dark type on paper: the
+   login's grey began at #97a1b2 and had to move to #e3e8ef because it
+   measured 4.42:1 on glass and failed 4.5. So the ramp, and each surface
+   picks the step that passes on it.
+
+   Status colours are deliberately NOT in here. Red, amber and green mean
+   critical, warning and healthy; folding them into a brand palette would
+   destroy the meaning, and would put brand yellow in direct collision with
+   warning amber. They stay as --crit/--warn/--ok.
+   ========================================================================= */
+:root {
+  --tcs-blue:       #2f7fe0;
+  --tcs-blue-light: #4596ef;
+  --tcs-blue-dark:  #1559b4;
+  --tcs-yellow:     #f2c230;
+  --tcs-black:      #05070c;
+  --tcs-ink:        #010205;
+
+  --tcs-grey-050:   #f1f3f7;
+  --tcs-grey-200:   #e3e8ef;
+  --tcs-grey-400:   #c3cad6;
+  --tcs-grey-600:   #97a1b2;
+  --tcs-grey-700:   #5b6473;
+  --tcs-grey-900:   #1b2330;
+
+  /* Houschka Rounded Alt is a licensed typeface and cannot be served from a
+     public CDN, so the files have to be supplied. Until they are, this stack
+     falls through to Inter — deliberately, and not to a rounded lookalike:
+     a stand-in applied product-wide would standardise the console on the
+     wrong face and change the metrics of every table and widget for nothing.
+     Inter changes nothing today, and the day the .woff2 lands in
+     console/public/brand/ the @font-face below is uncommented and every
+     screen switches together. */
+  --tcs-font: "Houschka Rounded Alt", "Houschka Rounded",
+              'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --tcs-font-mono: "SF Mono", "Fira Code", ui-monospace, monospace;
+}
+
+/* Drop houschka-rounded-alt-demibold.woff2 (and .woff) into
+   console/public/brand/ and uncomment. Nothing else changes anywhere.
+@font-face {
+  font-family: "Houschka Rounded Alt";
+  src: url("/brand/houschka-rounded-alt-demibold.woff2") format("woff2"),
+       url("/brand/houschka-rounded-alt-demibold.woff")  format("woff");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+*/
+
+/* `--card-bg` was used twice and defined nowhere. Line 1608 carries its own
+   fallback; the other did not, so that background resolved to nothing. */
+:root { --card-bg: var(--card); }
+
 :root {
   --bg: #0f1117;
   --bg-deep: #0a0c10;
@@ -33,7 +94,7 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--tcs-font);
   background: var(--bg);
   color: var(--text);
 }
@@ -7893,14 +7954,14 @@ h3.widget-title {
   /* Blue carries the action, yellow the one thing being pointed at, grey the
      supporting text, black the ground. Four roles, four colours — the moment a
      fifth appears, none of them means anything. */
-  --lg-blue:   #2f7fe0;
-  --lg-blue-2: #4596ef;
-  --lg-blue-d: #1559b4;
-  --lg-yellow: #f2c230;
-  --lg-grey:   #e3e8ef;   /* measured: 4.42:1 at #97a1b2 over the card's
+  --lg-blue:   var(--tcs-blue);
+  --lg-blue-2: var(--tcs-blue-light);
+  --lg-blue-d: var(--tcs-blue-dark);
+  --lg-yellow: var(--tcs-yellow);
+  --lg-grey:   var(--tcs-grey-200);   /* measured: 4.42:1 at #97a1b2 over the card's
                               brightest composite, which fails 4.5 for the
                               11.5px labels. This clears it at 5.2:1. */
-  --lg-black:  #05070c;
+  --lg-black:  var(--tcs-black);
   /* The one ground colour, and it is not chosen by taste: it is the colour the
      photograph's own background already is at its edges, so the picture has
      nowhere to end. Every edge of the page is this, in both themes. */
@@ -7936,24 +7997,16 @@ h3.widget-title {
      compromise between those two readings, not an oversight. */
   --lg-u: clamp(11px, calc(0.56vh + 0.52vw), 24px);
 
-  /* Houschka Rounded Alt DemiBold is licensed and not servable from a public
-     CDN, so it is named first and WILL be used the moment the webfont files
-     are dropped in (see the commented @font-face below). Until then Nunito
-     carries it: geometric and rounded, which is the shape Houschka has. */
-  --lg-font: "Houschka Rounded Alt", "Houschka Rounded",
-             "Nunito", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* The login no longer keeps its own font stack. It had Nunito standing in
+     for Houschka, which made this one screen a different substitute from
+     every other — the opposite of a single brand face. One stack now, at the
+     top of this file. */
+  --lg-font: var(--tcs-font);
   font-family: var(--lg-font);
 }
 
-/* Drop the licensed files into console/public/brand/ and uncomment. Nothing
-   else changes — every rule below already asks for the family by name.
-@font-face {
-  font-family: "Houschka Rounded Alt";
-  src: url("/brand/houschka-rounded-alt-demibold.woff2") format("woff2"),
-       url("/brand/houschka-rounded-alt-demibold.woff")  format("woff");
-  font-weight: 600; font-style: normal; font-display: swap;
-}
-*/
+/* The @font-face for Houschka lives with the brand tokens at the top of
+   this file; there is only one. */
 
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */
@@ -8449,4 +8502,41 @@ body.light-theme .lg-error {
 
 @media (prefers-reduced-motion: reduce) {
   .lg-btn, .lg-input, .lg-theme { transition: none; }
+}
+
+/* ============================================================================
+   TCS LOCKUP — the same mark and the same words on every screen
+   ============================================================================
+   The product had three different marks: the real TCS logo on the login, a
+   rainbow-striped circle on the cluster picker, and the word "TCS" in red on
+   the in-cluster header. Two of the three also still carried "Enterprise
+   Intelligence Platform", the strapline that was replaced on the login.
+
+   Additive: `.tcs-lock` and its children are new, and the rules the two
+   headers already had are untouched. Reverting is deleting this block and
+   the two markup changes.
+
+   The hairline is what makes this one lockup rather than a logo that happens
+   to sit near some words — the same device as the login. It tracks the
+   logo's height rather than the type's, so it stays tied to the mark. */
+.tcs-lock { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tcs-lock-logo { display: block; height: 26px; width: auto; flex: none; }
+.tcs-lock-rule {
+  flex: none; width: 1px; align-self: stretch; min-height: 24px;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0), rgba(255,255,255,.38) 20%,
+    rgba(255,255,255,.38) 80%, rgba(255,255,255,0));
+}
+.tcs-lock-name {
+  font-size: 16px; font-weight: 700; letter-spacing: -.2px;
+  color: #fff; white-space: nowrap; line-height: 1.15; min-width: 0;
+}
+/* The picker's header has more room than the in-cluster one, which also
+   carries the back pill and four nav tabs. */
+.cp-header .tcs-lock-logo { height: 30px; }
+.cp-header .tcs-lock-name { font-size: 19px; }
+
+@media (max-width: 1180px) {
+  .app-header .tcs-lock-name { font-size: 14px; white-space: normal; }
+  .app-header .tcs-lock-logo { height: 22px; }
 }

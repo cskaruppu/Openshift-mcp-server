@@ -187,9 +187,15 @@ export default function App() {
                   <path d="M8 1L3 6l5 5"/>
                 </svg>
               </button>
-              <div className="brand">
-                <span className="brand-mark">TCS</span> Agentic AI
-                <span className="brand-sub">Enterprise Intelligence Platform</span>
+              {/* The same lockup as the login and the cluster picker: the
+                  real mark, a hairline, the product name. It replaces "TCS"
+                  set in red type plus a strapline that had already been
+                  retired on the login. */}
+              <div className="tcs-lock">
+                <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
+                     alt="Tata Consultancy Services" width="1000" height="238" />
+                <span className="tcs-lock-rule" aria-hidden="true" />
+                <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
               </div>
             </div>
             <nav className="nav-tabs">

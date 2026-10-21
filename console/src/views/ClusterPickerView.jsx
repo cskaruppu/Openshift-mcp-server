@@ -970,29 +970,15 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
     <div className="cluster-picker">
       {/* Header */}
       <div className="cp-header">
-        <div className="cp-brand">
-          <svg viewBox="0 0 44 44" fill="none" width="40" height="40">
-            <circle cx="22" cy="22" r="20" stroke="rgba(255,255,255,0.12)" strokeWidth="1.5" fill="none"/>
-            <clipPath id="cpCircle"><circle cx="22" cy="22" r="16"/></clipPath>
-            <g clipPath="url(#cpCircle)" opacity="0.85">
-              <line x1="6" y1="2" x2="18" y2="42" stroke="#ef4444" strokeWidth="3.2"/>
-              <line x1="11" y1="2" x2="23" y2="42" stroke="#f97316" strokeWidth="3.2"/>
-              <line x1="16" y1="2" x2="28" y2="42" stroke="#facc15" strokeWidth="3.2"/>
-              <line x1="21" y1="2" x2="33" y2="42" stroke="#22c55e" strokeWidth="3.2"/>
-              <line x1="26" y1="2" x2="38" y2="42" stroke="#3b82f6" strokeWidth="3.2"/>
-              <line x1="31" y1="2" x2="43" y2="42" stroke="#8b5cf6" strokeWidth="3.2"/>
-              <line x1="36" y1="2" x2="48" y2="42" stroke="#ec4899" strokeWidth="3.2"/>
-            </g>
-            <circle cx="22" cy="22" r="16" stroke="rgba(255,255,255,0.25)" strokeWidth="1.8" fill="none"/>
-          </svg>
-          <div className="cp-brand-text">
-            <span className="cp-brand-name">
-              <span className="tcs">TCS</span>{" "}
-              <span className="agentic">Agentic</span>{" "}
-              <span className="ai">AI</span>
-            </span>
-            <span className="cp-brand-sub">Enterprise Intelligence Platform</span>
-          </div>
+        {/* The same lockup as the login and the in-cluster header. It
+            replaces a rainbow-striped circle that existed only here, and the
+            "Enterprise Intelligence Platform" strapline that was retired on
+            the login. */}
+        <div className="cp-brand tcs-lock">
+          <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
+               alt="Tata Consultancy Services" width="1000" height="238" />
+          <span className="tcs-lock-rule" aria-hidden="true" />
+          <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
         </div>
         <div className="cp-user">
           <div className="cp-header-actions">
