@@ -8540,3 +8540,37 @@ body.light-theme .lg-error {
   .app-header .tcs-lock-name { font-size: 14px; white-space: normal; }
   .app-header .tcs-lock-logo { height: 22px; }
 }
+
+/* Light theme. Both headers flip to near-white, so a white mark on a white
+   gradient is invisible — which is exactly what shipped. My regression: the
+   class this replaced had a `.light-theme .cp-brand-name` override and the
+   new one inherited nothing.
+
+   The logo is filtered rather than swapped for a second file. That is not a
+   shortcut taken on faith: the two brand PNGs were compared and their alpha
+   masks are byte-identical — mean absolute difference 0.0 — differing only
+   in RGB, 255,255,255 against 2,3,4. So brightness(0) on the white one IS
+   the black one, without a second request or a second code path. */
+.light-theme .tcs-lock-logo { filter: brightness(0); }
+.light-theme .tcs-lock-name { color: var(--tcs-grey-900); }
+.light-theme .tcs-lock-rule {
+  background: linear-gradient(180deg,
+    rgba(27,35,48,0), rgba(27,35,48,.32) 20%,
+    rgba(27,35,48,.32) 80%, rgba(27,35,48,0));
+}
+
+/* "Select a Cluster" was an indigo-to-violet gradient in both themes, which
+   is the palette the brief replaces. Brand blue, and dark enough at the head
+   of the ramp to carry 30px type on paper. */
+.cp-title {
+  background: linear-gradient(135deg,
+    var(--tcs-grey-050) 0%, #bcd4f3 34%, var(--tcs-blue-light) 70%, var(--tcs-blue) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.light-theme .cp-title {
+  background: linear-gradient(135deg,
+    #0b1a30 0%, var(--tcs-blue-dark) 42%, var(--tcs-blue) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
