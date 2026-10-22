@@ -50,6 +50,12 @@ spec:
                 name: agentic-ai-server-config
             - secretRef:
                 name: agentic-ai-server-secrets
+            # Vulnerability remediation: GITHUB_TOKEN / GITLAB_TOKEN (and any
+            # REMEDIATION_* settings). Optional — without it, fixes can still
+            # be planned, gated and approved, but no PR / MR is opened.
+            - secretRef:
+                name: agentic-ai-remediation
+                optional: true
           env:
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
