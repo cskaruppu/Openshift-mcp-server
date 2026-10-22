@@ -84,7 +84,7 @@ import { applyResource, verifyNamespace, kindPath as deployKindPath, kindApiVers
 import { recordDeployment, updateDeployment, getDeploymentRecord, listDeploymentRecords } from "./services/doc-deploy-store.js";
 import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, vcSettingsStore, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
-import { callLLM } from "./services/llm.js";
+import { callLLM, llmEnabled } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
@@ -3785,6 +3785,9 @@ async function startSSE() {
           analysis.ai = mig.aiProvenance([advice.usage, perVm.usage], {
             overrides: perVm.overrides || 0,
             adviceSource: perVm.source, suggestionSource: advice.source,
+            // Lets the record tell "no model is configured" apart from "a
+            // model was asked and did not answer" — they need different fixes.
+            configured: llmEnabled(),
           });
           // Drift against the previous assessment for this source. An estate
           // assessment goes stale in weeks; showing only the current state

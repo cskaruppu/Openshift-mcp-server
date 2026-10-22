@@ -953,6 +953,45 @@ test("a failed call is counted, not hidden", async () => {
   assert.equal(p.touchpoints.find((t) => t.touchpoint === "wave-sequencing").error, "timeout");
 });
 
+// Three states, and the console used to collapse them into one. "No model
+// consulted" was printed both when no model was configured AND when a model
+// was asked and did not answer — so the screen, and the evidence pack, said
+// the second case never happened. In a demo that reads as "the AI isn't
+// working"; in an audit it reads as a model call that was never made.
+
+test("a model that was asked and did not answer is FAILED, not 'not consulted'", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([
+    { ok: false, provider: "azure", model: "gpt-4o", totalTokens: null, durationMs: 30000, touchpoint: "method-advice", error: "auth" },
+    { ok: false, provider: "azure", model: "gpt-4o", totalTokens: null, durationMs: 30000, touchpoint: "wave-sequencing", error: "auth" },
+  ], { configured: true });
+  assert.equal(p.status, "failed");
+  assert.equal(p.consulted, false, "no advice was used, so nothing may be attributed to it");
+  assert.deepEqual(p.advisedByAI, []);
+  assert.deepEqual(p.failureReasons, ["auth"]);
+  assert.doesNotMatch(p.note, /No model was consulted/, "it WAS consulted; it failed");
+  assert.match(p.note, /asked 2 times/);
+  assert.match(p.note, /auth/);
+});
+
+test("no model configured is its own state, distinct from a failure", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([], { configured: false });
+  assert.equal(p.status, "not-configured");
+  assert.equal(p.calls, 0);
+  assert.match(p.note, /No language model is configured/);
+});
+
+test("a partial answer is still consulted, and the failure is still named", async () => {
+  const { aiProvenance } = await import("../../src/services/vm-migration.js");
+  const p = aiProvenance([
+    { ok: true,  provider: "azure", model: "gpt-4o", totalTokens: 900, durationMs: 500, touchpoint: "method-advice" },
+    { ok: false, provider: "azure", model: "gpt-4o", totalTokens: null, durationMs: 30000, touchpoint: "wave-sequencing", error: "timeout" },
+  ], { configured: true });
+  assert.equal(p.status, "consulted");
+  assert.deepEqual(p.failureReasons, ["timeout"]);
+});
+
 test("tokens a provider never reported are null, never a silent zero", async () => {
   const { aiProvenance } = await import("../../src/services/vm-migration.js");
   const p = aiProvenance([

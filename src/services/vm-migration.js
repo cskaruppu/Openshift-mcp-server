@@ -1590,7 +1590,7 @@ export function fleetRemediation(analysis, opts = {}) {
  * @param {Array} usages  the `usage` objects from adviseMigration / adviseFleet
  * @param {{overrides:number, source:string}} extra
  */
-export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, suggestionSource = null } = {}) {
+export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, suggestionSource = null, configured = undefined } = {}) {
   const used = usages.filter(Boolean);
   const ok = used.filter((u) => u.ok);
   const sum = (k) => used.reduce((n, u) => n + (u[k] || 0), 0);
@@ -1599,8 +1599,22 @@ export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, 
   const reported = used.filter((u) => u.totalTokens != null);
 
   const consulted = ok.length > 0;
+  // Three states, which the record used to collapse into one. "Not consulted"
+  // was reported both when no model was configured and when a model WAS asked
+  // and did not answer — so the evidence pack said the second never happened.
+  // A call that was made is a fact about the assessment whether or not it
+  // returned, and an auditor is owed it.
+  const status = consulted ? "consulted"
+    : used.length > 0 ? "failed"
+    : configured === false ? "not-configured"
+    : "not-consulted";
+  // Reason codes as llm.js classifies them: timeout, auth, network,
+  // rate_limit, server, other. Deduplicated — two auth failures are one cause.
+  const failureReasons = [...new Set(used.filter((u) => !u.ok).map((u) => u.error).filter(Boolean))];
   return {
     consulted,
+    status,
+    failureReasons,
     calls: used.length,
     succeeded: ok.length,
     failed: used.length - ok.length,
@@ -1657,7 +1671,11 @@ export function aiProvenance(usages = [], { overrides = 0, adviceSource = null, 
       : [],
     note: consulted
       ? `${overrides} AI recommendation${overrides === 1 ? "" : "s"} overruled by policy before being shown.`
-      : "No model was consulted. Every value in this assessment came from rules.",
+      : status === "failed"
+        ? `A model was asked ${used.length} time${used.length === 1 ? "" : "s"} and did not answer (${failureReasons.join(", ") || "unknown"}). Every value in this assessment came from rules.`
+        : status === "not-configured"
+          ? "No language model is configured for this deployment. Every value in this assessment came from rules."
+          : "No model was consulted. Every value in this assessment came from rules.",
     sources: { advice: adviceSource, suggestions: suggestionSource },
   };
 }
@@ -2383,7 +2401,7 @@ export async function raiseMigrationCR(planName, { actor = "operator", cluster =
         "AI involvement in the assessment that produced this plan:",
         ai?.consulted
           ? `  Consulted    : ${ai.provider || "?"} / ${ai.model || "?"}, ${ai.calls} call(s)${ai.totalTokens != null ? `, ${ai.totalTokens} tokens` : ""}`
-          : "  Consulted    : no model was consulted; every value came from rules",
+          : `  Consulted    : ${ai?.note || "no model was consulted; every value came from rules"}`,
         ai?.consulted ? `  Advised      : ${ai.advisedByAI.join("; ")}` : null,
         ai?.consulted ? `  Overruled    : ${ai.corrections} AI recommendation(s) corrected by policy before being shown` : null,
         `  Decided by code : ${(ai?.decidedByCode || [

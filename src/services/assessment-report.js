@@ -53,7 +53,10 @@ export function toCsv(analysis, meta = {}) {
   // not in a system nobody kept.
   const ai = meta.ai || analysis?.ai || null;
   if (ai) {
-    lines.push(csvRow(["AI consulted", ai.consulted ? "yes" : "no"]));
+    // "no" was printed for a model that was asked and failed as well as for
+    // one that never ran. The status says which; the note says why.
+    lines.push(csvRow(["AI consulted", ai.consulted ? "yes" : ai.status === "failed" ? "attempted — failed" : "no"]));
+    if (!ai.consulted && ai.note) lines.push(csvRow(["AI note", ai.note]));
     if (ai.consulted) {
       lines.push(csvRow(["AI provider / model", `${ai.provider || "?"} / ${ai.model || "?"}`]));
       lines.push(csvRow(["AI calls", `${ai.calls}${ai.failed ? ` (${ai.failed} failed)` : ""}`]));
@@ -188,7 +191,7 @@ export function toHtml(analysis, meta = {}) {
          achievement. The verdict colours belong to capacity, not to this. -->
     <p class="verdict">${ai.consulted
       ? `A language model was consulted ${esc(ai.calls)} time${ai.calls === 1 ? "" : "s"} during this assessment. It advised; it did not decide.`
-      : "No language model was consulted. Every value in this assessment came from rules."}</p>
+      : esc(ai.note || "No language model was consulted. Every value in this assessment came from rules.")}</p>
     ${ai.consulted ? `
     <table class="kv">
       <tr><th>Provider and model</th><td>${esc(ai.provider || "—")} / ${esc(ai.model || "—")}</td></tr>
@@ -387,7 +390,7 @@ ${ai?.consulted ? `<dl>
   <dt>Consulted</dt><dd>${esc(ai.provider || "?")} / ${esc(ai.model || "?")}, ${esc(ai.calls)} call(s)${ai.totalTokens != null ? `, ${esc(ai.totalTokens)} tokens` : ""}</dd>
   <dt>Advised on</dt><dd>${esc((ai.advisedByAI || []).join("; ") || "—")}</dd>
   <dt>Overruled by policy</dt><dd>${esc(ai.corrections || 0)} recommendation(s) corrected before being shown</dd>
-</dl>` : "<p>No model was consulted. Every value in this record came from rules.</p>"}
+</dl>` : `<p>${esc(ai?.note || "No model was consulted. Every value in this record came from rules.")}</p>`}
 <p>The model advises; code decides; a person approves. It has no cluster access and no tools, and the
 supportability verdict, the readiness checks, the capacity check and the transfer estimate are all
 computed rather than generated.</p>

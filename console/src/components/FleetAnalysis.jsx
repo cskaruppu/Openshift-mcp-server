@@ -572,13 +572,36 @@ function StalenessBand({ analysis, onRecheck, busy }) {
    policy overruled it" to "a named human approved it under this change record".
    The steps that have not happened yet are shown as not having happened —
    a chain with an invented link is worse than a short one. */
+
+/* What the AI-usage cells say when no advice was used. Three states, which
+   both cells used to collapse into "no model consulted — rules only" — so a
+   model that was ASKED and failed looked identical to one that was never set
+   up, and in a demo "why isn't the AI showing?" had no answer on the screen.
+   The reason codes come from llm.js's classifier. */
+const AI_FAIL_REASON = {
+  auth: "credentials rejected", network: "endpoint unreachable", timeout: "timed out",
+  rate_limit: "rate-limited", server: "provider error", other: "call failed",
+};
+function aiNotUsed(ai) {
+  if (!ai) return { v: "—", d: "" };
+  if (ai.status === "failed") {
+    const why = (ai.failureReasons || []).map((r) => AI_FAIL_REASON[r] || r).join(", ") || "call failed";
+    return { v: `model asked — no answer (${why})`,
+             d: `${ai.calls} call${ai.calls === 1 ? "" : "s"} to ${ai.model || ai.provider || "the model"} · fell back to rules` };
+  }
+  if (ai.status === "not-configured")
+    return { v: "no model configured — rules only", d: "set LLM_PROVIDER on the server to enable advice" };
+  return { v: "not consulted — rules only", d: "every verdict above is computed from rules" };
+}
+
 function EvidenceChain({ analysis }) {
   const ai = analysis.ai;
   const steps = [
     { k: "Assessed", v: analysis.assessedAt ? new Date(analysis.assessedAt).toLocaleString() : "—",
       d: `Live node state and pod requests from ${analysis.cluster || "the target cluster"}`, done: true },
-    { k: "Model recommended", v: ai?.consulted ? `${ai.calls} call${ai.calls === 1 ? "" : "s"} · ${ai.model || "model"}` : "not consulted — rules only",
-      d: ai?.consulted && ai.totalTokens != null ? `${ai.totalTokens.toLocaleString()} tokens` : "every verdict above is computed from rules", done: true },
+    { k: "Model recommended", v: ai?.consulted ? `${ai.calls} call${ai.calls === 1 ? "" : "s"} · ${ai.model || "model"}` : aiNotUsed(ai).v,
+      d: ai?.consulted ? (ai.totalTokens != null ? `${ai.totalTokens.toLocaleString()} tokens` : "tokens not reported by the provider") : aiNotUsed(ai).d,
+      done: true },
     { k: "Policy overruled", v: ai?.corrections ? `${ai.corrections} recommendation${ai.corrections === 1 ? "" : "s"}` : "none",
       d: ai?.corrections ? "downgraded before they reached this screen" : "nothing the model proposed needed overriding", done: true },
     { k: "Approved", v: "not yet", d: "a named human signs off at the plan step", done: false },
@@ -1124,7 +1147,7 @@ export default function FleetAnalysis({
                         ? ` · ${analysis.ai.tokensPartial ? "at least " : ""}${analysis.ai.totalTokens.toLocaleString()} tokens`
                         : " · tokens not reported by the provider")
                     + (analysis.ai.corrections ? ` · ${analysis.ai.corrections} corrected` : "")
-                  : "no model consulted — rules only")
+                  : aiNotUsed(analysis.ai).v)
               : "—"],
           ].map(([k, v]) => (
             <div key={k}>
