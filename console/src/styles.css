@@ -33,27 +33,37 @@
   --tcs-grey-900:   #1b2330;
 
   /* Houschka Rounded Alt is a licensed typeface and cannot be served from a
-     public CDN, so the files have to be supplied. Until they are, this stack
-     falls through to Inter — deliberately, and not to a rounded lookalike:
-     a stand-in applied product-wide would standardise the console on the
-     wrong face and change the metrics of every table and widget for nothing.
-     Inter changes nothing today, and the day the .woff2 lands in
-     console/public/brand/ the @font-face below is uncommented and every
-     screen switches together. */
+     public CDN. The @font-face rules below use it wherever it is installed
+     or supplied, and fall through to Inter — deliberately, not to a rounded
+     lookalike, which would standardise the console on the wrong face. */
   --tcs-font: "Houschka Rounded Alt", "Houschka Rounded",
               'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --tcs-font-mono: "SF Mono", "Fira Code", ui-monospace, monospace;
 }
 
-/* Drop houschka-rounded-alt-demibold.woff2 (and .woff) into
-   console/public/brand/ and uncomment. Nothing else changes anywhere.
+/* Houschka Rounded Alt — live. Each face tries, in order:
+     1. the face installed on the viewer's machine (TCS-managed laptops that
+        carry the brand fonts render it with nothing downloaded), then
+     2. the licensed web font, once its files are in console/public/brand/fonts/.
+   A machine with neither falls through to Inter, unchanged. DemiBold carries
+   headings, tabs and buttons (600+); text weights use the Regular face, so
+   body copy is not set in DemiBold. */
 @font-face {
   font-family: "Houschka Rounded Alt";
-  src: url("/brand/houschka-rounded-alt-demibold.woff2") format("woff2"),
-       url("/brand/houschka-rounded-alt-demibold.woff")  format("woff");
-  font-weight: 600; font-style: normal; font-display: swap;
+  src: local("Houschka Rounded Alt"), local("HouschkaRoundedAlt-Regular"),
+       local("Houschka Rounded Alt Regular"),
+       url("/brand/fonts/houschka-rounded-alt-regular.woff2") format("woff2"),
+       url("/brand/fonts/houschka-rounded-alt-regular.woff")  format("woff");
+  font-weight: 100 500; font-style: normal; font-display: swap;
 }
-*/
+@font-face {
+  font-family: "Houschka Rounded Alt";
+  src: local("Houschka Rounded Alt DemiBold"), local("HouschkaRoundedAlt-DemiBold"),
+       local("Houschka Rounded Alt Demi Bold"),
+       url("/brand/fonts/houschka-rounded-alt-demibold.woff2") format("woff2"),
+       url("/brand/fonts/houschka-rounded-alt-demibold.woff")  format("woff");
+  font-weight: 600 900; font-style: normal; font-display: swap;
+}
 
 /* `--card-bg` was used twice and defined nowhere. Line 1608 carried its own
    fallback, `var(--bg2)`, which flips with the theme; the other did not, so
@@ -8014,8 +8024,8 @@ h3.widget-title {
   font-family: var(--lg-font);
 }
 
-/* The @font-face for Houschka lives with the brand tokens at the top of
-   this file; there is only one. */
+/* The @font-face rules for Houschka live with the brand tokens at the top
+   of this file; there is one pair. */
 
 /* display:contents on the <picture> — left as an inline box it contributes an
    empty line and pushes a strip across the top of the screen. */

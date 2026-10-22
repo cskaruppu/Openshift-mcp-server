@@ -107,7 +107,7 @@ export function ImageVulnsWidget() {
     try { navigator.clipboard?.writeText(cmd); showToast("Command copied", "ok"); } catch { /* ignore */ }
   }, []);
 
-  const runRemediation = useCallback(async (img, dryRun) => {
+  const runRemediation = useCallback(async (img, dryRun, confirmUnverifiedImage = false) => {
     const key = img.fullImage || img.image;
     const fixData = (aiFix[key] || {}).data;
     const newImage = fixData?.recommendedImage;
@@ -127,11 +127,19 @@ export function ImageVulnsWidget() {
           container: img.pods && img.pods[0]?.container,
           newImage,
           dryRun,
-          exploitable: img.exploitable || 0,
+          confirmUnverifiedImage,
+          // The server decides KEV status itself; these ids only help when it
+          // has no cached scan of this image.
+          cveIds: (img.vulnerabilities || []).map((v) => v.id).filter(Boolean),
           before: { critical: img.critical || 0, high: img.high || 0, medium: img.medium || 0, low: img.low || 0, total: img.total || 0 },
         }),
       });
       const data = await res.json();
+      if (data.needsConfirmation && !dryRun && !confirmUnverifiedImage) {
+        setRemediate((p) => ({ ...p, [key]: { phase: "dry-done", dryRun: true, result: (p[key] || {}).result } }));
+        if (window.confirm(`${data.error}\n\nApply ${newImage} anyway?`)) return runRemediation(img, false, true);
+        return;
+      }
       if (!res.ok || data.success === false) throw new Error(data.error || "Remediation failed");
       setRemediate((p) => ({ ...p, [key]: { phase: dryRun ? "dry-done" : "applied", dryRun, result: data } }));
       showToast(dryRun ? "Dry run complete" : `Applied${data.changeRequest?.number ? " · " + data.changeRequest.number : ""}`, "ok");
@@ -283,6 +291,10 @@ export function ImageVulnsWidget() {
             <strong style={{ color: cvssColor(d.maxCVSS || 0) }}>{(d.maxCVSS || 0).toFixed(1)}</strong>
             {" · "}<strong style={{ color: "var(--accent3, #06b6d4)" }}>{d.fixable || 0}</strong> fixable
             {" · scanned "}{d.timestamp ? relTime(d.timestamp) : "--"}
+            {d.kev && (d.kev.status === "unavailable" || d.kev.status === "disabled") && (
+              <span title={d.kev.error || "KEV_FEED_URL=off"} style={{ color: "var(--warn)" }}>{" · "}KEV catalog unavailable — exploitation not assessed</span>
+            )}
+            {d.kev?.status === "stale" && <span title={d.kev.error} style={{ color: "var(--warn)" }}>{" · "}KEV catalog stale</span>}
           </div>
         </div>
       </div>
@@ -295,10 +307,10 @@ export function ImageVulnsWidget() {
             className={"ivs-sev-card ivs-sev-card-kev" + (sevFilter === "exploitable" ? " active" : "")}
             style={{ "--sev-color": "#dc2626" }}
             onClick={() => toggleFilter("exploitable")}
-            title="Filter to actively-exploited findings"
+            title={`Filter to CVEs listed in CISA's Known Exploited Vulnerabilities catalog${d.kev?.catalogVersion ? ` (v${d.kev.catalogVersion})` : ""}`}
           >
             <div className="ivs-sev-val">{d.exploitable}</div>
-            <div className="ivs-sev-label">🔴 Exploitable</div>
+            <div className="ivs-sev-label">🔴 In CISA KEV</div>
           </button>
         )}
         {[
@@ -325,7 +337,7 @@ export function ImageVulnsWidget() {
       {sevFilter && (
         <div className="ivs-filter-banner">
           <span className="ivs-filter-banner-dot" style={{ background: filterColor(sevFilter) }} />
-          Showing <strong>{sevFilter === "exploitable" ? "actively-exploited" : sevFilter}</strong> findings only
+          Showing <strong>{sevFilter === "exploitable" ? "CISA KEV" : sevFilter}</strong> findings only
           <button type="button" className="ivs-filter-clear" onClick={() => setSevFilter(null)}>Clear ✕</button>
         </div>
       )}
@@ -479,7 +491,7 @@ export function ImageVulnsWidget() {
                       </span>
                     )}
                     {img.image}
-                    {(img.exploitable || 0) > 0 && <span className="ivs-img-kev" title="Contains actively-exploited (KEV) CVEs">KEV</span>}
+                    {(img.exploitable || 0) > 0 && <span className="ivs-img-kev" title="Contains CVEs listed in the CISA Known Exploited Vulnerabilities catalog">KEV</span>}
                   </span>
                   <span className="ivs-img-ns">{img.namespace || "—"}</span>
                   <span className="ivs-img-sevs ivs-col-c">
@@ -533,6 +545,18 @@ export function ImageVulnsWidget() {
                             <code className="ivs-ver-new">{fixState.data.recommendedImage}</code>
                           </div>
                         )}
+                        {fixState.data.imageCheck && (
+                          <div className="ivs-rem-line" style={{ color: fixState.data.imageCheck.exists === true ? "var(--ok)" : "var(--warn)" }}>
+                            {fixState.data.imageCheck.exists === true
+                              ? "✓ Tag exists in its registry"
+                              : fixState.data.imageCheck.exists === false
+                                ? `✕ AI suggested ${fixState.data.aiSuggestedImage || "an image"} — ${fixState.data.imageCheck.reason}`
+                                : `⚠ Tag not verified — ${fixState.data.imageCheck.reason}`}
+                          </div>
+                        )}
+                        {fixState.data.citations?.unknown?.length > 0 && (
+                          <div className="ivs-rem-line" style={{ color: "var(--warn)" }}>⚠ Cites CVEs not in this image's scan: {fixState.data.citations.unknown.join(", ")}</div>
+                        )}
                         {fixState.data.command && (
                           <div className="ivs-aifix-cmd">
                             <code>{fixState.data.command}</code>
@@ -553,6 +577,7 @@ export function ImageVulnsWidget() {
                           const rem = remediate[fixKey] || {};
                           const concreteTarget = fixState.data.recommendedImage && !/[<>]/.test(fixState.data.recommendedImage);
                           const busy = rem.phase === "dry-running" || rem.phase === "applying";
+                          const roleBlocked = rem.result?.canApply === false;
                           return (
                             <>
                               <div className="ivs-remediate-actions">
@@ -560,11 +585,13 @@ export function ImageVulnsWidget() {
                                   onClick={(e) => { e.stopPropagation(); runRemediation(img, true); }}>
                                   {rem.phase === "dry-running" ? "Previewing…" : "▷ Dry Run"}
                                 </button>
-                                <button type="button" className="ivs-rem-apply" disabled={busy || !concreteTarget}
+                                <button type="button" className="ivs-rem-apply" disabled={busy || !concreteTarget || roleBlocked}
+                                  title={roleBlocked ? "Applying needs the Operator or Admin role" : undefined}
                                   onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apply fix to ${img.image}?\n\nThis patches the deployment image on the cluster and raises a ServiceNow Change Request.`)) runRemediation(img, false); }}>
                                   {rem.phase === "applying" ? "Applying…" : "▶ Apply & Raise CR"}
                                 </button>
-                                {!concreteTarget && <span className="ivs-rem-hint">AI returned a placeholder tag — not auto-appliable</span>}
+                                {!concreteTarget && <span className="ivs-rem-hint">No verified replacement tag — not auto-appliable</span>}
+                                {roleBlocked && <span className="ivs-rem-hint">Your role is read-only — an Operator or Admin must apply</span>}
                               </div>
 
                               {/* Dry run preview */}
@@ -574,7 +601,9 @@ export function ImageVulnsWidget() {
                                   <div className="ivs-rem-line">{rem.result.target} · container <code>{rem.result.container}</code></div>
                                   <div className="ivs-rem-line"><code className="ivs-ver-old">{rem.result.oldImage}</code> → <code className="ivs-ver-new">{rem.result.newImage}</code></div>
                                   {rem.result.willRaiseChangeRequest && <div className="ivs-rem-line">✓ Will raise a ServiceNow Change Request on Apply</div>}
-                                  {rem.result.willRaiseIncident && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>⚠ Exploitable — will also raise an Incident</div>}
+                                  {rem.result.willRaiseIncident && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>⚠ In CISA KEV ({(rem.result.kevIds || []).join(", ")}) — will also raise an Incident</div>}
+                                  {rem.result.imageCheck && rem.result.imageCheck.exists !== true && <div className="ivs-rem-line" style={{ color: "var(--warn)" }}>⚠ Target tag not verified — {rem.result.imageCheck.reason}. Apply will ask you to confirm.</div>}
+                                  {rem.result.imageCheck?.exists === true && <div className="ivs-rem-line">✓ Target tag exists in its registry</div>}
                                 </div>
                               )}
 
@@ -607,10 +636,13 @@ export function ImageVulnsWidget() {
                         <tbody>
                           {shownVulns.map((v, vi) => (
                             <tr key={vi} className={v.exploitable ? "ivs-vuln-kev" : ""}>
-                              <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}>{(v.cvss || 0).toFixed(1)}</td>
+                              <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}
+                                title={v.cvssEstimated ? "No published CVSS score — estimated from severity" : undefined}>
+                                {v.cvssEstimated ? "~" : ""}{(v.cvss || 0).toFixed(1)}
+                              </td>
                               <td>
                                 <span className={"ivs-sev-pill " + (v.severity || "").toLowerCase()}>{v.severity}</span>
-                                {v.exploitable && <span className="ivs-vuln-kev-tag" title={v.kev ? "CISA KEV — actively exploited" : "CVSS ≥ 9.0"}>{v.kev ? "KEV" : "EXPLOIT"}</span>}
+                                {v.kev && <span className="ivs-vuln-kev-tag" title="Listed in the CISA Known Exploited Vulnerabilities catalog">KEV</span>}
                               </td>
                               <td className="ivs-cve-id">
                                 {v.link ? <a href={v.link} target="_blank" rel="noreferrer">{v.id}</a> : v.id}
@@ -669,7 +701,11 @@ export function ImageVulnsWidget() {
                     <div className="ivs-ai-title-meta">
                       <span className={"ivs-ai-sev-pill " + f.severity}>{f.severity}</span>
                       {f.category && <span className="ivs-ai-cat">{f.category}</span>}
-                      {f.confidence && <span className="ivs-ai-conf">{Math.round(f.confidence * 100)}% conf</span>}
+                      {f.citations?.unknown?.length > 0
+                        ? <span className="ivs-ai-conf" style={{ color: "var(--warn)", fontStyle: "normal" }} title={`Not found in this scan: ${f.citations.unknown.join(", ")}`}>⚠ {f.citations.unknown.length} CVE not in scan</span>
+                        : f.citations?.verified?.length > 0
+                          ? <span className="ivs-ai-conf" title={`Every CVE cited is in this scan: ${f.citations.verified.join(", ")}`}>✓ {f.citations.verified.length} CVE in scan</span>
+                          : null}
                     </div>
                   </div>
                   <span className="ivs-ai-chevron">{expandedAi === i ? "▲" : "▼"}</span>

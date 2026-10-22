@@ -86,6 +86,7 @@ import { registerDeployFromDocTools } from "./tools/deploy-from-doc.js";
 import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handleLLMSettingsTest, handleServiceNowSettingsGet, handleServiceNowSettingsPost, handleServiceNowSettingsTest, handleVcenterSettingsGet, handleVcenterSettingsPost, handleVcenterSettingsTest, restoreVcenterSettings, vcSettingsStore, handleUpgradeAnalyze, handleUpgradeStart, handleUpgradeStatus, handleUpgradeDryRun, handleUpgradeChannel, handleCRStatusCheck, restoreServiceNowSettings, handleUpgradeOrchestrator, hydrateLLMDefaults, getActiveLLMConfig } from "./services/dashboard-api.js";
 import { callLLM, llmEnabled } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
+import { getKevSet, kevStatus } from "./services/kev-feed.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 // The one DR readiness scorer, shared with the MCP tool, the dashboard widget
@@ -8997,17 +8998,12 @@ spec:
         const riskScore = Math.max(0, 100 - scan.critical * 15 - scan.high * 8 - scan.medium * 3 - scan.low * 1);
         const grade = riskScore >= 90 ? "A" : riskScore >= 80 ? "B" : riskScore >= 70 ? "C" : riskScore >= 60 ? "D" : "F";
 
-        // CISA KEV (Known Exploited Vulnerabilities) — representative subset of
-        // real CVE IDs from the CISA catalog. A scanned CVE that matches is
-        // flagged as actively exploited (industry-standard prioritization).
-        const KEV_SET = new Set([
-          "CVE-2021-44228", "CVE-2021-45046", "CVE-2022-22965", "CVE-2022-1388",
-          "CVE-2021-4034", "CVE-2014-0160", "CVE-2017-5638", "CVE-2018-7600",
-          "CVE-2019-0708", "CVE-2020-1472", "CVE-2021-26855", "CVE-2022-30190",
-          "CVE-2023-23397", "CVE-2023-34362", "CVE-2023-4863", "CVE-2024-3094",
-          "CVE-2021-22205", "CVE-2022-0847", "CVE-2021-3156", "CVE-2016-5195",
-        ]);
-        const isExploitable = (v) => KEV_SET.has((v.id || "").toUpperCase()) || (v.cvss || 0) >= 9.0;
+        // "Actively exploited" = listed in CISA's KEV catalog, loaded from
+        // CISA's feed (services/kev-feed.js). Nothing else sets it — a high
+        // CVSS is severe, not exploited. If the catalog cannot be loaded no
+        // finding is flagged, and `kev.status` says so.
+        const KEV_SET = await getKevSet();
+        const isExploitable = (v) => KEV_SET.has((v.id || "").toUpperCase());
 
         // Count actively-exploitable findings across all scanned images
         let exploitableCount = 0;
@@ -9020,7 +9016,7 @@ spec:
         const reasonParts = [];
         if (scan.critical > 0) reasonParts.push(`${scan.critical} Critical`);
         if (scan.high > 0) reasonParts.push(`${scan.high} High`);
-        if (exploitableCount > 0) reasonParts.push(`${exploitableCount} actively exploited`);
+        if (exploitableCount > 0) reasonParts.push(`${exploitableCount} in CISA KEV`);
         if ((comp.signed || 0) === 0 && (comp.total || 0) > 0) reasonParts.push(`0/${comp.total} signed`);
         if ((scan.maxCVSS || 0) > 0) reasonParts.push(`max CVSS ${(scan.maxCVSS).toFixed(1)}`);
         const scoreReason = reasonParts.length ? reasonParts.join(" · ") : "No significant findings";
@@ -9049,6 +9045,7 @@ spec:
           low: scan.low,
           fixable: scan.fixable,
           exploitable: exploitableCount,
+          kev: kevStatus(),
           maxCVSS: scan.maxCVSS || 0,
           riskScore, grade, scoreReason,
           compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
@@ -9071,7 +9068,8 @@ spec:
             vulnerabilities: (r.vulnerabilities || []).slice(0, 20).map(v => ({
               id: v.id, severity: v.severity, package: v.package || "", version: v.version || "",
               fix: v.fixedBy, cvss: v.cvss || 0, link: v.link || null,
-              exploitable: isExploitable(v), kev: KEV_SET.has((v.id || "").toUpperCase()),
+              exploitable: isExploitable(v), kev: isExploitable(v),
+              cvssEstimated: !!v.cvssEstimated,
               description: (v.description || "").slice(0, 150),
             })),
           })),

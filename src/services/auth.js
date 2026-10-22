@@ -332,6 +332,9 @@ export function hasPermission(username, permission) {
 
 export function checkPermission(req, permission) {
   if (AUTH_MODE === "none") return true;
+  // The shared API token is the deployment's admin credential (a token login
+  // with it already becomes "admin"); a bearer call with it is the same holder.
+  if (req.user?.method === "token" && req.user?.name === "api-client") return true;
   const username = req.user?.name || "anonymous";
   return hasPermission(username, permission);
 }

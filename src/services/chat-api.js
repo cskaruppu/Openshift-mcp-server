@@ -66,6 +66,9 @@ import {
 } from "./action-workflow.js";
 import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
+import { getKevSet, kevStatus } from "./kev-feed.js";
+import { parseImageRef, isConcreteImageRef, sameImage, verifyImageExists, citedCves } from "./image-verify.js";
+import { checkPermission } from "./auth.js";
 import { callLLM, callLLMStream, classifyJSON, llmEnabled, normaliseUsage, normaliseStopReason } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
 import { diagnosePod } from "./pod-doctor.js";
@@ -19410,12 +19413,20 @@ export async function handleImageVulnAnalysisAPI(req, res) {
       grade: vulnData.grade, compliance: vulnData.compliance, ageSummary: vulnData.ageSummary,
     };
 
+    // Ground truth for the citation check: every CVE id the scan found.
+    const kevSet = await getKevSet();
+    const scannedCves = new Set();
+    for (const img of (vulnData.topImages || [])) {
+      for (const v of (img.vulnerabilities || [])) if (/^CVE-/i.test(v.id || "")) scannedCves.add(String(v.id).toUpperCase());
+    }
+
     const topCVEs = [];
     for (const img of (vulnData.topImages || []).slice(0, 8)) {
       for (const v of (img.vulnerabilities || []).slice(0, 5)) {
-        topCVEs.push({ image: img.image, namespace: img.namespace, cve: v.id, severity: v.severity, cvss: v.cvss, package: v.package, version: v.version, fix: v.fix || v.fixedBy || null, description: (v.description || "").substring(0, 150) });
+        topCVEs.push({ image: img.image, namespace: img.namespace, cve: v.id, severity: v.severity, cvss: v.cvss, cvssEstimated: !!v.cvssEstimated, package: v.package, version: v.version, fix: v.fix || v.fixedBy || null, inCisaKev: kevSet.has(String(v.id || "").toUpperCase()), description: (v.description || "").substring(0, 150) });
       }
     }
+    const kevMeta = kevStatus();
 
     const prompt = `You are a container security expert specializing in Kubernetes image vulnerability analysis. Analyze the vulnerability scan results below using industry-standard security frameworks.
 
@@ -19429,7 +19440,7 @@ TOP VULNERABLE IMAGES:
 ${JSON.stringify((vulnData.topImages || []).slice(0, 8).map(i => ({ image: i.image, namespace: i.namespace, critical: i.critical, high: i.high, medium: i.medium, low: i.low, maxCVSS: i.maxCVSS, totalVulns: (i.vulnerabilities || []).length })), null, 1)}
 
 Analyze against these industry frameworks:
-1. **NIST NVD Risk Assessment** — Known exploits, EPSS probability, CISA KEV
+1. **Exploit Risk** — use ONLY the "inCisaKev" field above for known exploitation (CISA KEV catalog ${kevMeta.status === "live" || kevMeta.status === "stale" ? `version ${kevMeta.catalogVersion || "unknown"}` : "NOT AVAILABLE — say exploitation status is unknown"}). EPSS scores are NOT provided: do not state or estimate them. "cvssEstimated": true means the score was inferred from severity, not published.
 2. **Supply Chain Risk** — Base image freshness, unsigned images, missing SBOMs. Stale images: ${vulnData.ageSummary?.stale || 0}
 3. **Compound Vulnerability Chains** — Multiple CVEs in same image enabling privilege escalation or RCE
 4. **Compliance Gaps** — CIS 5.5.1 (no :latest), 5.5.2 (digest pinning), SOC2/PCI-DSS signing. Signed: ${vulnData.compliance?.signed || 0}/${vulnData.compliance?.total || 0}
@@ -19444,8 +19455,9 @@ Respond ONLY with a JSON array of findings. Each:
 - "evidence": specific CVEs, images, data
 - "impact": security impact
 - "action": remediation steps with image names/CVE IDs
-- "confidence": 70-99
 - "framework": security framework (NIST, CIS, PCI-DSS, OWASP)
+
+Rules: cite only CVE IDs and images that appear in the data above. Do not introduce CVEs from memory. If the data does not support a finding, leave it out.
 
 Return ONLY the JSON array.`;
 
@@ -19468,12 +19480,27 @@ Return ONLY the JSON array.`;
         severity: ["critical", "warning", "info"].includes(f.severity) ? f.severity : "info",
         title: String(f.title).substring(0, 100), category: f.category || "hygiene",
         evidence: String(f.evidence || "").substring(0, 500), impact: String(f.impact || "").substring(0, 500),
-        action: String(f.action || "").substring(0, 400), confidence: Math.min(99, Math.max(70, parseInt(f.confidence) || 85)),
+        action: String(f.action || "").substring(0, 400),
         framework: String(f.framework || "").substring(0, 50), llm: true,
       }));
     } catch { return json(res, 200, { findings: [], error: "Failed to parse LLM response" }); }
 
-    json(res, 200, { findings, provider: r.provider || provider });
+    // Citation check. The model's own "confidence" was a number it made up, so
+    // it is gone; what is shown instead is checkable: does every CVE the
+    // finding cites exist in this scan? A finding that cites only CVEs the
+    // scan never found is dropped — it is about something that is not here.
+    let dropped = 0;
+    findings = findings.filter(f => {
+      const cited = citedCves(f.title, f.evidence, f.impact, f.action);
+      const verified = cited.filter(id => scannedCves.has(id));
+      const unknown = cited.filter(id => !scannedCves.has(id));
+      f.citations = { verified, unknown };
+      f.grounded = unknown.length === 0;
+      if (cited.length > 0 && verified.length === 0) { dropped++; return false; }
+      return true;
+    });
+
+    json(res, 200, { findings, dropped, kev: kevMeta, provider: r.provider || provider });
   } catch (err) {
     console.error("Image vuln AI analysis error:", err);
     json(res, 500, { error: err.message });
@@ -20178,16 +20205,30 @@ Respond ONLY with this JSON object (no markdown fences):
       const m = text.match(/\{[\s\S]*\}/);
       if (m) text = m[0];
       const parsed = JSON.parse(text);
+      // The model names a tag; the registry decides whether it exists. An
+      // invented or malformed tag never reaches the Apply button as if real.
+      const suggested = String(parsed.recommendedImage || "").trim().slice(0, 200);
+      const concrete = isConcreteImageRef(suggested) && !sameImage(suggested, image);
+      const imageCheck = concrete ? await verifyImageExists(suggested)
+        : { exists: false, reason: suggested ? (sameImage(suggested, image) ? "same as the current image" : "not a valid image reference") : "no image suggested" };
+      const usable = concrete && imageCheck.exists !== false;
+      const scanIds = new Set(vulns.map(v => String(v.id || "").toUpperCase()));
+      const cited = citedCves(parsed.rationale, ...(Array.isArray(parsed.steps) ? parsed.steps : []));
       return json(res, 200, {
         image,
-        recommendedImage: String(parsed.recommendedImage || fallback.recommendedImage).slice(0, 200),
-        command: String(parsed.command || fallback.command).slice(0, 400),
+        recommendedImage: usable ? suggested : fallback.recommendedImage,
+        aiSuggestedImage: suggested || null,
+        imageCheck,
+        command: usable ? String(parsed.command || fallback.command).slice(0, 400) : fallback.command,
         dockerfilePatch: parsed.dockerfilePatch ? String(parsed.dockerfilePatch).slice(0, 400) : null,
         steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 6).map(s => String(s).slice(0, 200)) : fallback.steps,
         rationale: String(parsed.rationale || fallback.rationale).slice(0, 400),
-        fixesCount: Number(parsed.fixesCount) || fixable.length,
-        totalCount: Number(parsed.totalCount) || vulns.length,
+        citations: { verified: cited.filter(id => scanIds.has(id)), unknown: cited.filter(id => !scanIds.has(id)) },
+        // Counted from the scan, not taken from the model.
+        fixesCount: fixable.length,
+        totalCount: vulns.length,
         provider: r.provider || provider,
+        note: usable ? undefined : `AI suggestion rejected: ${imageCheck.reason || "tag not found"}. Choose the replacement tag manually.`,
       });
     } catch {
       return json(res, 200, { ...fallback, provider: r.provider || provider, note: "AI response unparseable — showing safe default" });
@@ -20220,8 +20261,11 @@ async function resolveImageWorkload(namespace, image, hintDeployment, hintContai
     try {
       const dep = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/deployments/${name}`);
       const containers = dep?.spec?.template?.spec?.containers || [];
-      let c = hintContainer ? containers.find(x => x.name === hintContainer) : null;
-      if (!c) c = containers.find(x => x.image === image) || containers[0];
+      // Only ever the container that actually runs the scanned image. A named
+      // container running something else, or "the first container", would
+      // patch the wrong workload.
+      let c = hintContainer ? containers.find(x => x.name === hintContainer && sameImage(x.image, image)) : null;
+      if (!c) c = containers.find(x => sameImage(x.image, image));
       if (c) return { deployment: name, container: c.name, oldImage: c.image, kind: "deployments" };
     } catch { /* not found */ }
     return null;
@@ -20234,7 +20278,7 @@ async function resolveImageWorkload(namespace, image, hintDeployment, hintContai
   try {
     const deps = await ocpGet(`/apis/apps/v1/namespaces/${namespace}/deployments`);
     for (const dep of (deps.items || [])) {
-      const c = (dep.spec?.template?.spec?.containers || []).find(x => x.image === image);
+      const c = (dep.spec?.template?.spec?.containers || []).find(x => sameImage(x.image, image));
       if (c) return { deployment: dep.metadata.name, container: c.name, oldImage: c.image, kind: "deployments" };
     }
   } catch { /* fall through */ }
@@ -20247,16 +20291,44 @@ export async function handleImageRemediateAPI(req, res) {
     const { image, namespace, newImage } = body;
     const dryRun = body.dryRun !== false; // default to SAFE (dry run) unless explicitly false
     const before = body.before || {};
-    const exploitable = Number(body.exploitable) || 0;
+    const canApply = checkPermission(req, "write");
 
     if (!namespace || !image) return json(res, 400, { success: false, error: "Missing image or namespace" });
-    if (!newImage || /[<>]/.test(newImage)) {
+    if (!dryRun && !canApply) {
+      return json(res, 403, { success: false, error: "Applying a fix patches the cluster and needs the Operator or Admin role. Ask an operator to apply it." });
+    }
+    if (!newImage || !isConcreteImageRef(newImage)) {
       return json(res, 400, { success: false, error: "A concrete replacement image (newImage) is required — run AI Fix first to generate one." });
     }
+    if (sameImage(newImage, image)) {
+      return json(res, 400, { success: false, error: "The replacement image is the image already running." });
+    }
+
+    // Exploitation is decided here, from CISA's catalog and the server's own
+    // scan — never from a count the browser sends.
+    const kevSet = await getKevSet();
+    const cveIds = new Set((Array.isArray(body.cveIds) ? body.cveIds : []).map(x => String(x).toUpperCase()));
+    try {
+      const { getScanResults } = await import("../tools/image-vulnerability-scanner.js");
+      for (const rec of Object.values(getScanResults())) {
+        for (const r of (rec.results || [])) {
+          if (r.image === image) for (const v of (r.vulnerabilities || [])) cveIds.add(String(v.id || "").toUpperCase());
+        }
+      }
+    } catch { /* no cached scan: fall back to the ids sent */ }
+    const kevIds = [...cveIds].filter(id => kevSet.has(id));
+    const exploitable = kevIds.length;
 
     const wl = await resolveImageWorkload(namespace, image, body.deployment, body.container);
     if (!wl) {
-      return json(res, 200, { success: false, error: `Could not find a Deployment in '${namespace}' running ${image}. Manual remediation required.` });
+      return json(res, 200, { success: false, error: `No Deployment in '${namespace}' has a container running ${image}. Nothing was changed — remediate manually.` });
+    }
+
+    // The replacement must exist in its registry. "Unknown" (a private
+    // registry, no egress) is allowed only when the operator says so.
+    const imageCheck = await verifyImageExists(newImage);
+    if (imageCheck.exists === false) {
+      return json(res, 200, { success: false, imageCheck, error: `Replacement image not found: ${imageCheck.reason}. Nothing was changed.` });
     }
 
     const patchPreview = {
@@ -20276,8 +20348,12 @@ export async function handleImageRemediateAPI(req, res) {
         before,
         willRaiseChangeRequest: isServiceNowEnabled(),
         willRaiseIncident: isServiceNowEnabled() && exploitable > 0,
+        kevIds, imageCheck, canApply,
         note: "Dry run — no change applied. Click Apply to raise a Change Request and patch the cluster.",
       });
+    }
+    if (imageCheck.exists !== true && body.confirmUnverifiedImage !== true) {
+      return json(res, 200, { success: false, imageCheck, needsConfirmation: true, error: `Could not confirm ${newImage} exists (${imageCheck.reason}). Confirm to apply anyway.` });
     }
 
     // ---- APPLY: raise CR → patch → re-scan → close CR ----
@@ -20298,7 +20374,9 @@ export async function handleImageRemediateAPI(req, res) {
             `Current image: ${wl.oldImage}`,
             `Target image: ${newImage}`,
             `Findings before: ${sevText}`,
-            isKev ? `Actively exploited (KEV/EPSS): ${exploitable} — expedited.` : ``,
+            isKev ? `In CISA KEV (known exploited): ${kevIds.join(", ")} — expedited.` : ``,
+            imageCheck.exists === true ? `Target image verified in registry${imageCheck.digest ? ` (${imageCheck.digest})` : ""}.` : `Target image NOT verified in registry (${imageCheck.reason}); applied on operator confirmation.`,
+            `Requested by: ${req.user?.name || "unknown"}`,
           ].filter(Boolean).join("\n"),
           type: "normal",
           risk: riskLevel,
@@ -20320,7 +20398,7 @@ export async function handleImageRemediateAPI(req, res) {
         try {
           const inc = await createServiceNowIncident({
             shortDescription: `[SEV-2] Actively-exploited CVE in ${wl.deployment} — ${namespace}`,
-            description: `KEV/exploitable vulnerability detected in ${image}. Remediation change ${changeRequest?.number || "pending"} raised. Findings: ${sevText}.`,
+            description: `CISA KEV (known exploited) CVE(s) ${kevIds.join(", ")} in ${image}. Remediation change ${changeRequest?.number || "pending"} raised. Findings: ${sevText}.`,
             urgency: "1", impact: "2",
           });
           const irec = inc?.result ? (Array.isArray(inc.result) ? inc.result[0] : inc.result) : null;
@@ -20384,7 +20462,7 @@ export async function handleImageRemediateAPI(req, res) {
       error: patchError,
       ...patchPreview,
       before, after,
-      changeRequest, incident,
+      changeRequest, incident, kevIds, imageCheck,
       rolloutTriggered: !patchError,
     });
   } catch (err) {
