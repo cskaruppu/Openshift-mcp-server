@@ -1,755 +1,116 @@
-import { useState, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
 import { showToast } from "../../store/toastStore";
+import { normalize, relTime, clusterUrl, TIER_LABEL, tierVar } from "../vuln/vulnModel";
+import { TierBadge, SevBar, FactorChips, ImageName, Funnel } from "../vuln/VulnParts";
+import { VulnerabilityCenter } from "../vuln/VulnerabilityCenter";
 
-function clusterUrl(path, cluster) {
-  if (!cluster || cluster === "local") return path;
-  return `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(cluster)}`;
-}
-
-const gradeColor = (g) => {
-  if (g === "A") return "#22c55e";
-  if (g === "B") return "#3b82f6";
-  if (g === "C") return "#f59e0b";
-  if (g === "D") return "#f97316";
-  return "#ef4444";
-};
-
-const cvssColor = (v) => {
-  if (v >= 9) return "#ef4444";
-  if (v >= 7) return "#f97316";
-  if (v >= 4) return "#f59e0b";
-  return "#22c55e";
-};
-
-const sevColor = (s) => {
-  if (s === "critical") return "#ef4444";
-  if (s === "high") return "#f97316";
-  if (s === "medium") return "#f59e0b";
-  return "#22c55e";
-};
-
-const filterColor = (f) => {
-  if (f === "exploitable") return "#dc2626";
-  if (f === "critical") return "#ef4444";
-  if (f === "high") return "#f97316";
-  if (f === "medium") return "#3b82f6";
-  return "#22c55e";
-};
-
-// Does an image have any finding matching the active filter?
-const imgMatchesFilter = (img, filter) => {
-  if (!filter) return true;
-  if (filter === "exploitable") return (img.exploitable || 0) > 0;
-  return (img[filter] || 0) > 0;
-};
-
-// Filter an image's CVE list to the active severity / exploitable filter
-const filterVulns = (vulns, filter) => {
-  if (!filter) return vulns;
-  if (filter === "exploitable") return vulns.filter((v) => v.exploitable);
-  return vulns.filter((v) => (v.severity || "").toLowerCase() === filter);
-};
-
-const frameworkIcon = (fw) => {
-  const map = { "NIST NVD": "N", "CIS": "C", "OWASP": "O", "SOC2": "S", "PCI-DSS": "P" };
-  for (const [k, v] of Object.entries(map)) if ((fw || "").includes(k)) return v;
-  return "AI";
-};
+// Image Vulnerabilities — the dashboard card.
+//
+// A card answers three questions at a glance: how exposed are we, what must
+// be fixed first, and can the numbers be trusted. Everything deeper — the
+// inventory, the CVE view, runtime exposure, the fix — lives in the
+// Vulnerability Center this card opens, so the dashboard stays a dashboard.
 
 export function ImageVulnsWidget() {
   const cluster = useActiveCluster();
-  const { data, isLoading, isError, error, refetch } = useClusterQuery(
-    "/api/dashboard/image-vulns",
-    { refetchInterval: REFRESH.SCAN }
-  );
+  const { data, isLoading, isError, error, refetch } = useClusterQuery("/api/dashboard/image-vulns", { refetchInterval: REFRESH.SCAN });
+  const [open, setOpen] = useState(false);
+  const [focus, setFocus] = useState(null);
   const [scanning, setScanning] = useState(false);
-  const [expandedImg, setExpandedImg] = useState(null);
-  const [sevFilter, setSevFilter] = useState(null); // null | critical | high | medium | low | exploitable
-  const [aiFix, setAiFix] = useState({}); // { [imageKey]: { loading, data, error } }
-  const [remediate, setRemediate] = useState({}); // { [imageKey]: { phase, dryRun, result, error } }
-  const [aiFindings, setAiFindings] = useState(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiProvider, setAiProvider] = useState(null);
-  const [expandedAi, setExpandedAi] = useState(null);
+  const model = useMemo(() => (data && data.available !== false ? normalize(data) : null), [data]);
+  const clearFocus = useCallback(() => setFocus(null), []);
+  const close = useCallback(() => setOpen(false), []);
 
-  const toggleFilter = useCallback((key) => {
-    setSevFilter((prev) => (prev === key ? null : key));
-    setExpandedImg(null);
-  }, []);
-
-  const handleAiFix = useCallback(async (img) => {
-    const key = img.fullImage || img.image;
-    setAiFix((p) => ({ ...p, [key]: { loading: true } }));
-    try {
-      const res = await fetch(clusterUrl("/api/ai/image-remediation", cluster), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: img.fullImage || img.image,
-          namespace: img.namespace,
-          deployment: (img.pods && img.pods[0]?.pod) ? img.pods[0].pod.replace(/-[a-f0-9]+(-[a-z0-9]+)?$/, "") : "",
-          vulnerabilities: img.vulnerabilities || [],
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || "Remediation failed");
-      setAiFix((p) => ({ ...p, [key]: { loading: false, data } }));
-      showToast("AI remediation ready", "ok");
-    } catch (err) {
-      setAiFix((p) => ({ ...p, [key]: { loading: false, error: err.message } }));
-      showToast("AI fix failed: " + err.message, "err");
-    }
-  }, [cluster]);
-
-  const copyCmd = useCallback((cmd) => {
-    try { navigator.clipboard?.writeText(cmd); showToast("Command copied", "ok"); } catch { /* ignore */ }
-  }, []);
-
-  const runRemediation = useCallback(async (img, dryRun, confirmUnverifiedImage = false) => {
-    const key = img.fullImage || img.image;
-    const fixData = (aiFix[key] || {}).data;
-    const newImage = fixData?.recommendedImage;
-    if (!newImage || /[<>]/.test(newImage)) {
-      showToast("Run AI Fix first to get a concrete target image", "err");
-      return;
-    }
-    setRemediate((p) => ({ ...p, [key]: { phase: dryRun ? "dry-running" : "applying", dryRun } }));
-    try {
-      const res = await fetch(clusterUrl("/api/security/remediate-image", cluster), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: img.fullImage || img.image,
-          namespace: img.namespace,
-          deployment: (img.workload?.name) || ((img.pods && img.pods[0]?.pod) ? img.pods[0].pod.replace(/-[a-f0-9]+(-[a-z0-9]+)?$/, "") : ""),
-          container: img.pods && img.pods[0]?.container,
-          newImage,
-          dryRun,
-          confirmUnverifiedImage,
-          // The server decides KEV status itself; these ids only help when it
-          // has no cached scan of this image.
-          cveIds: (img.vulnerabilities || []).map((v) => v.id).filter(Boolean),
-          before: { critical: img.critical || 0, high: img.high || 0, medium: img.medium || 0, low: img.low || 0, total: img.total || 0 },
-        }),
-      });
-      const data = await res.json();
-      if (data.needsConfirmation && !dryRun && !confirmUnverifiedImage) {
-        setRemediate((p) => ({ ...p, [key]: { phase: "dry-done", dryRun: true, result: (p[key] || {}).result } }));
-        if (window.confirm(`${data.error}\n\nApply ${newImage} anyway?`)) return runRemediation(img, false, true);
-        return;
-      }
-      if (!res.ok || data.success === false) throw new Error(data.error || "Remediation failed");
-      setRemediate((p) => ({ ...p, [key]: { phase: dryRun ? "dry-done" : "applied", dryRun, result: data } }));
-      showToast(dryRun ? "Dry run complete" : `Applied${data.changeRequest?.number ? " · " + data.changeRequest.number : ""}`, "ok");
-    } catch (err) {
-      setRemediate((p) => ({ ...p, [key]: { phase: "failed", dryRun, error: err.message } }));
-      showToast("Remediation failed: " + err.message, "err");
-    }
-  }, [cluster, aiFix]);
-
-  const handleScan = useCallback(async () => {
+  const rescan = async () => {
     setScanning(true);
     try {
-      const res = await fetch(clusterUrl("/api/dashboard/image-vulns?rescan=true", cluster));
-      await res.json();
+      const r = await fetch(clusterUrl("/api/dashboard/image-vulns?rescan=true", cluster));
+      await r.json();
       showToast("Image scan complete", "ok");
       refetch();
-    } catch (err) {
-      showToast("Scan failed: " + err.message, "err");
-    } finally {
-      setScanning(false);
-    }
-  }, [cluster, refetch]);
-
-  const handleAiAnalysis = useCallback(async () => {
-    setAiLoading(true);
-    setAiFindings(null);
-    try {
-      const res = await fetch(clusterUrl("/api/ai/image-vuln-analysis", cluster), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const json = await res.json().catch(() => ({ findings: [], error: "Empty response from server" }));
-      if (!res.ok) throw new Error(json.error || "Analysis failed");
-      if (json.error && (!json.findings || json.findings.length === 0)) throw new Error(json.error);
-      setAiFindings(json.findings || []);
-      setAiProvider(json.provider || null);
-      showToast(`AI analysis complete — ${(json.findings || []).length} findings`, "ok");
-    } catch (err) {
-      showToast("AI analysis failed: " + err.message, "err");
-    } finally {
-      setAiLoading(false);
-    }
-  }, [cluster]);
-
-  if (isLoading) {
-    return (
-      <div className="ivs">
-        <div className="ivs-header"><h3>Image Vulnerability Scanner</h3></div>
-        <div className="ivs-loading">Scanning images…</div>
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="ivs">
-        <div className="ivs-header"><h3>Image Vulnerability Scanner</h3></div>
-        <div className="ivs-error">{String(error?.message)}</div>
-      </div>
-    );
-  }
-
-  if (!data || data.available === false) {
-    return (
-      <div className="ivs">
-        <div className="ivs-header"><h3>Image Vulnerability Scanner</h3></div>
-        <div className="ivs-unavailable">{data?.message || "Not installed on this cluster"}</div>
-      </div>
-    );
-  }
-
-  const d = data;
-  const gc = gradeColor(d.grade);
-  const total = d.totalVulns || 0;
-  const score = d.riskScore ?? 0;
-  const ring = total > 0 ? Math.max(5, Math.min(100, score)) : 0;
-  const circumference = 2 * Math.PI * 27;
-  const offset = circumference - (ring / 100) * circumference;
-  const comp = d.compliance || {};
-  const age = d.ageSummary || {};
-  const ageTotal = (age.fresh || 0) + (age.aging || 0) + (age.stale || 0) || 1;
-  const fixPct = total > 0 ? Math.round(((d.fixable || 0) / total) * 100) : 0;
-  // Scanner mode — distinguishes a real dynamic CVE feed from static heuristics
-  const SCANNER_MODES = {
-    "trivy-operator": { label: "Live CVE · Trivy", live: true, tip: "Dynamic CVE scanning via Trivy Operator (NVD + GHSA + OS vendor feeds). Works on OpenShift, EKS, AKS, GKE." },
-    "quay-cso": { label: "Live CVE · Quay/Clair", live: true, tip: "Dynamic CVE scanning via Red Hat Quay Container Security Operator (Clair)." },
-    "openshift-image-api": { label: "OCP Image API", live: false, tip: "OpenShift image metadata source." },
-    "static-analysis": { label: "Static Analysis", live: false, tip: "Heuristic image-hygiene checks (CIS 5.5.1/5.5.2, registry trust). Install Trivy Operator for live CVE scanning." },
+    } catch (e) { showToast("Scan failed: " + e.message, "err"); }
+    finally { setScanning(false); }
   };
-  const scannerMode = SCANNER_MODES[d.scannerType] || SCANNER_MODES["static-analysis"];
-  const scannerLabel = scannerMode.label;
-  // gradeColor is defined at module scope (top of file) — reuse it, don't
-  // shadow it (a local re-declaration caused a use-before-init/TDZ crash).
-  const sourceShort = (t) => ({ "trivy-operator": "Trivy", "quay-cso": "Clair", "static-analysis": "Static", "openshift-image-api": "OCP" }[t] || t || "—");
 
-  return (
-    <div className="ivs">
-      {/* Header */}
-      <div className="ivs-header">
-        <h3>Image Vulnerability Scanner</h3>
-        <div className="ivs-header-actions">
-          <span
-            className={"ivs-scanner-badge" + (scannerMode.live ? " ivs-scanner-live" : " ivs-scanner-static")}
-            title={scannerMode.tip}
-          >
-            {scannerMode.live && <span className="ivs-scanner-dot" />}
-            {scannerLabel}
-          </span>
-          <button className="ivs-ai-btn" onClick={handleAiAnalysis} disabled={aiLoading}>
-            {aiLoading ? "Analyzing…" : "AI Security Analysis"}
+  const head = (
+    <div className="vcw-head">
+      <div>
+        <h3>Image Vulnerabilities</h3>
+        <span className="vcw-sub">Risk-prioritised · CVE scan + CISA KEV + FIRST EPSS + runtime</span>
+      </div>
+      {model && (
+        <div className="vcw-actions">
+          <button className="vc-btn ghost sm" onClick={rescan} disabled={scanning} title="Rescan now">
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" className={scanning ? "vc-spin" : ""}><path d="M13.5 8A5.5 5.5 0 1 1 11.9 4.1M13.5 2v3h-3" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {scanning ? "Scanning" : "Rescan"}
           </button>
-          <button className="ivs-scan-btn" onClick={handleScan} disabled={scanning}>
-            {scanning ? "Scanning…" : "Scan"}
-          </button>
-        </div>
-      </div>
-
-      {/* Hero Row: posture ring + grade + reason + key metrics */}
-      <div className="ivs-hero2">
-        <div className="ivs-hero2-score">
-          <div className="ivs-donut">
-            <svg viewBox="0 0 64 64" width="72" height="72">
-              <circle cx="32" cy="32" r="27" fill="none" stroke="var(--border)" strokeWidth="6" />
-              <circle
-                cx="32" cy="32" r="27" fill="none"
-                stroke={gc} strokeWidth="6" strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={offset}
-                style={{ transform: "rotate(-90deg)", transformOrigin: "center", transition: "stroke-dashoffset .8s ease" }}
-              />
-            </svg>
-            <div className="ivs-donut-inner">
-              <div className="ivs-donut-score" style={{ color: gc }}>{score}</div>
-              <div className="ivs-donut-of">/100</div>
-            </div>
-          </div>
-          <div className="ivs-hero2-gradewrap">
-            <div className="ivs-grade-pill" style={{ background: gc + "18", color: gc, borderColor: gc }}>{d.grade || "?"}</div>
-            <div className="ivs-grade-label">Security Posture</div>
-          </div>
-        </div>
-        <div className="ivs-hero2-detail">
-          <div className="ivs-hero2-reason" style={{ borderColor: gc + "55" }}>
-            <span className="ivs-hero2-reason-icon" style={{ color: gc }}>●</span>
-            {d.scoreReason || `${total} findings across ${d.totalImages || 0} images`}
-          </div>
-          <div className="ivs-hero2-meta">
-            {d.totalImages || 0} images scanned · {total} findings · Max CVSS{" "}
-            <strong style={{ color: cvssColor(d.maxCVSS || 0) }}>{(d.maxCVSS || 0).toFixed(1)}</strong>
-            {" · "}<strong style={{ color: "var(--accent3, #06b6d4)" }}>{d.fixable || 0}</strong> fixable
-            {" · scanned "}{d.timestamp ? relTime(d.timestamp) : "--"}
-            {d.kev && (d.kev.status === "unavailable" || d.kev.status === "disabled") && (
-              <span title={d.kev.error || "KEV_FEED_URL=off"} style={{ color: "var(--warn)" }}>{" · "}KEV catalog unavailable — exploitation not assessed</span>
-            )}
-            {d.kev?.status === "stale" && <span title={d.kev.error} style={{ color: "var(--warn)" }}>{" · "}KEV catalog stale</span>}
-          </div>
-        </div>
-      </div>
-
-      {/* Severity + Exploitable Cards — click to filter */}
-      <div className="ivs-severity-row ivs-severity-row5">
-        {(d.exploitable || 0) > 0 && (
-          <button
-            type="button"
-            className={"ivs-sev-card ivs-sev-card-kev" + (sevFilter === "exploitable" ? " active" : "")}
-            style={{ "--sev-color": "#dc2626" }}
-            onClick={() => toggleFilter("exploitable")}
-            title={`Filter to CVEs listed in CISA's Known Exploited Vulnerabilities catalog${d.kev?.catalogVersion ? ` (v${d.kev.catalogVersion})` : ""}`}
-          >
-            <div className="ivs-sev-val">{d.exploitable}</div>
-            <div className="ivs-sev-label">🔴 In CISA KEV</div>
-          </button>
-        )}
-        {[
-          { key: "critical", color: "var(--crit)", val: d.critical || 0 },
-          { key: "high", color: "var(--warn)", val: d.high || 0 },
-          { key: "medium", color: "#3b82f6", val: d.medium || 0 },
-          { key: "low", color: "var(--ok)", val: d.low || 0 },
-        ].map((s) => (
-          <button
-            type="button"
-            key={s.key}
-            className={"ivs-sev-card" + (sevFilter === s.key ? " active" : "") + (s.val === 0 ? " ivs-sev-empty" : "")}
-            style={{ "--sev-color": s.color }}
-            onClick={() => s.val > 0 && toggleFilter(s.key)}
-            title={s.val > 0 ? `Filter to ${s.key} findings` : `No ${s.key} findings`}
-          >
-            <div className="ivs-sev-val">{s.val}</div>
-            <div className="ivs-sev-label">{s.key}</div>
-          </button>
-        ))}
-      </div>
-
-      {/* Active filter banner */}
-      {sevFilter && (
-        <div className="ivs-filter-banner">
-          <span className="ivs-filter-banner-dot" style={{ background: filterColor(sevFilter) }} />
-          Showing <strong>{sevFilter === "exploitable" ? "CISA KEV" : sevFilter}</strong> findings only
-          <button type="button" className="ivs-filter-clear" onClick={() => setSevFilter(null)}>Clear ✕</button>
-        </div>
-      )}
-
-      {/* Fixable Progress (labeled) */}
-      <div className="ivs-fixwrap">
-        <div className="ivs-fixwrap-head">
-          <span>Remediable Findings</span>
-          <span className="ivs-fixwrap-pct"><strong>{fixPct}%</strong> fixable now ({d.fixable || 0}/{total})</span>
-        </div>
-        <div className="ivs-progress-track">
-          <div className="ivs-progress-bar" style={{ width: `${fixPct}%` }} />
-        </div>
-      </div>
-
-      {/* Compliance Badges */}
-      <div className="ivs-compliance-row">
-        <ComplianceBadge icon="shield" color="var(--accent3, #06b6d4)" count={comp.signed || 0} total={comp.total || 0} label="signed" />
-        <ComplianceBadge icon="doc" color="#8b5cf6" count={comp.sbom || 0} total={comp.total || 0} label="SBOM" />
-        <ComplianceBadge icon="lock" color="var(--warn)" count={comp.pinned || 0} total={comp.total || 0} label="pinned" />
-        <ComplianceBadge icon="check" color="var(--ok)" count={comp.trusted || 0} total={comp.total || 0} label="trusted" />
-      </div>
-
-      {/* Image Freshness */}
-      <div className="ivs-freshness">
-        <div className="ivs-freshness-header">
-          <span>Image Freshness</span>
-          <span className="ivs-freshness-counts">
-            <span style={{ color: "var(--ok)" }}>{age.fresh || 0} fresh</span>
-            {" / "}
-            <span style={{ color: "var(--warn)" }}>{age.aging || 0} aging</span>
-            {" / "}
-            <span style={{ color: "var(--crit)" }}>{age.stale || 0} stale</span>
-          </span>
-        </div>
-        <div className="ivs-freshness-track">
-          <div className="ivs-fresh-bar" style={{ width: `${((age.fresh || 0) / ageTotal) * 100}%`, background: "var(--ok)" }} />
-          <div className="ivs-fresh-bar" style={{ width: `${((age.aging || 0) / ageTotal) * 100}%`, background: "var(--warn)" }} />
-          <div className="ivs-fresh-bar" style={{ width: `${((age.stale || 0) / ageTotal) * 100}%`, background: "var(--crit)" }} />
-        </div>
-      </div>
-
-      {/* Top Images */}
-      {/* Scan Sources — live integration status of every scanner engine.
-          Proves at a glance which tools are detected, active, and live. */}
-      {Array.isArray(d.sources) && d.sources.length > 0 && (
-        <div style={{ margin: "12px 0 6px", padding: "12px 14px", borderRadius: 12, background: "var(--card-bg, rgba(148,163,184,0.05))", border: "1px solid rgba(148,163,184,0.22)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: "0.78em", fontWeight: 800, letterSpacing: ".04em", color: "var(--fg)" }}>
-            <span>{"\u{1F50C}"}</span> SCAN SOURCES
-            <span style={{ fontWeight: 600, color: "var(--muted)" }}>· live integration status</span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {d.sources.map((s) => {
-              const state = s.active ? "active" : s.available ? "available" : "off";
-              const dot = state === "active" ? "#16a34a" : state === "available" ? "#3b82f6" : "#94a3b8";
-              const statusText = s.active ? "Active" : s.available ? "Available" : "Not installed";
-              return (
-                <div key={s.id} title={`${s.name} — ${s.vendor}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "var(--bg, rgba(255,255,255,0.6))", border: `1px solid ${s.active ? "rgba(22,163,74,0.4)" : "rgba(148,163,184,0.25)"}`, fontSize: "0.78em", opacity: state === "off" ? 0.62 : 1, boxShadow: s.active ? "0 1px 3px rgba(22,163,74,0.12)" : "none" }}>
-                  <span style={{ width: 9, height: 9, borderRadius: "50%", background: dot, boxShadow: s.active ? "0 0 0 3px rgba(22,163,74,0.16)" : "none" }} />
-                  <span style={{ fontWeight: 700, color: "var(--fg)" }}>{s.name}</span>
-                  <span style={{ padding: "1px 6px", borderRadius: 5, fontSize: "0.84em", fontWeight: 700, color: s.live ? "#0369a1" : "#b45309", background: s.live ? "rgba(3,105,161,0.1)" : "rgba(245,158,11,0.12)" }}>{s.live ? "Live CVE" : "Static"}</span>
-                  <span style={{ color: state === "active" ? "#16a34a" : "var(--muted)", fontWeight: state === "active" ? 700 : 500 }}>
-                    {statusText}{s.available && s.reportCount != null ? ` · ${s.reportCount} report${s.reportCount !== 1 ? "s" : ""}` : ""}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ marginTop: 8, fontSize: "0.72em", color: "var(--muted)" }}>
-            🟢 Active = driving results now · 🔵 Available = installed, not selected · ⚪ Not installed
-          </div>
-          {d.coverage && (d.coverage.live > 0 || d.coverage.hygiene > 0) && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(148,163,184,0.3)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, fontSize: "0.78em" }}>
-              <span style={{ fontWeight: 800, letterSpacing: ".03em", color: "var(--fg)" }}>COVERAGE</span>
-              <span><strong style={{ color: "#0369a1" }}>{d.coverage.live}</strong> live-scanned (real CVEs)</span>
-              <span style={{ color: "var(--muted)" }}>·</span>
-              <span><strong style={{ color: "#b45309" }}>{d.coverage.hygiene}</strong> hygiene-only (awaiting scan)</span>
-              <span style={{ color: "var(--muted)" }}>·</span>
-              <span style={{ color: "var(--muted)" }}>{d.coverage.total} total images</span>
-              {d.coverage.hygiene > 0 && d.coverage.live > 0 && (
-                <span style={{ fontSize: "0.92em", color: "var(--muted)", fontStyle: "italic" }}>— live CVEs fill in as the scanner finishes each image</span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Fleet coverage — appears only when multi-cluster aggregation is on.
-          Single-cluster view is unchanged (d.fleet is absent). */}
-      {d.fleet?.enabled && (
-        <div style={{ margin: "12px 0 6px", padding: "12px 14px", borderRadius: 12, background: "linear-gradient(180deg, rgba(59,130,246,0.06), rgba(59,130,246,0.02))", border: "1px solid rgba(59,130,246,0.22)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: "1.05em" }}>🛰️</span>
-            <span style={{ fontSize: "0.8em", fontWeight: 800, letterSpacing: ".04em", color: "var(--fg)" }}>FLEET COVERAGE</span>
-            <span style={{ fontSize: "0.76em", fontWeight: 600, color: "var(--muted)" }}>
-              {d.fleet.totalClusters} cluster{d.fleet.totalClusters !== 1 ? "s" : ""} · {d.totalImages} images · {d.critical + d.high} high-risk
-            </span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {(d.fleet.clusters || []).map((c) => (
-              <div key={c.cluster} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 9, background: "var(--card-bg, rgba(255,255,255,0.5))", border: "1px solid rgba(148,163,184,0.28)", fontSize: "0.78em", boxShadow: "0 1px 2px rgba(0,0,0,0.03)" }}>
-                <span style={{ width: 19, height: 19, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "0.7em", color: "#fff", background: gradeColor(c.grade) }}>{c.grade}</span>
-                <span style={{ fontWeight: 700, color: "var(--fg)" }}>{c.cluster}</span>
-                <span style={{ color: "var(--muted)" }}>{c.images} img</span>
-                {c.critical > 0 && <span style={{ color: "#dc2626", fontWeight: 800 }}>{c.critical}C</span>}
-                {c.high > 0 && <span style={{ color: "#f59e0b", fontWeight: 800 }}>{c.high}H</span>}
-                <span style={{ padding: "1px 6px", borderRadius: 5, fontSize: "0.86em", fontWeight: 700, color: c.scannerType === "static-analysis" ? "#b45309" : "#0369a1", background: c.scannerType === "static-analysis" ? "rgba(245,158,11,0.14)" : "rgba(3,105,161,0.12)" }}>{sourceShort(c.scannerType)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(d.topImages || []).length > 0 && (() => {
-        const visibleImages = (d.topImages || []).filter((img) => imgMatchesFilter(img, sevFilter)).slice(0, 12);
-        return (
-        <div className="ivs-images">
-          <div className="ivs-images-title">
-            Top Vulnerable Images
-            <span className="ivs-images-subtitle">
-              {sevFilter ? `${visibleImages.length} image(s) with ${sevFilter} findings` : "click a row for CVE detail & remediation"}
-            </span>
-          </div>
-          <div className="ivs-img-table-head">
-            <span>Image</span>
-            <span>Namespace</span>
-            <span className="ivs-col-c">Severity</span>
-            <span className="ivs-col-c">Max CVSS</span>
-            <span className="ivs-col-c">Fixable</span>
-            <span className="ivs-col-c">Age</span>
-          </div>
-          <div className="ivs-images-list">
-            {visibleImages.length === 0 && (
-              <div className="ivs-muted" style={{ padding: "10px 4px" }}>No images match this filter.</div>
-            )}
-            {visibleImages.map((img, i) => {
-              const ageChip = img.age?.label || img.age?.status || (typeof img.age === "string" ? img.age : null);
-              return (
-              <div key={i} className={"ivs-img-row" + (expandedImg === i ? " expanded" : "")}>
-                <div className="ivs-img-summary2" onClick={() => setExpandedImg(expandedImg === i ? null : i)}>
-                  <span className="ivs-img-name" title={img.fullImage || img.image}>
-                    <span className="ivs-img-chevron">{expandedImg === i ? "▾" : "▸"}</span>
-                    {img.source && (
-                      <span title={img.source === "static" ? "Hygiene checks only — awaiting a live CVE scan" : "Live CVE scan result"} style={{ marginRight: 6, padding: "1px 6px", borderRadius: 5, fontSize: "0.64em", fontWeight: 800, letterSpacing: ".02em", color: img.source === "static" ? "#b45309" : "#0369a1", background: img.source === "static" ? "rgba(245,158,11,0.13)" : "rgba(3,105,161,0.13)", border: `1px solid ${img.source === "static" ? "rgba(245,158,11,0.3)" : "rgba(3,105,161,0.3)"}`, verticalAlign: "middle" }}>
-                        {img.source === "trivy" ? "Trivy" : img.source === "clair" ? "Clair" : "Static"}
-                      </span>
-                    )}
-                    {img.cluster && (
-                      <span title={`Cluster: ${img.cluster}`} style={{ marginRight: 6, padding: "1px 7px", borderRadius: 5, fontSize: "0.68em", fontWeight: 800, letterSpacing: ".02em", color: "#1d4ed8", background: "rgba(59,130,246,0.14)", border: "1px solid rgba(59,130,246,0.28)", verticalAlign: "middle" }}>
-                        {"\u{1F5C4}"} {img.cluster}
-                      </span>
-                    )}
-                    {img.image}
-                    {(img.exploitable || 0) > 0 && <span className="ivs-img-kev" title="Contains CVEs listed in the CISA Known Exploited Vulnerabilities catalog">KEV</span>}
-                  </span>
-                  <span className="ivs-img-ns">{img.namespace || "—"}</span>
-                  <span className="ivs-img-sevs ivs-col-c">
-                    {img.critical > 0 && <span className="ivs-img-sev crit" title={`${img.critical} Critical`}>{img.critical} C</span>}
-                    {img.high > 0 && <span className="ivs-img-sev high" title={`${img.high} High`}>{img.high} H</span>}
-                    {img.medium > 0 && <span className="ivs-img-sev med" title={`${img.medium} Medium`}>{img.medium} M</span>}
-                    {img.low > 0 && <span className="ivs-img-sev low" title={`${img.low} Low`}>{img.low} L</span>}
-                    {!img.critical && !img.high && !img.medium && !img.low && <span className="ivs-muted">—</span>}
-                  </span>
-                  <span className="ivs-img-cvss ivs-col-c" style={{ color: cvssColor(img.maxCVSS || 0) }}>
-                    {(img.maxCVSS || 0).toFixed(1)}
-                  </span>
-                  <span className="ivs-col-c ivs-img-fixable">{img.fixable || 0}/{img.total || 0}</span>
-                  <span className="ivs-col-c">{ageChip ? <span className="ivs-age-chip">{ageChip}</span> : <span className="ivs-muted">—</span>}</span>
-                </div>
-                {expandedImg === i && (() => {
-                  const shownVulns = filterVulns(img.vulnerabilities || [], sevFilter).slice(0, 20);
-                  const fixKey = img.fullImage || img.image;
-                  const fixState = aiFix[fixKey] || {};
-                  return (
-                  <div className="ivs-img-detail">
-                    {/* Quick heuristic remediation + AI Fix action */}
-                    <div className="ivs-img-reco">
-                      <span className="ivs-img-reco-icon">✨</span>
-                      <span style={{ flex: 1 }}>
-                        <strong>Remediation:</strong> {img.recommendedFix || "Review CVEs below and upgrade to a patched image."}
-                      </span>
-                      <button
-                        type="button"
-                        className="ivs-aifix-btn"
-                        onClick={(e) => { e.stopPropagation(); handleAiFix(img); }}
-                        disabled={fixState.loading}
-                      >
-                        {fixState.loading ? "Generating…" : "🪄 AI Fix"}
-                      </button>
-                    </div>
-
-                    {/* AI-generated remediation plan */}
-                    {fixState.data && (
-                      <div className="ivs-aifix-panel">
-                        <div className="ivs-aifix-head">
-                          <span className="ivs-aifix-badge">AI Remediation Plan</span>
-                          <span className="ivs-aifix-meta">
-                            fixes {fixState.data.fixesCount ?? "?"}/{fixState.data.totalCount ?? (img.vulnerabilities || []).length} · {fixState.data.provider || "AI"}
-                          </span>
-                        </div>
-                        {fixState.data.rationale && <p className="ivs-aifix-rationale">{fixState.data.rationale}</p>}
-                        {fixState.data.recommendedImage && (
-                          <div className="ivs-aifix-row">
-                            <span className="ivs-aifix-lbl">Use image</span>
-                            <code className="ivs-ver-new">{fixState.data.recommendedImage}</code>
-                          </div>
-                        )}
-                        {fixState.data.imageCheck && (
-                          <div className="ivs-rem-line" style={{ color: fixState.data.imageCheck.exists === true ? "var(--ok)" : "var(--warn)" }}>
-                            {fixState.data.imageCheck.exists === true
-                              ? "✓ Tag exists in its registry"
-                              : fixState.data.imageCheck.exists === false
-                                ? `✕ AI suggested ${fixState.data.aiSuggestedImage || "an image"} — ${fixState.data.imageCheck.reason}`
-                                : `⚠ Tag not verified — ${fixState.data.imageCheck.reason}`}
-                          </div>
-                        )}
-                        {fixState.data.citations?.unknown?.length > 0 && (
-                          <div className="ivs-rem-line" style={{ color: "var(--warn)" }}>⚠ Cites CVEs not in this image's scan: {fixState.data.citations.unknown.join(", ")}</div>
-                        )}
-                        {fixState.data.command && (
-                          <div className="ivs-aifix-cmd">
-                            <code>{fixState.data.command}</code>
-                            <button type="button" className="ivs-aifix-copy" onClick={(e) => { e.stopPropagation(); copyCmd(fixState.data.command); }}>Copy</button>
-                          </div>
-                        )}
-                        {Array.isArray(fixState.data.steps) && fixState.data.steps.length > 0 && (
-                          <ol className="ivs-aifix-steps">
-                            {fixState.data.steps.map((st, si) => <li key={si}>{st}</li>)}
-                          </ol>
-                        )}
-                        {fixState.data.dockerfilePatch && (
-                          <pre className="ivs-aifix-docker">{fixState.data.dockerfilePatch}</pre>
-                        )}
-
-                        {/* End-to-end remediation: Dry Run → Apply & Raise CR */}
-                        {(() => {
-                          const rem = remediate[fixKey] || {};
-                          const concreteTarget = fixState.data.recommendedImage && !/[<>]/.test(fixState.data.recommendedImage);
-                          const busy = rem.phase === "dry-running" || rem.phase === "applying";
-                          const roleBlocked = rem.result?.canApply === false;
-                          return (
-                            <>
-                              <div className="ivs-remediate-actions">
-                                <button type="button" className="ivs-rem-dry" disabled={busy || !concreteTarget}
-                                  onClick={(e) => { e.stopPropagation(); runRemediation(img, true); }}>
-                                  {rem.phase === "dry-running" ? "Previewing…" : "▷ Dry Run"}
-                                </button>
-                                <button type="button" className="ivs-rem-apply" disabled={busy || !concreteTarget || roleBlocked}
-                                  title={roleBlocked ? "Applying needs the Operator or Admin role" : undefined}
-                                  onClick={(e) => { e.stopPropagation(); if (window.confirm(`Apply fix to ${img.image}?\n\nThis patches the deployment image on the cluster and raises a ServiceNow Change Request.`)) runRemediation(img, false); }}>
-                                  {rem.phase === "applying" ? "Applying…" : "▶ Apply & Raise CR"}
-                                </button>
-                                {!concreteTarget && <span className="ivs-rem-hint">No verified replacement tag — not auto-appliable</span>}
-                                {roleBlocked && <span className="ivs-rem-hint">Your role is read-only — an Operator or Admin must apply</span>}
-                              </div>
-
-                              {/* Dry run preview */}
-                              {rem.phase === "dry-done" && rem.result && (
-                                <div className="ivs-rem-result dry">
-                                  <div className="ivs-rem-result-head">▷ Dry Run — preview only, nothing changed</div>
-                                  <div className="ivs-rem-line">{rem.result.target} · container <code>{rem.result.container}</code></div>
-                                  <div className="ivs-rem-line"><code className="ivs-ver-old">{rem.result.oldImage}</code> → <code className="ivs-ver-new">{rem.result.newImage}</code></div>
-                                  {rem.result.willRaiseChangeRequest && <div className="ivs-rem-line">✓ Will raise a ServiceNow Change Request on Apply</div>}
-                                  {rem.result.willRaiseIncident && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>⚠ In CISA KEV ({(rem.result.kevIds || []).join(", ")}) — will also raise an Incident</div>}
-                                  {rem.result.imageCheck && rem.result.imageCheck.exists !== true && <div className="ivs-rem-line" style={{ color: "var(--warn)" }}>⚠ Target tag not verified — {rem.result.imageCheck.reason}. Apply will ask you to confirm.</div>}
-                                  {rem.result.imageCheck?.exists === true && <div className="ivs-rem-line">✓ Target tag exists in its registry</div>}
-                                </div>
-                              )}
-
-                              {/* Applied result */}
-                              {rem.phase === "applied" && rem.result && (
-                                <div className="ivs-rem-result applied">
-                                  <div className="ivs-rem-result-head ok">✓ Applied — image patched, rollout triggered</div>
-                                  <div className="ivs-rem-line"><code className="ivs-ver-old">{rem.result.oldImage}</code> → <code className="ivs-ver-new">{rem.result.newImage}</code></div>
-                                  {rem.result.changeRequest?.number && <div className="ivs-rem-line">📋 Change Request: <strong>{rem.result.changeRequest.number}</strong></div>}
-                                  {rem.result.incident?.number && <div className="ivs-rem-line" style={{ color: "#dc2626" }}>🚨 Incident: <strong>{rem.result.incident.number}</strong></div>}
-                                  <div className="ivs-rem-line">
-                                    Findings: {rem.result.before?.high || 0}H/{rem.result.before?.medium || 0}M →{" "}
-                                    {rem.result.after?.pending ? <em>re-scan pending</em> : `${rem.result.after?.high || 0}H/${rem.result.after?.medium || 0}M`}
-                                  </div>
-                                  <div className="ivs-rem-line ivs-muted">Backout: <code>{rem.result.backoutCommand}</code></div>
-                                </div>
-                              )}
-                              {rem.phase === "failed" && <div className="ivs-aifix-err">Remediation failed: {rem.error}</div>}
-                            </>
-                          );
-                        })()}
-                      </div>
-                    )}
-                    {fixState.error && <div className="ivs-aifix-err">AI fix failed: {fixState.error}</div>}
-                    {shownVulns.length > 0 ? (
-                      <table className="ivs-vuln-table">
-                        <thead>
-                          <tr><th>CVSS</th><th>Severity</th><th>CVE</th><th>Package</th><th>Installed → Fixed</th></tr>
-                        </thead>
-                        <tbody>
-                          {shownVulns.map((v, vi) => (
-                            <tr key={vi} className={v.exploitable ? "ivs-vuln-kev" : ""}>
-                              <td style={{ color: cvssColor(v.cvss || 0), fontWeight: 700 }}
-                                title={v.cvssEstimated ? "No published CVSS score — estimated from severity" : undefined}>
-                                {v.cvssEstimated ? "~" : ""}{(v.cvss || 0).toFixed(1)}
-                              </td>
-                              <td>
-                                <span className={"ivs-sev-pill " + (v.severity || "").toLowerCase()}>{v.severity}</span>
-                                {v.kev && <span className="ivs-vuln-kev-tag" title="Listed in the CISA Known Exploited Vulnerabilities catalog">KEV</span>}
-                              </td>
-                              <td className="ivs-cve-id">
-                                {v.link ? <a href={v.link} target="_blank" rel="noreferrer">{v.id}</a> : v.id}
-                              </td>
-                              <td>{v.package || "—"}</td>
-                              <td>
-                                {v.version ? <code className="ivs-ver-old">{v.version}</code> : <span className="ivs-muted">—</span>}
-                                {v.fix ? <> → <code className="ivs-ver-new">{v.fix}</code></> : <span className="ivs-muted"> (no fix)</span>}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="ivs-muted" style={{ padding: "8px 4px" }}>
-                        {sevFilter ? `No ${sevFilter} CVEs in this image.` : "No detailed CVE data for this image."}
-                      </div>
-                    )}
-                  </div>
-                  );
-                })()}
-              </div>
-            );})}
-          </div>
-        </div>
-      );})()}
-
-      {/* AI Security Analysis */}
-      {aiLoading && (
-        <div className="ivs-ai-loading">
-          <div className="ivs-ai-spinner" />
-          <span>AI is analyzing vulnerabilities against NIST NVD, CIS, OWASP benchmarks…</span>
-        </div>
-      )}
-
-      {aiFindings && aiFindings.length > 0 && (
-        <div className="ivs-ai-panel">
-          <div className="ivs-ai-header">
-            <div className="ivs-ai-header-left">
-              <span className="ivs-ai-icon">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2"><path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.58-3.25 3.93L12 22l-.75-12.07A4.001 4.001 0 0 1 12 2z"/><circle cx="12" cy="6" r="1" fill="#8b5cf6"/><path d="M5 10l2 2M19 10l-2 2M5 18h3M16 18h3"/></svg>
-              </span>
-              <h4>AI Security Analysis</h4>
-              <span className="ivs-ai-count">{aiFindings.length} findings</span>
-            </div>
-            {aiProvider && <span className="ivs-ai-provider">{aiProvider}</span>}
-          </div>
-          <div className="ivs-ai-findings">
-            {aiFindings.map((f, i) => (
-              <div key={i} className={"ivs-ai-finding" + (expandedAi === i ? " expanded" : "")} style={{ "--ai-sev": sevColor(f.severity) }}>
-                <div className="ivs-ai-finding-header" onClick={() => setExpandedAi(expandedAi === i ? null : i)}>
-                  <span className="ivs-ai-sev-dot" />
-                  <span className="ivs-ai-fw-badge">{frameworkIcon(f.framework)}</span>
-                  <div className="ivs-ai-finding-title">
-                    <div className="ivs-ai-title-text">{f.title}</div>
-                    <div className="ivs-ai-title-meta">
-                      <span className={"ivs-ai-sev-pill " + f.severity}>{f.severity}</span>
-                      {f.category && <span className="ivs-ai-cat">{f.category}</span>}
-                      {f.citations?.unknown?.length > 0
-                        ? <span className="ivs-ai-conf" style={{ color: "var(--warn)", fontStyle: "normal" }} title={`Not found in this scan: ${f.citations.unknown.join(", ")}`}>⚠ {f.citations.unknown.length} CVE not in scan</span>
-                        : f.citations?.verified?.length > 0
-                          ? <span className="ivs-ai-conf" title={`Every CVE cited is in this scan: ${f.citations.verified.join(", ")}`}>✓ {f.citations.verified.length} CVE in scan</span>
-                          : null}
-                    </div>
-                  </div>
-                  <span className="ivs-ai-chevron">{expandedAi === i ? "▲" : "▼"}</span>
-                </div>
-                {expandedAi === i && (
-                  <div className="ivs-ai-finding-body">
-                    {f.evidence && <div className="ivs-ai-section"><span className="ivs-ai-lbl">Evidence</span><p>{f.evidence}</p></div>}
-                    {f.impact && <div className="ivs-ai-section"><span className="ivs-ai-lbl">Impact</span><p>{f.impact}</p></div>}
-                    {f.action && <div className="ivs-ai-section ivs-ai-action"><span className="ivs-ai-lbl">Recommended Action</span><p>{f.action}</p></div>}
-                    {f.framework && <div className="ivs-ai-framework-tag">{f.framework}</div>}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <button className="vc-btn primary sm" onClick={() => setOpen(true)}>Open Vulnerability Center <span aria-hidden="true">→</span></button>
         </div>
       )}
     </div>
   );
-}
 
-function ComplianceBadge({ icon, color, count, total, label }) {
-  const icons = {
-    shield: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
-    doc: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
-    lock: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
-    check: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
-  };
+  if (isLoading) return <div className="vcw">{head}<div className="vcw-state"><span className="vcw-skel" /><span className="vcw-skel" /><span className="vcw-skel short" /></div></div>;
+  if (isError) return <div className="vcw">{head}<div className="vcw-state err">{String(error?.message)}</div></div>;
+  if (!model) return <div className="vcw">{head}<div className="vcw-state">{data?.message || "Not installed on this cluster"}</div></div>;
+
+  const m = model;
+  const top = m.images.filter((i) => i.priority.tier === "fix-now" || i.priority.tier === "fix-soon").slice(0, 5);
+  const list = top.length ? top : m.images.slice(0, 5);
+  const engine = m.coverage.engine === "trivy-operator" ? "Trivy Operator" : m.coverage.engine === "quay-cso" ? "Quay / Clair" : null;
+
   return (
-    <div className="ivs-badge" style={{ "--badge-color": color }}>
-      {icons[icon]}
-      <span className="ivs-badge-count">{count}/{total}</span>
-      <span>{label}</span>
+    <div className="vcw">
+      {head}
+
+      <div className="vcw-kpis">
+        <button className="vcw-kpi hot" style={{ "--k": tierVar("fix-now") }} onClick={() => setOpen(true)} title={`${TIER_LABEL["fix-now"]}: known exploited, or a fixable Critical that is exposed or very likely to be exploited`}>
+          <span>Fix now</span><b>{m.tiers["fix-now"] || 0}</b><em>images</em>
+        </button>
+        <div className="vcw-kpi" style={{ "--k": "var(--vc-crit)" }}><span>Known exploited</span><b>{m.kevCves}</b><em>CVEs in CISA KEV</em></div>
+        <div className="vcw-kpi"><span>Exposed</span><b>{m.runtimeKnown ? m.exposedImages : "—"}</b><em>{m.runtimeKnown ? "images reachable from outside" : "runtime unknown"}</em></div>
+        <div className="vcw-kpi" style={m.coverage.pct < 50 ? { "--k": "var(--vc-high)" } : undefined}><span>Coverage</span><b>{m.coverage.pct}%</b><em>{m.coverage.live}/{m.coverage.total} live-scanned</em></div>
+      </div>
+
+      <div className="vcw-mid">
+        <div className="vcw-funnel">
+          <div className="vcw-label">From every CVE to the few that matter</div>
+          <Funnel steps={m.funnel} compact />
+        </div>
+        <div className="vcw-sev">
+          <div className="vcw-label">All findings</div>
+          <SevBar c={m.sev.critical} h={m.sev.high} m={m.sev.medium} l={m.sev.low} width={150} />
+          <div className="vcw-sevkey"><span>Critical</span><span>High</span><span>Medium</span><span>Low</span></div>
+        </div>
+      </div>
+
+      <div className="vcw-list">
+        <div className="vcw-label">{top.length ? "Fix first" : "Highest risk"}<span>{top.length ? "ranked by exploitation, exposure and fix availability" : "no image needs urgent action"}</span></div>
+        {list.map((img) => {
+          const key = img.fullImage || img.image;
+          return (
+            <button key={key + (img.cluster || "")} className="vcw-row" onClick={() => { setFocus(key); setOpen(true); }}>
+              <TierBadge tier={img.priority.tier} size="sm" />
+              <ImageName image={key} cluster={img.cluster} />
+              <FactorChips factors={(img.priority.factors || []).filter((f) => f.key !== "fixable")} max={2} />
+              <SevBar c={img.critical} h={img.high} m={img.medium} l={img.low} width={56} />
+              <span className="vcw-chev" aria-hidden="true">›</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="vcw-foot">
+        <span className={"vcw-dot" + (engine ? " live" : "")} />
+        {engine ? <><b>{engine}</b> CVE data</> : <b>Hygiene rules only — no CVE scanner detected</b>}
+        <span className="vcw-sep">·</span>KEV {m.kev?.status === "live" ? <b>v{m.kev.catalogVersion}</b> : <span className="vc-warn">{m.kev?.status || "pending"}</span>}
+        <span className="vcw-sep">·</span>EPSS {m.epss?.status === "live" ? <b>live</b> : <span className="vc-warn">{m.epss?.status || "n/a"}</span>}
+        <span className="vcw-sep">·</span>scanned {relTime(m.raw.timestamp)}
+      </div>
+
+      <VulnerabilityCenter open={open} onClose={close} model={m} cluster={cluster} refetch={refetch} focusImage={focus} onFocusConsumed={clearFocus} />
     </div>
   );
-}
-
-function relTime(iso) {
-  if (!iso) return "--";
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
 }

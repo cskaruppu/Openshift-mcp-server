@@ -87,6 +87,9 @@ import { handleDashboardAPI, handleLLMSettingsGet, handleLLMSettingsPost, handle
 import { callLLM, llmEnabled } from "./services/llm.js";
 import { generatePreAssessmentReport, generatePostAssessmentReport, generateReportHTML } from "./services/upgrade-report.js";
 import { getKevSet, kevStatus } from "./services/kev-feed.js";
+import { getEpssScores, epssStatus } from "./services/epss-feed.js";
+import { collectRuntimeContext } from "./services/vuln-context.js";
+import { enrichVuln, prioritizeImage, compareVulns, tierRank, aggregateCves, buildFunnel, TIERS } from "./services/vuln-priority.js";
 import { handleChatAPI, handleExecuteAPI, handleChatCompareAPI, handleChatInvestigateAPI, handleChatRunbookAPI, handleFeedbackAPI, handleFeedbackStatsAPI, handleRiskAnalysisAPI, handleImageVulnAnalysisAPI, handleImageRemediationAPI, handleImageRemediateAPI, handleOptimizationAnalysisAPI, handleComplianceImpactAPI, handleGenerateManifestAPI, compileSOPPlan, handleSOPExecuteAPI, handleSOPRollbackAPI, trackSubmittedCR, handleFleetChatAPI, updateClusterDigest } from "./services/chat-api.js";
 import { cisCheckManifests, scanManifestImages } from "./services/manifest-scan.js";
 // The one DR readiness scorer, shared with the MCP tool, the dashboard widget
@@ -9005,6 +9008,47 @@ spec:
         const KEV_SET = await getKevSet();
         const isExploitable = (v) => KEV_SET.has((v.id || "").toUpperCase());
 
+        // Risk-based prioritisation (services/vuln-priority.js): KEV + EPSS +
+        // fix availability + where the image runs. Deterministic — no AI.
+        // EPSS is fetched in bounded batches; ask for Critical/High first so a
+        // very large cluster fills the important scores on the first scan.
+        const _sevR = { critical: 0, high: 1, medium: 2, low: 3 };
+        const liveVulns = [];
+        for (const r of scan.results) if (r.source !== "static") for (const v of (r.vulnerabilities || [])) liveVulns.push(v);
+        liveVulns.sort((a, b) => (_sevR[a.severity] ?? 4) - (_sevR[b.severity] ?? 4));
+        const EPSS = await getEpssScores(liveVulns.map(v => v.id)).catch(() => new Map());
+        let runtimeCtx = { available: false, lookup: () => null };
+        try { runtimeCtx = await collectRuntimeContext(); } catch { /* no pod access */ }
+        for (const r of scan.results) {
+          r.vulnerabilities = (r.vulnerabilities || []).map(v => enrichVuln(v, { kev: KEV_SET, epss: EPSS })).sort(compareVulns);
+          r.runtime = runtimeCtx.available ? runtimeCtx.lookup(r.image) : null;
+          r.priority = prioritizeImage(r, r.runtime);
+        }
+        const prioritized = scan.results.slice().sort((a, b) => tierRank(a.priority.tier) - tierRank(b.priority.tier) || b.priority.score - a.priority.score);
+        const cveAgg = aggregateCves(prioritized);
+        const tierCounts = Object.fromEntries(TIERS.map(t => [t, prioritized.filter(r => r.priority.tier === t).length]));
+        const nsCoverage = {};
+        for (const r of prioritized) {
+          const ns = r.namespace || "—";
+          nsCoverage[ns] = nsCoverage[ns] || { namespace: ns, images: 0, live: 0, fixNow: 0, critical: 0, high: 0 };
+          const n = nsCoverage[ns];
+          n.images++; if (r.source !== "static") n.live++;
+          if (r.priority.tier === "fix-now") n.fixNow++;
+          n.critical += r.critical || 0; n.high += r.high || 0;
+        }
+        const prioritization = {
+          tiers: tierCounts,
+          funnel: buildFunnel(cveAgg.rows, { runtimeKnown: runtimeCtx.available }),
+          runtimeKnown: runtimeCtx.available,
+          runningImages: prioritized.filter(r => r.priority.running).length,
+          exposedImages: prioritized.filter(r => r.priority.exposed).length,
+          privilegedImages: prioritized.filter(r => r.priority.privileged).length,
+          uniqueCves: cveAgg.total,
+          kevCves: cveAgg.rows.filter(c => c.kev).length,
+          epss: epssStatus(),
+          namespaces: Object.values(nsCoverage).sort((a, b) => b.fixNow - a.fixNow || b.critical - a.critical).slice(0, 50),
+        };
+
         // Count actively-exploitable findings across all scanned images
         let exploitableCount = 0;
         for (const r of scan.results) {
@@ -9050,7 +9094,9 @@ spec:
           riskScore, grade, scoreReason,
           compliance: scan.compliance || { avgScore: 0, signed: 0, sbom: 0, pinned: 0, trusted: 0, total: 0 },
           ageSummary: scan.ageSummary || { fresh: 0, aging: 0, stale: 0, current: 0, unknown: 0 },
-          topImages: scan.results.slice(0, 30).map(r => ({
+          prioritization,
+          cves: cveAgg.rows,
+          topImages: prioritized.slice(0, 100).map(r => ({
             image: r.image.length > 60 ? "..." + r.image.slice(-57) : r.image,
             fullImage: r.image,
             namespace: r.namespace,
@@ -9061,15 +9107,20 @@ spec:
             exploitable: (r.vulnerabilities || []).filter(isExploitable).length,
             recommendedFix: recommendFix(r),
             age: r.age || null,
+            workload: r.workload || null,
+            priority: r.priority,
+            runtime: r.runtime ? { running: r.runtime.running, podCount: r.runtime.podCount, namespaces: r.runtime.namespaces, exposure: r.runtime.exposure, privileged: r.runtime.privileged, root: r.runtime.root, pods: r.runtime.pods.slice(0, 5) } : null,
             pods: r.pods ? r.pods.slice(0, 5).map(p => ({ pod: p.pod, namespace: p.namespace, container: p.container })) : [],
             complianceBadges: r.compliance?.badges || [],
             complianceScore: r.compliance?.score || 0,
             complianceIssues: r.compliance?.issues || [],
-            vulnerabilities: (r.vulnerabilities || []).slice(0, 20).map(v => ({
+            vulnerabilities: (r.vulnerabilities || []).slice(0, 25).map(v => ({
               id: v.id, severity: v.severity, package: v.package || "", version: v.version || "",
               fix: v.fixedBy, cvss: v.cvss || 0, link: v.link || null,
               exploitable: isExploitable(v), kev: isExploitable(v),
               cvssEstimated: !!v.cvssEstimated,
+              epss: v.epss ?? null, epssPercentile: v.epssPercentile ?? null,
+              publishedDate: v.publishedDate || null,
               description: (v.description || "").slice(0, 150),
             })),
           })),
