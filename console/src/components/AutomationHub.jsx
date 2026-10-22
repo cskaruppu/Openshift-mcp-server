@@ -72,12 +72,6 @@ const ADVANCED_ANALYSIS = false;
 
 /** Discrete, readable stops. 90 for a dense laptop review, 150 for a room. */
 const ZOOM_STEPS = [90, 100, 110, 125, 150];
-const zoomBtn = {
-  padding: "6px 11px", border: "none", background: "transparent", cursor: "pointer",
-  fontSize: "0.78rem", fontWeight: 700, fontFamily: "inherit", color: "var(--muted,#5a6373)",
-  lineHeight: 1.5, display: "grid", placeItems: "center",
-};
-
 function clusterUrl(path, cluster) {
   if (!cluster || cluster === "local") return path;
   return `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(cluster)}`;
@@ -116,6 +110,13 @@ export function AutomationHub({ open, onClose }) {
     try { return localStorage.getItem("ah-presenting") === "1"; } catch { return false; }
   });
   const [showNotes, setShowNotes] = useState(false);
+  // Minimised is not closed. The panel stays MOUNTED and is only hidden, so
+  // the chosen agent, half-filled forms and an analysis still running all
+  // survive a trip back to the dashboard. A minimise that unmounted would just
+  // be a second close button.
+  const [minimized, setMinimized] = useState(false);
+  const [viewMenu, setViewMenu] = useState(false);
+  useEffect(() => { if (!open) { setMinimized(false); setViewMenu(false); } }, [open]);
 
   useEffect(() => {
     try {
@@ -125,7 +126,7 @@ export function AutomationHub({ open, onClose }) {
   }, [presenting, zoom]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || minimized) return undefined;
     // Everything here is sized in rem, and rem is relative to <html> — not to a
     // parent — so the scale has to be applied there. Font size rather than CSS
     // `zoom` or a transform: font size REFLOWS, so a table still fills the
@@ -135,6 +136,7 @@ export function AutomationHub({ open, onClose }) {
     const previous = document.documentElement.style.fontSize;
     document.documentElement.style.fontSize = `${(16 * zoom) / 100}px`;
     const onKey = (e) => {
+      if (e.key === "Escape" && viewMenu) { e.stopPropagation(); setViewMenu(false); return; }
       if (e.key === "Escape" && presenting) { e.stopPropagation(); setPresenting(false); return; }
       // The shortcuts every other tool uses for this, so nobody has to learn one.
       if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) { e.preventDefault(); stepZoom(1); }
@@ -146,7 +148,7 @@ export function AutomationHub({ open, onClose }) {
       document.documentElement.style.fontSize = previous;
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [open, zoom, presenting]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, zoom, presenting, minimized, viewMenu]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const stepZoom = (dir) => setZoom((z) => {
     const i = ZOOM_STEPS.indexOf(z);
@@ -166,10 +168,19 @@ export function AutomationHub({ open, onClose }) {
   if (!open) return null;
 
   return (
+    <>
+    {minimized && (
+      <button className="ah-chip" onClick={() => setMinimized(false)}
+        title="Restore the Automation Hub" aria-label="Restore the Automation Hub">
+        <img src="/brand/tcs-logo-white.png" alt="" width="1000" height="238" />
+        <span>Automation Hub</span>
+        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" fill="none" stroke="currentColor" strokeWidth="1.3"/></svg>
+      </button>
+    )}
     <div onClick={presenting ? undefined : onClose} style={{ position: "fixed", inset: 0,
       background: presenting ? "var(--bg,#fff)" : "rgba(10,14,25,0.62)",
       backdropFilter: presenting ? "none" : "blur(7px)", WebkitBackdropFilter: presenting ? "none" : "blur(7px)",
-      zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center",
+      zIndex: 1000, display: minimized ? "none" : "flex", alignItems: "center", justifyContent: "center",
       padding: presenting ? 0 : "24px", animation: "ah-fade .16s ease" }}>
       <style>{`@keyframes ah-fade{from{opacity:0}to{opacity:1}}@keyframes ah-pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
         /* Explanatory prose is essential in the printed pack and noise on a
@@ -187,7 +198,7 @@ export function AutomationHub({ open, onClose }) {
       {/* ah-ink re-steps the secondary text token for this subtree only — see
           styles.css. Everything inside the hub reads var(--text2), so one
           class fixes the whole agent rather than sixty inline colours. */}
-      <div onClick={(e) => e.stopPropagation()} className={`ah-ink${presenting && !showNotes ? " ah-terse" : ""}`}
+      <div onClick={(e) => { e.stopPropagation(); if (viewMenu) setViewMenu(false); }} className={`ah-ink${presenting && !showNotes ? " ah-terse" : ""}`}
         style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1560px, 97vw)" : "min(1040px, 96vw)",
         height: presenting ? "100vh" : "min(1000px, 94vh)", minHeight: presenting ? 0 : 560,
         background: "var(--bg, #fff)", border: presenting ? "none" : "1px solid var(--border, #e4e8f1)",
@@ -195,7 +206,8 @@ export function AutomationHub({ open, onClose }) {
         display: "flex", flexDirection: "column", overflow: "hidden",
         animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
-        <div className="ah-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px" }}>
+        <div className="ah-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 10px 14px 22px" }}
+          onDoubleClick={(e) => { if (!e.target.closest("button")) setPresenting((v) => !v); }}>
           <div style={{ flex: 1 }}>
             {/* Product lockup, then the module — the pattern the app header
                 already sets, so the two agree rather than each inventing a
@@ -229,36 +241,53 @@ export function AutomationHub({ open, onClose }) {
               </span>
             </div>
           </div>
-          {presenting && (
-            <button onClick={() => setShowNotes((v) => !v)} title="Show or hide the explanatory notes"
-              style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)",
-                fontSize: "0.78rem", fontWeight: 700, cursor: "pointer", color: "var(--muted,#5a6373)", fontFamily: "inherit" }}>
-              {showNotes ? "Hide notes" : "ⓘ Show notes"}
+          {/* Window controls, in the order and shape every desktop uses —
+              minimise, maximise/restore, close — so they need no reading.
+              Zoom and notes are view settings rather than window actions, so
+              they live behind one View menu beside them instead of competing
+              with them on the bar. The menu button shows the zoom whenever it
+              is not 100%, so moving it out of sight does not hide its state. */}
+          <div className="ah-view" onClick={(e) => e.stopPropagation()}>
+            <button className={"ah-viewbtn" + (viewMenu ? " on" : "")} onClick={() => setViewMenu((v) => !v)}
+              title="View — zoom and notes" aria-label="View options" aria-expanded={viewMenu} aria-haspopup="menu">
+              {zoom !== 100 && <span className="ah-viewzoom">{zoom}%</span>}
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg>
             </button>
-          )}
-          {/* One segmented control rather than three loose buttons. Grouping
-              the two things that change how this LOOKS, away from the one that
-              closes it, is most of the difference between a tool and a demo. */}
-          <div style={{ display: "inline-flex", alignItems: "stretch", borderRadius: 9, overflow: "hidden",
-            border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)" }}>
-            <button onClick={() => stepZoom(-1)} disabled={zoom <= ZOOM_STEPS[0]}
-              title="Smaller (Ctrl -)" aria-label="Smaller"
-              style={{ ...zoomBtn, opacity: zoom <= ZOOM_STEPS[0] ? 0.38 : 1 }}>−</button>
-            <button onClick={() => setZoom(100)} title="Reset to 100% (Ctrl 0)"
-              style={{ ...zoomBtn, minWidth: 54, fontVariantNumeric: "tabular-nums",
-                borderLeft: "1px solid var(--border,#e4e8f1)", borderRight: "1px solid var(--border,#e4e8f1)",
-                color: zoom === 100 ? "var(--muted,#5a6373)" : "var(--tcs-blue)" }}>{zoom}%</button>
-            <button onClick={() => stepZoom(1)} disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-              title="Larger (Ctrl +)" aria-label="Larger"
-              style={{ ...zoomBtn, opacity: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 0.38 : 1 }}>+</button>
-            <button onClick={() => setPresenting((v) => !v)}
-              title={presenting ? "Leave full screen (Esc)" : "Full screen — hides the dashboard chrome behind this panel"}
-              style={{ ...zoomBtn, minWidth: 38, borderLeft: "1px solid var(--border,#e4e8f1)",
-                background: presenting ? "var(--tcs-blue)" : "transparent", color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
-              {presenting ? "⤡" : "⤢"}
+            {viewMenu && (
+              <div className="ah-viewmenu" role="menu">
+                <div className="ah-viewrow">
+                  <span>Zoom</span>
+                  <div className="ah-zoomseg">
+                    <button onClick={() => stepZoom(-1)} disabled={zoom <= ZOOM_STEPS[0]} aria-label="Smaller" title="Smaller (Ctrl −)">−</button>
+                    <button onClick={() => setZoom(100)} title="Reset to 100% (Ctrl 0)" className="ah-zoomval">{zoom}%</button>
+                    <button onClick={() => stepZoom(1)} disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]} aria-label="Larger" title="Larger (Ctrl +)">+</button>
+                  </div>
+                </div>
+                {presenting && (
+                  <button className="ah-viewitem" role="menuitemcheckbox" aria-checked={showNotes}
+                    onClick={() => setShowNotes((v) => !v)}>
+                    <span className="ah-check">{showNotes ? "✓" : ""}</span>Show explanatory notes
+                  </button>
+                )}
+                <div className="ah-viewhint">Ctrl + / − / 0 · double-click the title bar to maximise</div>
+              </div>
+            )}
+          </div>
+          <div className="ah-winbtns" onClick={(e) => e.stopPropagation()}>
+            <button className="ah-winbtn" onClick={() => { setViewMenu(false); setMinimized(true); }}
+              title="Minimise" aria-label="Minimise">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1"/></svg>
+            </button>
+            <button className="ah-winbtn" onClick={() => setPresenting((v) => !v)}
+              title={presenting ? "Restore down (Esc)" : "Maximise"} aria-label={presenting ? "Restore down" : "Maximise"}>
+              {presenting
+                ? <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+                : <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1"/></svg>}
+            </button>
+            <button className="ah-winbtn close" onClick={onClose} title="Close" aria-label="Close">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" strokeWidth="1"/></svg>
             </button>
           </div>
-          <button onClick={onClose} title="Close" style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontSize: "1.15rem", cursor: "pointer", color: "var(--muted,#5a6373)", lineHeight: 1 }}>×</button>
         </div>
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
@@ -287,6 +316,7 @@ export function AutomationHub({ open, onClose }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
