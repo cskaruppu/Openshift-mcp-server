@@ -9041,3 +9041,93 @@ body.light-theme .lg-error {
 .ah-head .ah-lockup-qual   { color: #9fb6cd; }
 .ah-head .ah-lockup-module { color: #fff; }
 
+/* ============================================================================
+   Agent Registry header — the same bar as the other three
+   ============================================================================
+   It was the page background with a generic graph glyph and an indigo badge.
+   Same dark glass and plated lockup as the cluster picker, the in-cluster
+   header and the Automation Hub now.
+
+   The lens switch, zoom and close are class-styled and read --text, --text2,
+   --border, --card, --bg-alt, --hover and --accent2. Re-stepping those on
+   the bar recolours all of them in both themes without a rule per control —
+   and, scoped to the bar, without touching the registry body, which keeps
+   its own light and dark surfaces. Two selectors because the light-theme
+   rule (.light-theme .ar-modal-header) is more specific than the bare one
+   and would otherwise win. */
+.ar-modal-header,
+.light-theme .ar-modal-header {
+  position: relative; z-index: 2;
+  background: linear-gradient(135deg,
+    rgba(5,7,12,.94) 0%, rgba(10,24,48,.90) 55%, rgba(6,14,30,.95) 100%);
+  border-bottom: 1px solid rgba(47,127,224,.22);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+
+  --text:    #ffffff;
+  --text2:   #c3cad6;
+  --border:  rgba(195,202,214,.22);
+  --card:    rgba(255,255,255,.10);
+  --bg-alt:  rgba(255,255,255,.10);
+  --bg:      rgba(255,255,255,.05);
+  /* the lens switch's container reads --bg2 first. In dark theme it happens
+     to be dark already, which is why it only showed in light — as a white
+     pill on the dark bar. */
+  --bg2:     rgba(255,255,255,.05);
+  --hover:   rgba(47,127,224,.16);
+  --accent2: #87beee;
+}
+.ar-header-left { gap: 12px; }
+.ar-modal-header h2 { font-size: 16px; color: #fff; font-weight: 700; }
+.ar-header-rule {
+  width: 1px; align-self: stretch; min-height: 22px;
+  background: rgba(172,216,252,.45);
+}
+.ar-modal-header .ar-header-badge,
+.light-theme .ar-modal-header .ar-header-badge {
+  background: rgba(47,127,224,.18);
+  color: #a9cff3;
+  border: 1px solid rgba(69,150,239,.30);
+}
+
+/* the plate — restated rather than inherited, as with the hub, because the
+   rules for the other headers are scoped to them */
+.ar-modal-header .tcs-lock {
+  padding: 6px 13px 6px 11px;
+  border-radius: 12px;
+  background:
+    linear-gradient(112deg, rgba(200,232,255,0) 16%,
+                            rgba(200,232,255,.10) 30%,
+                            rgba(200,232,255,0) 46%),
+    linear-gradient(140deg, rgba(190,228,255,.14), rgba(120,170,220,.045));
+  border: 1px solid rgba(152,202,246,.22);
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.28),
+              inset 1px 0 0 rgba(172,216,252,.12),
+              0 6px 18px rgba(0,0,0,.30);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+.ar-modal-header .tcs-lock-rule {
+  background: linear-gradient(180deg,
+    rgba(172,216,252,0), rgba(172,216,252,.52) 20%,
+    rgba(172,216,252,.52) 80%, rgba(172,216,252,0));
+}
+.ar-modal-header .tcs-lock-logo,
+.light-theme .ar-modal-header .tcs-lock-logo {
+  height: 22px; filter: drop-shadow(0 1px 6px rgba(140,190,240,.30));
+}
+.ar-modal-header .tcs-lock-name,
+.light-theme .ar-modal-header .tcs-lock-name {
+  font-size: 14px;
+  background: linear-gradient(104deg, #ffffff 0%, #ffffff 42%, #cfe3f8 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+/* the lens buttons have no light-on-dark active state of their own */
+.ar-modal-header .ar-lens-btn.active { color: #fff; background: var(--tcs-blue-dark); }
+
+/* The registry header carries more than the hub's: lockup, module, badge,
+   lens switch, zoom and close. On a narrow window the badge goes first — it
+   is a description, and everything else is either identity or a control. */
+@media (max-width: 1240px) { .ar-modal-header .ar-header-badge { display: none; } }
+@media (max-width: 1060px) { .ar-modal-header .tcs-lock-name { font-size: 12.5px; } }

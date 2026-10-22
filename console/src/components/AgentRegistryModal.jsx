@@ -1241,12 +1241,18 @@ export function AgentRegistryModal({ open, onClose }) {
       <div className="ar-modal">
         {/* Header */}
         <div className="ar-modal-header">
+          {/* The same lockup as every other header: the product on the glass
+              plate, the module after a rule and outside it. The generic graph
+              glyph that stood here is gone — beside the real mark it was a
+              second, weaker claim to the same job. */}
           <div className="ar-header-left">
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="7" r="3" /><circle cx="5" cy="18" r="2.5" /><circle cx="19" cy="18" r="2.5" />
-              <line x1="12" y1="10" x2="5" y2="15.5" /><line x1="12" y1="10" x2="19" y2="15.5" />
-              <line x1="5" y1="15.5" x2="19" y2="15.5" strokeDasharray="2 2" opacity="0.5" />
-            </svg>
+            <span className="tcs-lock">
+              <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
+                   alt="Tata Consultancy Services" width="1000" height="238" />
+              <span className="tcs-lock-rule" aria-hidden="true" />
+              <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
+            </span>
+            <span className="ar-header-rule" aria-hidden="true" />
             <h2>Agent Registry</h2>
             <span className="ar-header-badge">CENTRALIZED · ALL CLUSTERS</span>
           </div>
