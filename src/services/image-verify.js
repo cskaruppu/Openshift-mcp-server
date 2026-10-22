@@ -57,6 +57,17 @@ export function sameImage(a, b) {
   return x.tag === y.tag;
 }
 
+/**
+ * Same repository and tag, ignoring a digest only one side carries — how a
+ * pod spec (repo:tag) is matched to a scanner report (repo:tag@sha256:…).
+ */
+export function sameRepoTag(a, b) {
+  const x = parseImageRef(a), y = parseImageRef(b);
+  if (!x || !y || x.registry !== y.registry || x.repo !== y.repo) return false;
+  if (x.digest && y.digest && x.digest === y.digest) return true;
+  return !!x.tag && x.tag === y.tag;
+}
+
 const MANIFEST_ACCEPT = [
   "application/vnd.oci.image.index.v1+json",
   "application/vnd.oci.image.manifest.v1+json",

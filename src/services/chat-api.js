@@ -20294,6 +20294,13 @@ export async function handleImageRemediateAPI(req, res) {
     const canApply = checkPermission(req, "write");
 
     if (!namespace || !image) return json(res, 400, { success: false, error: "Missing image or namespace" });
+    // The one-click apply patched production in the same step that raised the
+    // change request, before anyone approved it. Production fixes now go
+    // through the remediation workflow (/api/remediation): gate, PR/MR,
+    // approval, watched rollout. Dry runs still work here.
+    if (!dryRun && process.env.REMEDIATION_LEGACY_APPLY !== "true") {
+      return json(res, 409, { success: false, error: "Direct apply is disabled: open a remediation in the Vulnerability Center — it scans the new image, raises the PR/MR and change request, and rolls out only after approval." });
+    }
     if (!dryRun && !canApply) {
       return json(res, 403, { success: false, error: "Applying a fix patches the cluster and needs the Operator or Admin role. Ask an operator to apply it." });
     }

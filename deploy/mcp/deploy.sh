@@ -513,7 +513,7 @@ fi)
     resources: [persistentvolumeclaims]
     verbs: [patch, update]
   - apiGroups: [apps]
-    resources: [deployments, deployments/scale, statefulsets/scale]
+    resources: [deployments, deployments/scale, statefulsets, statefulsets/scale, daemonsets]
     verbs: [patch, update]
   # CSR approval (node certificate rotation during upgrades)
   - apiGroups: [certificates.k8s.io]
@@ -532,6 +532,34 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: agentic-ai-agent-reader
+subjects:
+  - kind: ServiceAccount
+    name: agentic-ai-agent
+    namespace: $NS
+---
+# Vulnerability remediation pre-deploy gate (namespaced: Jobs here only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentic-ai-remediation-gate
+  namespace: $NS
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentic-ai-remediation-gate
+  namespace: $NS
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agentic-ai-remediation-gate
 subjects:
   - kind: ServiceAccount
     name: agentic-ai-agent

@@ -807,6 +807,31 @@ async function withClusterContext(url, handler) {
   return handler();
 }
 
+// ── Vulnerability remediation: cluster context + the server's own scan ──
+// Background steps (gate polling, rollout watch, verification) run outside a
+// request, so they reach the record's cluster the same way a request would.
+async function runForClusterCtx(cluster, fn) {
+  if (!cluster || cluster === "local") return fn();
+  const out = await withClusterContext(new URL(`http://hub/__remediation?cluster=${encodeURIComponent(cluster)}`), fn);
+  if (out === null) throw Object.assign(new Error(`Cluster ${cluster} is not reachable for remediation`), { status: 502 });
+  return out;
+}
+
+// The CVE list a remediation works from is always the server's scan, never
+// one sent by the browser.
+async function remediationScanFor(cluster, namespace, image) {
+  if (!namespace || !image) throw Object.assign(new Error("image and namespace are required"), { status: 400 });
+  const { sameRepoTag } = await import("./services/image-verify.js");
+  return runForClusterCtx(cluster, async () => {
+    const rec = await runImageScan(namespace);
+    const row = (rec.results || []).find((r) => r.image === image || sameRepoTag(r.image, image));
+    if (!row) return null;
+    const kev = await getKevSet();
+    const epss = await getEpssScores((row.vulnerabilities || []).map((v) => v.id)).catch(() => new Map());
+    return { ...row, vulnerabilities: (row.vulnerabilities || []).map((v) => enrichVuln(v, { kev, epss })) };
+  });
+}
+
 // ── Async fix-verification jobs ──────────────────────────────────────────
 // Production pattern: /api/alerts/execute-fix applies the fix and returns
 // immediately (202) with a verifyJobId; the pod-watch → incident close →
@@ -2051,6 +2076,23 @@ async function startSSE() {
     await initQueryTracer();
     await initIncidentManager();
     await initChangeTimeline();
+    try {
+      const W = await import("./services/remediation/workflow.js");
+      const snow = await import("./utils/servicenow-client.js");
+      const { sameRepoTag } = await import("./services/image-verify.js");
+      W.configure({
+        runForCluster: runForClusterCtx,
+        snow: { enabled: isServiceNowEnabled, createChangeRequest: snow.createChangeRequest, getRecord: snow.getRecord, updateRecord: snow.updateRecord, cancelChangeRequest: snow.cancelChangeRequest },
+        scanNamespace: async (ns, image) => { const r = await runImageScan(ns); return (r.results || []).find((x) => x.image === image || sameRepoTag(x.image, image)) || null; },
+        audit: (rec, e) => logAuditTrailEvent({
+          type: "action_taken", severity: /failed|rolled-back|rejected/.test(e.to) ? "warn" : "info",
+          title: `Vulnerability remediation ${rec.id}: ${e.from || "new"} → ${e.to}`,
+          details: { id: rec.id, cluster: rec.cluster, image: rec.image, target: rec.target?.image || null, changeRequest: rec.changeRequest?.number || null, changes: (rec.changes || []).map((c) => c.url), note: e.note },
+          namespace: rec.namespace, username: e.actor, source: "vulnerability-remediation",
+        }).catch(() => {}),
+      });
+      W.startWorker();
+    } catch (e) { console.error("[remediation] worker not started:", e.message); }
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
     setTimeout(() => {
@@ -8987,6 +9029,51 @@ spec:
         topImages: merged.slice(0, 30),
       };
     };
+
+    // ── Vulnerability remediation workflow (services/remediation/) ──
+    // Triage → plan → pre-deploy gate → PR/MR + change request → approval →
+    // GitOps or approved rollout with automatic rollback → verified → closed.
+    if (url.pathname === "/api/remediation" || url.pathname.startsWith("/api/remediation/")) {
+      const W = await import("./services/remediation/workflow.js");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      const canWrite = checkPermission(req, "write");
+      const isAdmin = checkPermission(req, "manage");
+      const cluster = url.searchParams.get("cluster") || "local";
+      const fail = (e) => sendJson(res, e.status || 500, { error: e.message });
+      try {
+        if (req.method === "GET" && url.pathname === "/api/remediation") {
+          return sendJson(res, 200, { records: await W.list({ cluster }), policy: W.policySummary(), you: { name: actor, canWrite, isAdmin } });
+        }
+        const m = url.pathname.match(/^\/api\/remediation\/(REM-[0-9A-F-]+)(?:\/([a-z-]+))?$/i);
+        if (req.method === "GET" && m && !m[2]) return sendJson(res, 200, await W.get(m[1]));
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (!canWrite) return sendJson(res, 403, { error: "Remediation actions need the Operator or Admin role" });
+        if (enforceRateLimit(req, res, { burst: 20, refillPerSec: 0.5 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        if (url.pathname === "/api/remediation") {
+          const scan = await remediationScanFor(cluster, body.namespace, body.image);
+          return sendJson(res, 201, await W.create({ cluster, namespace: body.namespace, image: body.image, scan, actor }));
+        }
+        if (!m) return sendJson(res, 404, { error: "Not found" });
+        const [, id, action] = m;
+        const act = {
+          target: () => W.setTarget(id, body, actor),
+          gate: () => W.runGate(id, actor),
+          preview: () => W.previewChange(id),
+          change: () => W.raiseChange(id, { window: body.window }, actor),
+          approve: () => W.approve(id, body, actor, { isAdmin }),
+          deploy: () => W.deploy(id, actor),
+          exception: () => W.acceptRisk(id, body, actor, { isAdmin }),
+          cancel: () => W.cancel(id, body, actor),
+          rollback: () => W.rollback(id, actor, body.reason || "manual rollback"),
+          promote: () => W.promote(id, { cluster: body.cluster || cluster, namespace: body.namespace }, actor, { scanFor: remediationScanFor }),
+          refresh: async () => { await W.tick(); return W.get(id); },
+        }[action];
+        if (!act) return sendJson(res, 404, { error: `Unknown action ${action}` });
+        const out = await act();
+        return sendJson(res, 200, out);
+      } catch (e) { return fail(e); }
+    }
 
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {
       const _ivHandler = async () => {

@@ -23,6 +23,7 @@ const FETCH_TIMEOUT_MS = 10000;
 const FIRST_LOAD_WAIT_MS = 4000;
 
 let _ids = new Set();
+let _details = new Map();   // CVE → { dueDate, dateAdded, ransomware, action }
 let _meta = { status: "not-loaded", count: 0 };
 let _loadedAt = 0;
 let _lastAttempt = 0;
@@ -33,12 +34,15 @@ export function parseKevCatalog(doc) {
   const list = doc && Array.isArray(doc.vulnerabilities) ? doc.vulnerabilities : null;
   if (!list) throw new Error("not a KEV catalog (no vulnerabilities array)");
   const ids = new Set();
+  const details = new Map();
   for (const v of list) {
     const id = String(v?.cveID || "").trim().toUpperCase();
-    if (/^CVE-\d{4}-\d{4,}$/.test(id)) ids.add(id);
+    if (!/^CVE-\d{4}-\d{4,}$/.test(id)) continue;
+    ids.add(id);
+    details.set(id, { dueDate: v.dueDate || null, dateAdded: v.dateAdded || null, ransomware: v.knownRansomwareCampaignUse === "Known", action: v.requiredAction || null });
   }
   if (ids.size === 0) throw new Error("KEV catalog is empty");
-  return { ids, catalogVersion: doc.catalogVersion || null, dateReleased: doc.dateReleased || null };
+  return { ids, details, catalogVersion: doc.catalogVersion || null, dateReleased: doc.dateReleased || null };
 }
 
 async function loadOnce() {
@@ -62,6 +66,7 @@ async function loadOnce() {
     }
     const parsed = parseKevCatalog(doc);
     _ids = parsed.ids;
+    _details = parsed.details;
     _loadedAt = Date.now();
     _meta = {
       status: "live", source, count: parsed.ids.size,
@@ -110,14 +115,19 @@ export async function getKevSet() {
 
 export function kevStatus() { return { ..._meta }; }
 
+/** CISA's remediation due date and ransomware flag for a KEV CVE, or null. */
+export function kevDetails(cveId) {
+  return _details.get(String(cveId || "").toUpperCase()) || null;
+}
+
 export function isKnownExploited(cveId) {
   return _ids.has(String(cveId || "").toUpperCase());
 }
 
 /** Test hook: install a catalog without the network. */
 export function _setKevCatalogForTest(doc) {
-  if (doc == null) { _ids = new Set(); _meta = { status: "not-loaded", count: 0 }; _loadedAt = 0; _lastAttempt = 0; return; }
+  if (doc == null) { _ids = new Set(); _details = new Map(); _meta = { status: "not-loaded", count: 0 }; _loadedAt = 0; _lastAttempt = 0; return; }
   const parsed = parseKevCatalog(doc);
-  _ids = parsed.ids; _loadedAt = Date.now(); _lastAttempt = Date.now();
+  _ids = parsed.ids; _details = parsed.details; _loadedAt = Date.now(); _lastAttempt = Date.now();
   _meta = { status: "live", source: "test", count: parsed.ids.size, catalogVersion: parsed.catalogVersion, dateReleased: parsed.dateReleased, fetchedAt: new Date().toISOString() };
 }

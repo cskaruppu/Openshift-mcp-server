@@ -122,9 +122,10 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [delete]
-  # Patch deployments (scale, rollback)
+  # Patch deployments (scale, rollback); StatefulSets/DaemonSets for an
+  # approved vulnerability fix with no GitOps path
   - apiGroups: [apps]
-    resources: [deployments, deployments/scale, statefulsets/scale]
+    resources: [deployments, deployments/scale, statefulsets, statefulsets/scale, daemonsets]
     verbs: [patch, update]
   # Cordon/drain nodes + evictions
   - apiGroups: [""]
@@ -175,6 +176,40 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "tcs-agentic-ai.fullname" . }}-remediator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tcs-agentic-ai.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+
+---
+# Vulnerability remediation pre-deploy gate: an unprivileged Trivy Job in the
+# release namespace scans a replacement image before it is approved.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediation-gate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediation-gate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tcs-agentic-ai.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "tcs-agentic-ai.fullname" . }}-remediation-gate
 subjects:
   - kind: ServiceAccount
     name: {{ include "tcs-agentic-ai.serviceAccountName" . }}
