@@ -9201,8 +9201,15 @@ body.light-theme .lg-error {
 }
 
 /* The minimised hub: a chip, bottom right, where a minimised window goes. */
-.ah-chip {
+/* One fixed row holds every minimised panel's chip, side by side, so two
+   minimised panels never sit on top of each other. */
+.tcs-dock {
   position: fixed; right: 22px; bottom: 22px; z-index: 1001;
+  display: flex; flex-direction: row-reverse; gap: 10px;
+  pointer-events: none;
+}
+.tcs-dock > * { pointer-events: auto; }
+.ah-chip {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 9px 14px 9px 12px; border-radius: 12px; cursor: pointer;
   color: #fff; font: inherit; font-size: 13px; font-weight: 700;
@@ -9217,3 +9224,23 @@ body.light-theme .lg-error {
 .ah-chip img { height: 16px; width: auto; }
 .ah-chip:hover { border-color: rgba(135,190,238,.55); }
 .ah-chip:focus-visible { outline: 2px solid var(--tcs-yellow); outline-offset: 2px; }
+
+/* ── Agent Registry: window controls ────────────────────────────────────
+   The hub's .ah-winbtn / .ah-view styles are reused as they are, so the two
+   title bars behave and look identical. Only the geometry differs: this bar
+   has 16px vertical padding and a 16px corner, the hub 14px and 18px. */
+.ar-winbtns { margin: -16px -24px -16px 6px; }
+.ar-winbtns .ah-winbtn:last-child { border-top-right-radius: 16px; }
+.ar-modal.ar-max .ar-winbtns .ah-winbtn:last-child { border-top-right-radius: 0; }
+.ar-modal-header .ah-view { margin-left: 10px; }
+
+/* Minimised: hidden, not unmounted. */
+.ar-modal.ar-hidden, .ar-modal-overlay.ar-hidden { display: none; }
+
+/* Maximised: the full viewport, corners squared like a maximised window. */
+.ar-modal.ar-max,
+.light-theme .ar-modal.ar-max {
+  top: 0; left: 0; transform: none;
+  width: 100vw; max-width: none; height: 100vh; max-height: none;
+  border: 0; border-radius: 0;
+}

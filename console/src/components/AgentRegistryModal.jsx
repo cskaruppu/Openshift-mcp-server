@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { DockChip } from "./MinimizedDock";
 
 /** One-click copy with visible feedback — endpoints exist to be pasted. */
 function CopyBtn({ text, small }) {
@@ -1035,7 +1036,24 @@ export function AgentRegistryModal({ open, onClose }) {
      chrome they navigate by. This shrinks the content and leaves the header,
      the lens and the close button at full size. */
   const [zoom, setZoom] = useState(1);
+  /* Window state, the same three controls as the Automation Hub. Minimised
+     HIDES the modal and keeps it mounted, so the lens, the category filter,
+     the search term and an open agent detail all survive the trip back. */
+  const [minimized, setMinimized] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+  const [viewMenu, setViewMenu] = useState(false);
   const [claiming, setClaiming] = useState(null);
+  useEffect(() => { if (!open) { setMinimized(false); setMaximized(false); setViewMenu(false); } }, [open]);
+  useEffect(() => {
+    if (!open || minimized) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (viewMenu) { e.stopPropagation(); setViewMenu(false); }
+      else if (maximized) { e.stopPropagation(); setMaximized(false); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, minimized, maximized, viewMenu]);
   const [newAgent, setNewAgent] = useState(false);
   /* "Mine" is the default for anyone who owns something. At sixty agents the
      fleet table is the platform team's view; an owner wants their own rows. */
@@ -1200,6 +1218,8 @@ export function AgentRegistryModal({ open, onClose }) {
 
   if (!open) return null;
 
+  const stepZoom = (d) => setZoom((z) => Math.min(1.2, Math.max(0.6, +(z + d * 0.1).toFixed(2))));
+
   const registryAgents = Array.isArray(registryData?.agents) ? registryData.agents : [];
   const registryTotal = registryData?.total ?? registryAgents.length;
   const serviceCount = new Set(registryAgents.flatMap((a) => a.services || [])).size;
@@ -1237,10 +1257,13 @@ export function AgentRegistryModal({ open, onClose }) {
 
   return (
     <>
-      <div className="ar-modal-overlay" onClick={onClose} />
-      <div className="ar-modal">
+      {minimized && <DockChip label="Agent Registry" onRestore={() => setMinimized(false)} />}
+      <div className={"ar-modal-overlay" + (minimized ? " ar-hidden" : "")} onClick={onClose} />
+      <div className={"ar-modal" + (minimized ? " ar-hidden" : "") + (maximized ? " ar-max" : "")}
+        onClick={() => { if (viewMenu) setViewMenu(false); }}>
         {/* Header */}
-        <div className="ar-modal-header">
+        <div className="ar-modal-header"
+          onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
           {/* The same lockup as every other header: the product on the glass
               plate, the module after a rule and outside it. The generic graph
               glyph that stood here is gone — beside the real mark it was a
@@ -1270,18 +1293,47 @@ export function AgentRegistryModal({ open, onClose }) {
               title="Owner, permission, spend and behaviour — what is it allowed to do">Governance</button>
           </div>
 
-          {/* Zoom out. Sixteen agents across five categories overflow a laptop
-              viewport, and browser zoom shrinks the console chrome along with
-              the content. This scales the body only. */}
-          <div className="ar-zoom" role="group" aria-label="Zoom">
-            <button className="ar-zoom-btn" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))}
-              disabled={zoom <= 0.6} title="Zoom out — fit more on screen" aria-label="Zoom out">−</button>
-            <button className="ar-zoom-level" onClick={() => setZoom(1)} title="Reset to 100%">{Math.round(zoom * 100)}%</button>
-            <button className="ar-zoom-btn" onClick={() => setZoom((z) => Math.min(1.2, +(z + 0.1).toFixed(2)))}
-              disabled={zoom >= 1.2} title="Zoom in" aria-label="Zoom in">+</button>
+          {/* Zoom is a view setting, so it sits behind ⋯ with the hub's.
+              The lens switch to its left stays on the bar: Catalog and
+              Governance are the two halves of the registry, which is
+              navigation, not a view preference. The ⋯ button shows the zoom
+              whenever it is not 100% so the setting is never invisible. */}
+          <div className="ah-view" onClick={(e) => e.stopPropagation()}>
+            <button className={"ah-viewbtn" + (viewMenu ? " on" : "")} onClick={() => setViewMenu((v) => !v)}
+              title="View — zoom" aria-label="View options" aria-expanded={viewMenu} aria-haspopup="menu">
+              {zoom !== 1 && <span className="ah-viewzoom">{Math.round(zoom * 100)}%</span>}
+              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg>
+            </button>
+            {viewMenu && (
+              <div className="ah-viewmenu" role="menu">
+                <div className="ah-viewrow">
+                  <span>Zoom</span>
+                  <div className="ah-zoomseg">
+                    <button onClick={() => stepZoom(-1)} disabled={zoom <= 0.6} aria-label="Zoom out" title="Fit more on screen">−</button>
+                    <button onClick={() => setZoom(1)} className="ah-zoomval" title="Reset to 100%">{Math.round(zoom * 100)}%</button>
+                    <button onClick={() => stepZoom(1)} disabled={zoom >= 1.2} aria-label="Zoom in">+</button>
+                  </div>
+                </div>
+                <div className="ah-viewhint">Scales the registry content only · double-click the title bar to maximise</div>
+              </div>
+            )}
           </div>
 
-          <button className="ar-modal-close" onClick={onClose}>&times;</button>
+          <div className="ah-winbtns ar-winbtns" onClick={(e) => e.stopPropagation()}>
+            <button className="ah-winbtn" onClick={() => { setViewMenu(false); setMinimized(true); }}
+              title="Minimise" aria-label="Minimise">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1"/></svg>
+            </button>
+            <button className="ah-winbtn" onClick={() => setMaximized((v) => !v)}
+              title={maximized ? "Restore down (Esc)" : "Maximise"} aria-label={maximized ? "Restore down" : "Maximise"}>
+              {maximized
+                ? <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" strokeWidth="1"/></svg>
+                : <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1"/></svg>}
+            </button>
+            <button className="ah-winbtn close" onClick={onClose} title="Close" aria-label="Close">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" strokeWidth="1"/></svg>
+            </button>
+          </div>
         </div>
 
         {/* Body. Zoom scales content and re-widens it by the inverse, so

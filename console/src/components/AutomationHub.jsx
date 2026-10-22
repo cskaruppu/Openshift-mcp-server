@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { DockChip } from "./MinimizedDock";
 import { useActiveCluster } from "../store/clusterStore";
 import { showToast } from "../store/toastStore";
 import FleetAnalysis from "./FleetAnalysis";
@@ -169,14 +170,7 @@ export function AutomationHub({ open, onClose }) {
 
   return (
     <>
-    {minimized && (
-      <button className="ah-chip" onClick={() => setMinimized(false)}
-        title="Restore the Automation Hub" aria-label="Restore the Automation Hub">
-        <img src="/brand/tcs-logo-white.png" alt="" width="1000" height="238" />
-        <span>Automation Hub</span>
-        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2 6.5 5 3.5l3 3" fill="none" stroke="currentColor" strokeWidth="1.3"/></svg>
-      </button>
-    )}
+    {minimized && <DockChip label="Automation Hub" onRestore={() => setMinimized(false)} />}
     <div onClick={presenting ? undefined : onClose} style={{ position: "fixed", inset: 0,
       background: presenting ? "var(--bg,#fff)" : "rgba(10,14,25,0.62)",
       backdropFilter: presenting ? "none" : "blur(7px)", WebkitBackdropFilter: presenting ? "none" : "blur(7px)",
