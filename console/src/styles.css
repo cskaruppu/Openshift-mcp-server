@@ -8972,3 +8972,42 @@ body.light-theme .lg-error {
    on the alert cards — two identical colours with different jobs is worse
    than one colour doing fewer jobs. It keeps focus rings and the selected
    tab, where it is a mark rather than a word. */
+
+/* ============================================================================
+   Automation Hub header — the same bar as the other two
+   ============================================================================
+   It was a pale indigo-to-teal wash with a text-only "TCS" where the other
+   two headers carry the real mark on dark glass. Same treatment now, so the
+   three read as one product rather than three.
+
+   The right-hand controls need no markup change. They are inline-styled, and
+   inline wins over any rule I could write — but they reference var(--border),
+   var(--card-bg) and var(--muted), and CUSTOM PROPERTIES still cascade. So
+   re-stepping those three on the bar itself re-colours every button inside
+   it without touching one of them. */
+.ah-head {
+  position: relative; z-index: 2;
+  background: linear-gradient(135deg,
+    rgba(5,7,12,.94) 0%, rgba(10,24,48,.90) 55%, rgba(6,14,30,.95) 100%);
+  border-bottom: 1px solid rgba(47,127,224,.22);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+
+  --border:   rgba(195,202,214,.22);
+  --card-bg:  rgba(255,255,255,.07);
+  --muted:    #c3cad6;
+  --text:     #ffffff;
+  --text2:    #c3cad6;
+  --text-strong: #ffffff;
+}
+/* The hub's lockup is the shared one plus a module name, so it takes the
+   shared sizing and only the module half needs saying. */
+.ah-head .tcs-lock { padding: 0; border: 0; background: none;
+                     box-shadow: none; backdrop-filter: none; }
+.ah-head .tcs-lock-logo { height: 24px; filter: none; }
+.ah-head .tcs-lock-name { font-size: 15px; color: #fff; }
+.ah-head .ah-lockup-rule { background: rgba(172,216,252,.45); }
+.ah-head .ah-lockup-qual   { color: #9fb6cd; }
+.ah-head .ah-lockup-module { color: #fff; }
+.light-theme .ah-head .tcs-lock-logo { filter: none; }
+.light-theme .ah-head .tcs-lock-name { color: #fff; }

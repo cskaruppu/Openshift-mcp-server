@@ -56,7 +56,9 @@ function asRecord(x, kind) {
  * To use the real logo: put it at console/public/brand-mark.svg and set this
  * to "/brand-mark.svg".
  */
-const BRAND_MARK = null;
+/* The placeholder-mark slot is gone: the real TCS asset exists now and sits
+   in the lockup, so there is nothing left for a stand-in glyph to stand in
+   for. */
 
 /**
  * Mirrors the server's ADVANCED_ANALYSIS flag for the one thing the server
@@ -193,24 +195,7 @@ export function AutomationHub({ open, onClose }) {
         display: "flex", flexDirection: "column", overflow: "hidden",
         animation: presenting ? "none" : "ah-pop .2s cubic-bezier(.2,.7,.3,1)" }}>
         {/* Header with gradient accent */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px", borderBottom: "1px solid var(--border,#e4e8f1)", background: "linear-gradient(90deg, rgba(61,90,254,0.07), rgba(14,165,160,0.05))" }}>
-          {/* No placeholder mark.
-              The lockup already carries the brand: TCS sits at the darkest ink
-              in the heaviest weight, which IS the brand presence. A stand-in
-              glyph beside it was a second, weaker claim to the same job — and
-              a generic mark next to a real company name reads as a logo nobody
-              got round to replacing.
-
-              Wordmark-only is a deliberate and common enterprise pattern for
-              exactly this reason. When the official asset exists, set
-              BRAND_MARK and it appears; until then there is nothing to explain
-              away in front of a customer. */}
-          {BRAND_MARK && (
-            <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
-              border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", flex: "none" }}>
-              <img src={BRAND_MARK} alt="" style={{ width: 21, height: 21, objectFit: "contain" }} />
-            </span>
-          )}
+        <div className="ah-head" style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 22px" }}>
           <div style={{ flex: 1 }}>
             {/* Product lockup, then the module — the pattern the app header
                 already sets, so the two agree rather than each inventing a
@@ -222,9 +207,11 @@ export function AutomationHub({ open, onClose }) {
                 "Agentic AI" appears in both halves of the full name, so the
                 second one is set lighter than "Automation Hub" beside it —
                 the module is what you are looking at, the qualifier is not. */}
-            <div className="ah-lockup">
-              <span className="ah-lockup-brand">TCS</span>
-              <span className="ah-lockup-product">Agentic AI for Hybrid Infrastructure</span>
+            <div className="ah-lockup tcs-lock">
+              <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
+                   alt="Tata Consultancy Services" width="1000" height="238" />
+              <span className="tcs-lock-rule" aria-hidden="true" />
+              <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
               <span className="ah-lockup-rule" aria-hidden="true" />
               {/* One flex item, so the module name never breaks across lines.
                   "Agentic AI-Led" on one line and "Automation Hub" on the next
@@ -253,14 +240,14 @@ export function AutomationHub({ open, onClose }) {
             <button onClick={() => setZoom(100)} title="Reset to 100% (Ctrl 0)"
               style={{ ...zoomBtn, minWidth: 54, fontVariantNumeric: "tabular-nums",
                 borderLeft: "1px solid var(--border,#e4e8f1)", borderRight: "1px solid var(--border,#e4e8f1)",
-                color: zoom === 100 ? "var(--muted,#5a6373)" : "#3d5afe" }}>{zoom}%</button>
+                color: zoom === 100 ? "var(--muted,#5a6373)" : "var(--tcs-blue)" }}>{zoom}%</button>
             <button onClick={() => stepZoom(1)} disabled={zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}
               title="Larger (Ctrl +)" aria-label="Larger"
               style={{ ...zoomBtn, opacity: zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? 0.38 : 1 }}>+</button>
             <button onClick={() => setPresenting((v) => !v)}
               title={presenting ? "Leave full screen (Esc)" : "Full screen — hides the dashboard chrome behind this panel"}
               style={{ ...zoomBtn, minWidth: 38, borderLeft: "1px solid var(--border,#e4e8f1)",
-                background: presenting ? "#3d5afe" : "transparent", color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
+                background: presenting ? "var(--tcs-blue)" : "transparent", color: presenting ? "#fff" : "var(--muted,#5a6373)" }}>
               {presenting ? "⤡" : "⤢"}
             </button>
           </div>
@@ -272,7 +259,9 @@ export function AutomationHub({ open, onClose }) {
             {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Workload Modernization Agent", IconContainer]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ display: "inline-flex", alignItems: "center", gap: 8,
                 padding: "8px 16px", borderRadius: 8, border: "none",
-                background: agent === k ? "#3d5afe" : "transparent",
+                /* the darker brand step, not --tcs-blue: white 13.8px bold
+                   on #2f7fe0 measures 4.01:1 and needs 4.5 */
+                background: agent === k ? "var(--tcs-blue-dark)" : "transparent",
                 fontWeight: 700, fontSize: "0.86rem", fontFamily: "inherit",
                 color: agent === k ? "#fff" : "var(--muted,#5a6373)", cursor: "pointer",
                 transition: "background .15s, color .15s" }}>
@@ -616,7 +605,7 @@ function SopAgent({ clusters, activeCluster }) {
           const isCurrent = i === journey.current && !st.done && !st.failed;
           const c = st.failed ? { fg: "#dc2626", bg: "rgba(220,38,38,0.10)", bd: "#dc2626" }
             : st.done ? { fg: "#16a34a", bg: "rgba(22,163,74,0.10)", bd: "rgba(22,163,74,0.45)" }
-            : isCurrent ? { fg: "#3d5afe", bg: "rgba(61,90,254,0.10)", bd: "#3d5afe" }
+            : isCurrent ? { fg: "var(--tcs-blue)", bg: "rgba(61,90,254,0.10)", bd: "var(--tcs-blue)" }
             : { fg: "var(--muted,#5a6373)", bg: "transparent", bd: "var(--border,#e4e8f1)" };
           return (
             <div key={st.label} style={{ display: "flex", alignItems: "center" }}>
@@ -632,7 +621,7 @@ function SopAgent({ clusters, activeCluster }) {
         })}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed #3d5afe", background: "rgba(61,90,254,0.06)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", borderRadius: 9, border: "1px dashed var(--tcs-blue)", background: "rgba(61,90,254,0.06)", color: "var(--tcs-blue)", fontWeight: 700, fontSize: "0.84rem", cursor: uploading ? "wait" : "pointer" }}>
           {uploading ? "Reading…" : "📎 Upload requirement doc"}
           <input type="file" accept=".pdf,.docx,.txt,.md,.markdown,.yaml,.yml,.json,.csv,.log" hidden disabled={uploading} onChange={onUpload} />
         </label>
@@ -657,7 +646,7 @@ function SopAgent({ clusters, activeCluster }) {
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder="namespace (optional)"
           style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.86rem" }} />
-        <button onClick={generate} disabled={loading || !requirement.trim()} style={{ padding: "9px 18px", borderRadius: 9, border: "none", background: "#3d5afe", color: "#fff", fontWeight: 700, fontSize: "0.88rem", cursor: "pointer", opacity: loading || !requirement.trim() ? 0.6 : 1 }}>
+        <button onClick={generate} disabled={loading || !requirement.trim()} style={{ padding: "9px 18px", borderRadius: 9, border: "none", background: "var(--tcs-blue)", color: "#fff", fontWeight: 700, fontSize: "0.88rem", cursor: "pointer", opacity: loading || !requirement.trim() ? 0.6 : 1 }}>
           {loading ? "Generating…" : "✨ Generate Manifests"}
         </button>
       </div>
@@ -736,7 +725,7 @@ function SopAgent({ clusters, activeCluster }) {
             )}
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={runAllChecks} disabled={cisChk?.phase === "running" || imgChk?.phase === "running" || adm?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#3d5afe", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>▶ Run all checks</button>
+              <button onClick={runAllChecks} disabled={cisChk?.phase === "running" || imgChk?.phase === "running" || adm?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "var(--tcs-blue)", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>▶ Run all checks</button>
               <button onClick={runCisCheck} disabled={cisChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #0ea5a0", background: "rgba(14,165,160,0.08)", color: "#0e8a86", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: cisChk?.phase === "running" ? 0.7 : 1 }}>{cisChk?.phase === "running" ? "Checking…" : "🛡 Policy check"}</button>
               <button onClick={runImageCheck} disabled={imgChk?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #7c3aed", background: "rgba(124,58,237,0.08)", color: "#7c3aed", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: imgChk?.phase === "running" ? 0.7 : 1 }}>{imgChk?.phase === "running" ? "Scanning…" : "🐞 Image hygiene + CVEs"}</button>
               <button onClick={runAdmissionCheck} disabled={adm?.phase === "running"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #ea580c", background: "rgba(234,88,12,0.08)", color: "#c2410c", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: adm?.phase === "running" ? 0.7 : 1 }}>{adm?.phase === "running" ? "Reading namespace…" : "🚪 Will the cluster admit it?"}</button>
@@ -967,7 +956,7 @@ function SopAgent({ clusters, activeCluster }) {
             <select value={cluster} onChange={(e) => setCluster(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--fg,#151a29)", fontSize: "0.84rem" }}>
               {clusters.map((c) => <option key={c} value={c}>{c === "local" ? "Hub Cluster (local)" : c}</option>)}
             </select>
-            <button onClick={() => runDeploy(true)} disabled={deploy?.phase === "dry" || deploy?.phase === "apply"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #3d5afe", background: "rgba(61,90,254,0.08)", color: "#3d5afe", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>▷ Dry-run</button>
+            <button onClick={() => runDeploy(true)} disabled={deploy?.phase === "dry" || deploy?.phase === "apply"} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid var(--tcs-blue)", background: "rgba(61,90,254,0.08)", color: "var(--tcs-blue)", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>▷ Dry-run</button>
             <button onClick={() => runDeploy(false)} disabled={deploy?.phase === "dry" || deploy?.phase === "apply"} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#0ea5a0", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer" }}>🚀 Deploy</button>
           </div>
           {deploy?.phase === "done" && (
@@ -990,7 +979,7 @@ function SopAgent({ clusters, activeCluster }) {
                   const label = isObj ? `${a.kind}/${a.name}` : String(a);
                   const action = isObj ? a.action : null;
                   const c = action === "created" ? { bg: "rgba(22,163,74,0.12)", fg: "#16a34a" }
-                    : action === "configured" ? { bg: "rgba(61,90,254,0.10)", fg: "#3d5afe" }
+                    : action === "configured" ? { bg: "rgba(61,90,254,0.10)", fg: "var(--tcs-blue)" }
                     : { bg: "rgba(100,116,139,0.12)", fg: "#64748b" };
                   return (
                     <span key={i} style={{ fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: c.bg, color: c.fg }}>
@@ -1020,12 +1009,12 @@ function SopAgent({ clusters, activeCluster }) {
               <style>{`@keyframes ah-blink{0%,49%{opacity:1}50%,100%{opacity:0}}`}</style>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
                 <span style={{ fontSize: "0.8rem", fontWeight: 800, color: "var(--fg,#151a29)" }}>🖥 Live application status</span>
-                <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: watch?.done ? "rgba(22,163,74,0.14)" : watch?.on ? "rgba(61,90,254,0.12)" : "rgba(100,116,139,0.12)", color: watch?.done ? "#16a34a" : watch?.on ? "#3d5afe" : "#64748b" }}>
+                <span style={{ fontSize: "0.7rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: watch?.done ? "rgba(22,163,74,0.14)" : watch?.on ? "rgba(61,90,254,0.12)" : "rgba(100,116,139,0.12)", color: watch?.done ? "#16a34a" : watch?.on ? "var(--tcs-blue)" : "#64748b" }}>
                   {watch?.done ? "● complete — all pods ready" : watch?.on ? "● watching (4s)" : "● paused"}
                 </span>
                 {watch?.on
                   ? <button onClick={() => setWatch((w) => ({ ...w, on: false }))} style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", color: "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.74rem", cursor: "pointer" }}>⏸ Pause</button>
-                  : <button onClick={() => setWatch((w) => ({ ...(w || {}), on: true, done: false }))} style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid #3d5afe", background: "rgba(61,90,254,0.08)", color: "#3d5afe", fontWeight: 700, fontSize: "0.74rem", cursor: "pointer" }}>{watch?.done ? "↻ Watch again" : "▶ Watch"}</button>}
+                  : <button onClick={() => setWatch((w) => ({ ...(w || {}), on: true, done: false }))} style={{ padding: "4px 11px", borderRadius: 7, border: "1px solid var(--tcs-blue)", background: "rgba(61,90,254,0.08)", color: "var(--tcs-blue)", fontWeight: 700, fontSize: "0.74rem", cursor: "pointer" }}>{watch?.done ? "↻ Watch again" : "▶ Watch"}</button>}
               </div>
               <div style={{ background: "#0b1120", borderRadius: 10, border: "1px solid #1e293b", padding: "12px 14px", fontFamily: "'SF Mono','Fira Code',ui-monospace,monospace", fontSize: "0.74rem", lineHeight: 1.7, maxHeight: 320, overflow: "auto", whiteSpace: "pre" }}>
                 <div style={{ color: "#7dd3fc" }}>$ oc get pods -n {watchNs} --watch</div>
@@ -1111,7 +1100,7 @@ function SopAgent({ clusters, activeCluster }) {
                       {pyramid.data.access.map((a) => (
                         <div key={a.url} style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", marginTop: 5 }}>
                           <span style={{ width: 8, height: 8, borderRadius: 999, background: a.ok ? "#16a34a" : "#dc2626", flex: "0 0 auto" }} />
-                          <a href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.8rem", fontWeight: 700, color: "#3d5afe", textDecoration: "none", wordBreak: "break-all" }}>{a.url}</a>
+                          <a href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--tcs-blue)", textDecoration: "none", wordBreak: "break-all" }}>{a.url}</a>
                           <span style={{ fontSize: "0.7rem", color: a.ok ? "var(--muted,#5a6373)" : "#dc2626" }}>{a.label}{a.latencyMs != null && a.statusCode != null ? ` · ${a.latencyMs}ms` : ""}</span>
                           {a.ok && (
                             <a href={a.url} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", padding: "4px 12px", borderRadius: 7, background: "#16a34a", color: "#fff", fontWeight: 700, fontSize: "0.72rem", textDecoration: "none" }}>Open application ↗</a>
@@ -1129,7 +1118,7 @@ function SopAgent({ clusters, activeCluster }) {
           {deploy?.phase === "done" && !deploy.dryRun && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border,#e4e8f1)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <button onClick={runVerify} disabled={verify?.phase === "running"} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: verify?.phase === "running" ? 0.7 : 1 }}>
+                <button onClick={runVerify} disabled={verify?.phase === "running"} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,var(--tcs-blue))", color: "#fff", fontWeight: 700, fontSize: "0.84rem", cursor: "pointer", opacity: verify?.phase === "running" ? 0.7 : 1 }}>
                   {verify?.phase === "running" ? "Scanning…" : "🔍 Verify security (CIS + image scan)"}
                 </button>
                 <span style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>Runs the CIS benchmark + image vulnerability scan on <b>{namespace || gen.namespace}</b></span>
@@ -1157,7 +1146,7 @@ function SopAgent({ clusters, activeCluster }) {
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                       <span style={{ fontWeight: 800, fontSize: "0.82rem" }}>🐞 Image Vulnerabilities</span>
                       {verify.image?.error ? <span style={{ fontSize: "0.72rem", color: "#dc2626" }}>error</span> :
-                        <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(61,90,254,0.12)", color: "#3d5afe" }}>grade {verify.image?.grade || "?"}</span>}
+                        <span style={{ fontSize: "0.72rem", fontWeight: 800, padding: "2px 9px", borderRadius: 999, background: "rgba(61,90,254,0.12)", color: "var(--tcs-blue)" }}>grade {verify.image?.grade || "?"}</span>}
                     </div>
                     {verify.image?.error ? <div style={{ fontSize: "0.78rem", color: "#dc2626", marginTop: 6 }}>{verify.image.error}</div> : (
                       <>
@@ -1352,11 +1341,11 @@ function SnowAgent({ clusters = [], activeCluster }) {
         <div style={{ fontSize: "0.86rem", color: "var(--muted,#5a6373)", flex: 1, minWidth: 220 }}>Open incidents this platform is tracking. Let AI de-duplicate and correlate them, then fix the primary to clear the rest.</div>
         <div style={{ display: "inline-flex", gap: 3, padding: 3, borderRadius: 9, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
           {[["platform", "This platform"], ["all", "All open"]].map(([k, label]) => (
-            <button key={k} onClick={() => setScope(k)} style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: scope === k ? "#3d5afe" : "transparent", color: scope === k ? "#fff" : "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{label}</button>
+            <button key={k} onClick={() => setScope(k)} style={{ padding: "5px 12px", borderRadius: 7, border: "none", background: scope === k ? "var(--tcs-blue)" : "transparent", color: scope === k ? "#fff" : "var(--muted,#5a6373)", fontWeight: 700, fontSize: "0.78rem", cursor: "pointer" }}>{label}</button>
           ))}
         </div>
         <button onClick={() => fetchIncidents(scope)} disabled={loading} style={{ padding: "8px 13px", borderRadius: 8, border: "1px solid var(--border,#e4e8f1)", background: "var(--card-bg,#fff)", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer" }}>{loading ? "…" : "↻ Refresh"}</button>
-        <button onClick={runAnalyze} disabled={analysis?.phase === "running" || incidents.length === 0} style={{ padding: "8px 15px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,#3d5afe)", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: analysis?.phase === "running" || !incidents.length ? 0.65 : 1 }}>{analysis?.phase === "running" ? "Analyzing…" : "🧠 Analyze & Correlate"}</button>
+        <button onClick={runAnalyze} disabled={analysis?.phase === "running" || incidents.length === 0} style={{ padding: "8px 15px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#7c3aed,var(--tcs-blue))", color: "#fff", fontWeight: 700, fontSize: "0.82rem", cursor: "pointer", opacity: analysis?.phase === "running" || !incidents.length ? 0.65 : 1 }}>{analysis?.phase === "running" ? "Analyzing…" : "🧠 Analyze & Correlate"}</button>
       </div>
 
       {/* Status strip */}
@@ -1365,7 +1354,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
           <span><b style={{ color: "var(--fg,#151a29)" }}>{incidents.length}</b> open</span>
           {typeof data.uniqueCount === "number" && <span><b style={{ color: "var(--fg,#151a29)" }}>{data.uniqueCount}</b> unique signature(s)</span>}
           {incidents.length - (data.uniqueCount ?? incidents.length) > 0 && <span style={{ color: "#b45309" }}>{incidents.length - data.uniqueCount} likely duplicate(s)</span>}
-          <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.1)", color: "#3d5afe", fontWeight: 700 }}>scope: {data.scope || scope}</span>
+          <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(61,90,254,0.1)", color: "var(--tcs-blue)", fontWeight: 700 }}>scope: {data.scope || scope}</span>
           <span style={{ padding: "2px 8px", borderRadius: 999, background: "rgba(22,163,74,0.12)", color: "#16a34a", fontWeight: 700 }}>open only</span>
         </div>
       )}
@@ -1408,7 +1397,7 @@ function SnowAgent({ clusters = [], activeCluster }) {
               <div style={{ fontWeight: 800, fontSize: "0.8rem", marginBottom: 7 }}>⚑ Recommended fix order</div>
               {(A.fixOrder || []).map((f, i) => (
                 <div key={f.number} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: "0.8rem", marginTop: 3 }}>
-                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "#3d5afe", color: "#fff", fontSize: "0.73rem", fontWeight: 800, display: "grid", placeItems: "center", flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ width: 18, height: 18, borderRadius: 999, background: "var(--tcs-blue)", color: "#fff", fontSize: "0.73rem", fontWeight: 800, display: "grid", placeItems: "center", flexShrink: 0 }}>{i + 1}</span>
                   <span><b>{f.number}</b> <span style={{ color: "var(--muted,#5a6373)" }}>— {f.why}</span></span>
                 </div>
               ))}
@@ -1641,7 +1630,7 @@ function Journey({ j }) {
               background: bad ? "rgba(220,38,38,.1)" : done ? "rgba(22,163,74,.1)" : here ? "rgba(61,90,254,.1)" : "rgba(127,127,127,.07)",
               border: `1px solid ${bad ? "rgba(220,38,38,.4)" : done ? "rgba(22,163,74,.3)" : here ? "rgba(61,90,254,.4)" : "transparent"}`,
             }}>
-              <div style={{ fontWeight: 700, color: bad ? "#dc2626" : done ? "#16a34a" : here ? "#3d5afe" : "var(--text2)" }}>
+              <div style={{ fontWeight: 700, color: bad ? "#dc2626" : done ? "#16a34a" : here ? "var(--tcs-blue)" : "var(--text2)" }}>
                 {bad ? "✖" : done ? "✓" : here ? "▸" : "·"} {s.label}
               </div>
               {/* The step in front of you is the only one worth explaining
@@ -1718,7 +1707,7 @@ function VerifyPanel({ planName, result, busy, onRun, onPowerOn }) {
         <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button onClick={onPowerOn} disabled={busy}
             style={{ padding: "4px 12px", borderRadius: 7, border: "none", fontWeight: 700, fontSize: "0.77rem",
-              fontFamily: "inherit", background: "#3d5afe", color: "#fff", cursor: busy ? "wait" : "pointer" }}>
+              fontFamily: "inherit", background: "var(--tcs-blue)", color: "#fff", cursor: busy ? "wait" : "pointer" }}>
             ⏻ Power on and verify
           </button>
           <span data-prose style={{ fontSize: "0.74rem", color: "var(--text2)" }}>
@@ -1810,7 +1799,7 @@ function DecommissionPanel({ planName, posture, busy, onLoad, onRaise }) {
         <button disabled={busy || blockers.length > 0} onClick={() => onRaise(false)}
           title={blockers.length ? blockers[0].message : "Raises a second change request. Deletes nothing."}
           style={{ padding: "5px 13px", borderRadius: 8, border: "none", fontWeight: 700, fontSize: "0.79rem",
-            fontFamily: "inherit", background: blockers.length ? "#9ca3af" : "#3d5afe", color: "#fff",
+            fontFamily: "inherit", background: blockers.length ? "#9ca3af" : "var(--tcs-blue)", color: "#fff",
             cursor: busy ? "wait" : blockers.length ? "not-allowed" : "pointer" }}>
           ⤴ Raise decommission request
         </button>
@@ -1934,7 +1923,7 @@ export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
           ⏻ Power off &amp; cut over now
         </button>
         {d.mode === "schedule" && (
-          <button disabled={busy} onClick={() => onGo(d.at)} style={btn("#3d5afe")}>
+          <button disabled={busy} onClick={() => onGo(d.at)} style={btn("var(--tcs-blue)")}>
             ◷ At the window opening — {when(d.at)}
           </button>
         )}
@@ -1962,7 +1951,7 @@ export function CutoverPanel({ planName, posture, busy, onLoad, onGo }) {
               border: "1px solid var(--border,#e4e8f1)", background: "var(--card,#fff)", color: "inherit" }}
           />
           <button disabled={busy || !pick} onClick={() => onGo(new Date(pick).toISOString())}
-            style={{ ...btn(pick ? "#3d5afe" : "#9ca3af"), cursor: pick ? btn().cursor : "not-allowed" }}>
+            style={{ ...btn(pick ? "var(--tcs-blue)" : "#9ca3af"), cursor: pick ? btn().cursor : "not-allowed" }}>
             ◷ Schedule
           </button>
           <span style={{ fontSize: "0.75rem", color: "var(--text2)" }}>
@@ -2009,7 +1998,7 @@ export function AnalysisProgress({ count, phase, slow }) {
     <div style={{ border: "1px solid var(--border,#e4e8f1)", borderRadius: 10, padding: "16px 18px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
         <span aria-hidden style={{ width: 14, height: 14, borderRadius: 999, border: "2px solid rgba(61,90,254,.25)",
-          borderTopColor: "#3d5afe", display: "inline-block", animation: "ah-spin .8s linear infinite" }} />
+          borderTopColor: "var(--tcs-blue)", display: "inline-block", animation: "ah-spin .8s linear infinite" }} />
         <b style={{ fontSize: "0.88rem" }}>Analysing {count} virtual machine{count === 1 ? "" : "s"}…</b>
         <span style={{ color: "var(--text2)", fontSize: "0.78rem" }}>
           This runs against the source inventory and the target cluster, so it takes a moment.
@@ -2024,7 +2013,7 @@ export function AnalysisProgress({ count, phase, slow }) {
             <div key={label} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0",
               fontSize: "0.79rem", color: done ? "var(--text)" : here ? "var(--text)" : "var(--text2)",
               opacity: done || here ? 1 : 0.55 }}>
-              <span aria-hidden style={{ color: done ? "#16a34a" : here ? "#3d5afe" : "var(--text2)", fontWeight: 800 }}>
+              <span aria-hidden style={{ color: done ? "#16a34a" : here ? "var(--tcs-blue)" : "var(--text2)", fontWeight: 800 }}>
                 {done ? "✓" : here ? "▸" : "·"}
               </span>
               <span style={{ fontWeight: here ? 700 : 400 }}>{label}</span>
@@ -2059,7 +2048,7 @@ export function AnalysisProgress({ count, phase, slow }) {
 /** The states a plan can be in, named the same way everywhere they appear. */
 const PHASE = {
   validating:         { label: "validating", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
-  ready:              { label: "ready",      bg: "rgba(61,90,254,.12)",   fg: "#3d5afe" },
+  ready:              { label: "ready",      bg: "rgba(61,90,254,.12)",   fg: "var(--tcs-blue)" },
   transferring:       { label: "transferring", bg: "rgba(245,158,11,.14)", fg: "#b45309" },
   "awaiting-cutover": { label: "awaiting cutover", bg: "rgba(245,158,11,.18)", fg: "#b45309" },
   migrated:           { label: "migrated",   bg: "rgba(22,163,74,.14)",   fg: "#16a34a" },
@@ -2070,7 +2059,7 @@ const PHASE = {
    to pull the eye — a list where every row is highlighted highlights nothing,
    and the whole point is to find the rows that are yours. */
 const OWNER = {
-  you:            { label: "your move",   bg: "rgba(61,90,254,.14)",   fg: "#3d5afe" },
+  you:            { label: "your move",   bg: "rgba(61,90,254,.14)",   fg: "var(--tcs-blue)" },
   "change board": { label: "with change", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
   "VMware team":  { label: "with VMware", bg: "rgba(100,116,139,.12)", fg: "#64748b" },
   nobody:         { label: "in progress", bg: "rgba(100,116,139,.10)", fg: "#64748b" },
@@ -2115,7 +2104,7 @@ function CrWindowPicker({ value, warm, onChange }) {
         The change request will be raised with a window sized from this plan
         {warm ? " — a same-day cutover, because a warm precopy spends a changed-block snapshot for every hour it waits" : ""}.{" "}
         <button onClick={() => setOpen(true)} style={{ background: "none", border: "none", padding: 0,
-          font: "inherit", color: "#3d5afe", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
+          font: "inherit", color: "var(--tcs-blue)", fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>
           Choose the window myself
         </button>
       </div>
@@ -2696,7 +2685,7 @@ function MigrationAgent({ clusters, activeCluster }) {
             has it, and still resumable.
           </div>
           <button onClick={startNewMigration} style={{ marginTop: 7, padding: "6px 14px", borderRadius: 8, border: "none",
-            background: "#3d5afe", color: "#fff", fontSize: "0.79rem", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            background: "var(--tcs-blue)", color: "#fff", fontSize: "0.79rem", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
             Start a new migration
           </button>
         </div>
@@ -2721,7 +2710,7 @@ function MigrationAgent({ clusters, activeCluster }) {
                 <span style={{
                   width: 17, height: 17, borderRadius: 999, display: "inline-flex", alignItems: "center", justifyContent: "center",
                   fontSize: "0.72rem", fontWeight: 800,
-                  background: n < step ? "var(--st-good)" : n === step ? "#3d5afe" : "var(--border)",
+                  background: n < step ? "var(--st-good)" : n === step ? "var(--tcs-blue)" : "var(--border)",
                   color: n <= step ? "#fff" : "var(--text2)",
                 }}>{n < step ? "✓" : n}</span>
                 {label}
@@ -2871,7 +2860,7 @@ function MigrationAgent({ clusters, activeCluster }) {
             </select>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="filter by name" style={{ ...S, minWidth: 180 }} />
             <button onClick={discover} disabled={!provider || busy === "discover"}
-              style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
+              style={{ ...S, background: "var(--tcs-blue)", color: "#fff", border: "none", fontWeight: 700, cursor: provider ? "pointer" : "not-allowed", opacity: provider ? 1 : .5 }}>
               {busy === "discover" ? "Discovering…" : "🔍 Discover VMs"}
             </button>
             {vms && <span style={{ fontSize: "0.78rem", color: "var(--muted,#5a6373)" }}>{vms.length} VM(s) found in this vCenter</span>}
@@ -2936,7 +2925,7 @@ function MigrationAgent({ clusters, activeCluster }) {
           {vms?.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <button onClick={runAnalysis} disabled={busy === "analyse"}
-                style={{ ...S, background: "#3d5afe", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", padding: "8px 16px" }}>
+                style={{ ...S, background: "var(--tcs-blue)", color: "#fff", border: "none", fontWeight: 700, cursor: "pointer", padding: "8px 16px" }}>
                 {busy === "analyse" ? "Analysing…" : `Analyse all ${vms.length} VM(s) →`}
               </button>
               <span data-prose style={{ fontSize: "0.76rem", color: "var(--muted,#5a6373)" }}>
