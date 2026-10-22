@@ -207,11 +207,18 @@ export function AutomationHub({ open, onClose }) {
                 "Agentic AI" appears in both halves of the full name, so the
                 second one is set lighter than "Automation Hub" beside it —
                 the module is what you are looking at, the qualifier is not. */}
-            <div className="ah-lockup tcs-lock">
-              <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
-                   alt="Tata Consultancy Services" width="1000" height="238" />
-              <span className="tcs-lock-rule" aria-hidden="true" />
-              <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
+            <div className="ah-lockup">
+              {/* The product sits on the same glass plate as the other two
+                  headers; the module stays OUTSIDE it, after the rule. The
+                  plate is the product's mark, and "Automation Hub" is where
+                  you are inside it — putting both on one plate would say
+                  they are the same kind of thing. */}
+              <span className="tcs-lock">
+                <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png"
+                     alt="Tata Consultancy Services" width="1000" height="238" />
+                <span className="tcs-lock-rule" aria-hidden="true" />
+                <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
+              </span>
               <span className="ah-lockup-rule" aria-hidden="true" />
               {/* One flex item, so the module name never breaks across lines.
                   "Agentic AI-Led" on one line and "Automation Hub" on the next

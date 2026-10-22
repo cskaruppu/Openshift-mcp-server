@@ -9000,14 +9000,44 @@ body.light-theme .lg-error {
   --text2:    #c3cad6;
   --text-strong: #ffffff;
 }
-/* The hub's lockup is the shared one plus a module name, so it takes the
-   shared sizing and only the module half needs saying. */
-.ah-head .tcs-lock { padding: 0; border: 0; background: none;
-                     box-shadow: none; backdrop-filter: none; }
-.ah-head .tcs-lock-logo { height: 24px; filter: none; }
-.ah-head .tcs-lock-name { font-size: 15px; color: #fff; }
+/* The same glass plate as the cluster picker and the in-cluster header — the
+   rule above that styles `.app-header .tcs-lock` / `.cp-header .tcs-lock`
+   does not reach this bar, so it is restated here rather than inherited.
+   An earlier version of this block stripped the plate off; that made the
+   hub the one header of three without it. */
+.ah-lockup { align-items: center; }
+.ah-head .tcs-lock {
+  padding: 7px 14px 7px 12px;
+  border-radius: 12px;
+  background:
+    linear-gradient(112deg, rgba(200,232,255,0) 16%,
+                            rgba(200,232,255,.10) 30%,
+                            rgba(200,232,255,0) 46%),
+    linear-gradient(140deg, rgba(190,228,255,.14), rgba(120,170,220,.045));
+  border: 1px solid rgba(152,202,246,.22);
+  box-shadow: inset 0 1px 0 rgba(198,232,255,.28),
+              inset 1px 0 0 rgba(172,216,252,.12),
+              0 6px 18px rgba(0,0,0,.30);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+}
+.ah-head .tcs-lock-rule {
+  background: linear-gradient(180deg,
+    rgba(172,216,252,0), rgba(172,216,252,.52) 20%,
+    rgba(172,216,252,.52) 80%, rgba(172,216,252,0));
+}
+.ah-head .tcs-lock-logo,
+.light-theme .ah-head .tcs-lock-logo {
+  height: 24px; filter: drop-shadow(0 1px 6px rgba(140,190,240,.30));
+}
+.ah-head .tcs-lock-name,
+.light-theme .ah-head .tcs-lock-name {
+  font-size: 15px;
+  background: linear-gradient(104deg, #ffffff 0%, #ffffff 42%, #cfe3f8 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 .ah-head .ah-lockup-rule { background: rgba(172,216,252,.45); }
 .ah-head .ah-lockup-qual   { color: #9fb6cd; }
 .ah-head .ah-lockup-module { color: #fff; }
-.light-theme .ah-head .tcs-lock-logo { filter: none; }
-.light-theme .ah-head .tcs-lock-name { color: #fff; }
+
