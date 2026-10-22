@@ -119,3 +119,20 @@ test("citedCves pulls every CVE id out of model text", () => {
   assert.deepEqual(citedCves("Fix cve-2021-44228 and CVE-2023-4863.", "again CVE-2021-44228"), ["CVE-2021-44228", "CVE-2023-4863"]);
   assert.deepEqual(citedCves("no ids here"), []);
 });
+
+describe("upgrade candidates come from real registry tags", async () => {
+  const { upgradeCandidates, parseVersionTag } = await import("../../src/services/image-verify.js");
+  test("newest patch, newest minor, newest — same flavour, no pre-releases", () => {
+    const tags = ["2.4.49", "2.4.62", "2.4.69", "2.4.69-alpine", "2.5.0-rc1", "2.6.1", "3.0.0", "latest", "2.4"];
+    assert.deepEqual(upgradeCandidates("2.4.49", tags).map((c) => [c.kind, c.tag]), [["patch", "2.4.69"], ["minor", "2.6.1"], ["latest", "3.0.0"]]);
+    assert.deepEqual(upgradeCandidates("2.4.49-alpine", tags).map((c) => c.tag), ["2.4.69-alpine"]);
+  });
+  test("keeps the v-prefix and precision of the running tag", () => {
+    assert.deepEqual(upgradeCandidates("v1.6.1", ["v1.6.2", "1.7.0", "v1.8.0"]).map((c) => c.tag), ["v1.6.2", "v1.8.0"]);
+    assert.deepEqual(upgradeCandidates("3.8-slim", ["3.8.20-slim", "3.12-slim", "3.13-rc-slim"]).map((c) => c.tag), ["3.12-slim"]);
+  });
+  test("a tag that is not a version offers nothing rather than a guess", () => {
+    assert.equal(parseVersionTag("latest"), null);
+    assert.deepEqual(upgradeCandidates("latest", ["1.0.0"]), []);
+  });
+});

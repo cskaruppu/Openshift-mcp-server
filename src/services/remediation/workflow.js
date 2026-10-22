@@ -23,7 +23,7 @@ import { randomBytes } from "node:crypto";
 import { ocpFetch, ocpPatch } from "../../utils/openshift-client.js";
 import { query as dbQuery } from "../../utils/db.js";
 import { getKevSet } from "../kev-feed.js";
-import { sameImage, parseImageRef, isConcreteImageRef, verifyImageExists } from "../image-verify.js";
+import { sameImage, parseImageRef, isConcreteImageRef, verifyImageExists, suggestUpgrades } from "../image-verify.js";
 import { triageImage, resolveOwner } from "./triage.js";
 import * as git from "./git-providers.js";
 import { startGateScan, pollGateScan, evaluateGate } from "./gate.js";
@@ -198,11 +198,22 @@ export async function create({ cluster = "local", namespace, image, scan, actor 
       target: null, baseImage: null, gate: null, changes: [], changeRequest: null, approval: null, deploy: null, verify: null, exception: null,
       history: [{ at: now, actor: actor || "unknown", from: null, to: "triaged", note: `Opened for ${plan.items.length} CVE(s); ${plan.groups.length} fix type(s)` }],
     };
+    // Real newer tags from the registry, offered in the plan — not guessed.
+    try { rec.candidates = (await suggestUpgrades(image)).candidates || []; } catch { rec.candidates = []; }
     if (!workload) rec.history.push({ at: now, actor: "system", from: "triaged", to: "triaged", note: `No Deployment, StatefulSet or DaemonSet in ${namespace} runs this image — it can be tracked and excepted, not deployed` });
     _records.set(rec.id, rec);
     save();
     return rec;
   });
+}
+
+/** Re-read the registry's newer tags for the record's image. */
+export async function refreshCandidates(id) {
+  const rec = await get(id);
+  const r = await suggestUpgrades(rec.image).catch((e) => ({ candidates: [], reason: e.message }));
+  rec.candidates = r.candidates || [];
+  save();
+  return { candidates: rec.candidates, reason: r.reason || null };
 }
 
 /** Choose the replacement image (and, for a base-image rebuild, the new base). */
@@ -213,7 +224,12 @@ export async function setTarget(id, { image, baseImage, source = "operator" }, a
     if (!isConcreteImageRef(image)) throw err(400, "Not a valid image reference");
     if (sameImage(image, rec.image)) throw err(400, "That is the image already running");
     const check = await verifyImageExists(image);
-    if (check.exists === false) throw err(400, `Image not found: ${check.reason}`);
+    // A first-party image is built by CI from the source change, so its new
+    // tag does not exist yet — that is expected, and the CI pipeline on the
+    // PR / MR becomes the gate. A vendor tag must already exist.
+    const toBuild = check.exists === false && rec.firstParty && !!rec.repos.source;
+    if (check.exists === false && !toBuild) throw err(400, `Image not found: ${check.reason}`);
+    if (toBuild) check.toBeBuilt = true;
     rec.target = { image, source, verified: check, at: new Date().toISOString(), by: actor };
   }
   if (baseImage !== undefined) {
@@ -229,7 +245,7 @@ export async function setTarget(id, { image, baseImage, source = "operator" }, a
 export async function runGate(id, actor) {
   const rec = await get(id);
   if (!["planned", "gate-failed"].includes(rec.state)) throw err(409, "Choose a target image first");
-  if (!rec.target?.image) {
+  if (!rec.target?.image || rec.target?.verified?.toBeBuilt) {
     // A first-party fix that is rebuilt by CI has no image yet: its gate is
     // the CI pipeline on the PR / MR, checked before approval.
     if (rec.firstParty && rec.repos.source) {
@@ -309,6 +325,15 @@ async function buildChanges(rec) {
       } else if (g.type === "base-image" && rec.baseImage) {
         await touch(at("Dockerfile"), (t) => git.bumpDockerfileFrom(t, rec.baseImage));
       }
+    }
+    // Release the fix under the target tag: when the build manifest's own
+    // version is the running tag (1.0.0), set it to the target's (1.0.1) so
+    // CI publishes exactly the image the GitOps change points at.
+    const curTag = parseImageRef(rec.image)?.tag, newTag = parseImageRef(rec.target?.image || "")?.tag;
+    if (curTag && newTag && curTag !== newTag) {
+      const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      await touch(at("pom.xml"), (t) => { let count = 0; const text = t.replace(new RegExp(`(<artifactId>[^<]+</artifactId>\\s*<version>)${esc(curTag)}(</version>)`), (m, a, z) => (count++, `${a}${newTag}${z}`)); return { text, count }; });
+      await touch(at("package.json"), (t) => { let count = 0; const text = t.replace(new RegExp(`("version"\\s*:\\s*")${esc(curTag)}(")`), (m, a, z) => (count++, `${a}${newTag}${z}`)); return { text, count }; });
     }
     const baseGroup = rec.plan.groups.find((g) => g.type === "base-image");
     out.push({ repo: "source", provider: r.provider, webUrl: r.webUrl, base: ref, edits,

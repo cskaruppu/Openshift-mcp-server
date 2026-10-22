@@ -9068,6 +9068,7 @@ spec:
           rollback: () => W.rollback(id, actor, body.reason || "manual rollback"),
           promote: () => W.promote(id, { cluster: body.cluster || cluster, namespace: body.namespace }, actor, { scanFor: remediationScanFor }),
           refresh: async () => { await W.tick(); return W.get(id); },
+          candidates: () => W.refreshCandidates(id),
         }[action];
         if (!act) return sendJson(res, 404, { error: `Unknown action ${action}` });
         const out = await act();

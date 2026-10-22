@@ -67,7 +67,7 @@ import {
 import { createIncident as createServiceNowIncident, resolveIncident as snowResolveIncident, createChangeRequest as snowCreateChangeRequest, updateRecord as snowUpdateRecord } from "../utils/servicenow-client.js";
 import { notifyAll } from "./integrations.js";
 import { getKevSet, kevStatus } from "./kev-feed.js";
-import { parseImageRef, isConcreteImageRef, sameImage, verifyImageExists, citedCves } from "./image-verify.js";
+import { parseImageRef, isConcreteImageRef, sameImage, verifyImageExists, citedCves, suggestUpgrades } from "./image-verify.js";
 import { checkPermission } from "./auth.js";
 import { callLLM, callLLMStream, classifyJSON, llmEnabled, normaliseUsage, normaliseStopReason } from "./llm.js";
 import { resolveLLMOpts } from "./dashboard-api.js";
@@ -1106,8 +1106,13 @@ function readBody(req) {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-      catch (e) { reject(e); }
+      // An empty body is an empty request, not a parse error — the AI
+      // analysis button posts with nothing to send, and that surfaced as
+      // "Unexpected end of JSON input" instead of running the analysis.
+      const text = Buffer.concat(chunks).toString().trim();
+      if (!text) return resolve({});
+      try { resolve(JSON.parse(text)); }
+      catch (e) { reject(Object.assign(new Error("Request body is not valid JSON"), { status: 400 })); }
     });
     req.on("error", reject);
   });
@@ -20211,15 +20216,28 @@ Respond ONLY with this JSON object (no markdown fences):
       const concrete = isConcreteImageRef(suggested) && !sameImage(suggested, image);
       const imageCheck = concrete ? await verifyImageExists(suggested)
         : { exists: false, reason: suggested ? (sameImage(suggested, image) ? "same as the current image" : "not a valid image reference") : "no image suggested" };
-      const usable = concrete && imageCheck.exists !== false;
+      let usable = concrete && imageCheck.exists !== false;
+      // When the model's tag does not exist, offer what the registry actually
+      // publishes: the newest patch, then minor, then latest of the same flavour.
+      const upgrades = await suggestUpgrades(image).catch(() => ({ candidates: [] }));
+      let registryPick = null;
+      if (!usable && upgrades.candidates?.length) {
+        registryPick = upgrades.candidates[0];
+        const pickCheck = await verifyImageExists(registryPick.image);
+        if (pickCheck.exists !== false) { usable = true; imageCheck.registryPick = { ...registryPick, check: pickCheck }; }
+      }
+      const chosen = registryPick && imageCheck.registryPick ? registryPick.image : suggested;
       const scanIds = new Set(vulns.map(v => String(v.id || "").toUpperCase()));
       const cited = citedCves(parsed.rationale, ...(Array.isArray(parsed.steps) ? parsed.steps : []));
       return json(res, 200, {
         image,
-        recommendedImage: usable ? suggested : fallback.recommendedImage,
+        recommendedImage: usable ? chosen : fallback.recommendedImage,
         aiSuggestedImage: suggested || null,
         imageCheck,
-        command: usable ? String(parsed.command || fallback.command).slice(0, 400) : fallback.command,
+        candidates: upgrades.candidates || [],
+        command: usable ? (registryPick && imageCheck.registryPick
+          ? `oc set image ${deployment ? `deployment/${deployment}` : "deployment/<deployment>"} <container>=${chosen} -n ${namespace || "<namespace>"}`
+          : String(parsed.command || fallback.command).slice(0, 400)) : fallback.command,
         dockerfilePatch: parsed.dockerfilePatch ? String(parsed.dockerfilePatch).slice(0, 400) : null,
         steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 6).map(s => String(s).slice(0, 200)) : fallback.steps,
         rationale: String(parsed.rationale || fallback.rationale).slice(0, 400),
@@ -20228,7 +20246,8 @@ Respond ONLY with this JSON object (no markdown fences):
         fixesCount: fixable.length,
         totalCount: vulns.length,
         provider: r.provider || provider,
-        note: usable ? undefined : `AI suggestion rejected: ${imageCheck.reason || "tag not found"}. Choose the replacement tag manually.`,
+        note: !usable ? `AI suggestion rejected: ${imageCheck.reason || "tag not found"}. Choose the replacement tag manually.`
+          : imageCheck.registryPick ? `The AI suggested ${suggested || "no tag"}, which ${imageCheck.reason || "does not exist"}; using ${chosen}, the newest ${registryPick.kind === "patch" ? "patch release" : registryPick.kind === "minor" ? "minor release" : "release"} the registry publishes.` : undefined,
       });
     } catch {
       return json(res, 200, { ...fallback, provider: r.provider || provider, note: "AI response unparseable — showing safe default" });

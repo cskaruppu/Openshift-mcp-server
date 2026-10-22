@@ -9727,3 +9727,7 @@ code.new { color: #22a06b; }
 .rw-policy { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 14px; border-radius: 10px; background: var(--vc-surface); border: 1px dashed var(--vc-line); font-size: 0.74rem; color: var(--vc-ink-2); }
 .rw-policy b { color: var(--vc-ink); margin-right: 4px; }
 @media (max-width: 1280px) { .rw-kpis { grid-template-columns: repeat(3, 1fr); } .rw-steps { grid-template-columns: repeat(4, 1fr); } }
+.rw-cands { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 0.74rem; }
+.rw-cand { display: inline-flex; align-items: baseline; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--vc-line); background: var(--vc-surface-2); cursor: pointer; color: var(--vc-ink); font: 600 0.76rem var(--tcs-font-mono); }
+.rw-cand span { font: 600 0.66rem var(--tcs-font); color: var(--vc-ink-3); }
+.rw-cand.on, .rw-cand:hover { border-color: var(--tcs-blue); background: color-mix(in srgb, var(--tcs-blue) 10%, var(--vc-surface-2)); }

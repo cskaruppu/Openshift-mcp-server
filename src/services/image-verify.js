@@ -132,3 +132,96 @@ export function citedCves(...texts) {
   for (const t of texts) for (const m of String(t || "").matchAll(/CVE-\d{4}-\d{4,}/gi)) out.add(m[0].toUpperCase());
   return [...out];
 }
+
+/**
+ * Every tag the registry publishes for the image's repository (anonymous
+ * pull token; Docker Hub and OCI registries page with `Link`). Returns
+ * { tags: [...] } or { tags: null, reason }.
+ */
+export async function listTags(ref, { fetchImpl, max = 5000 } = {}) {
+  const f = fetchImpl || timedFetch;
+  const p = parseImageRef(ref);
+  if (!p) return { tags: null, reason: "not a valid image reference" };
+  const host = p.registry === "docker.io" ? "registry-1.docker.io" : p.registry;
+  let url = `https://${host}/v2/${p.repo}/tags/list?n=1000`;
+  let token = null;
+  const tags = [];
+  try {
+    for (let page = 0; page < 10 && url && tags.length < max; page++) {
+      let r = await f(url, { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+      if (r.status === 401 && !token) {
+        const ch = parseBearerChallenge(r.headers.get("www-authenticate"));
+        if (!ch) return { tags: null, reason: "registry requires credentials" };
+        const q = new URLSearchParams();
+        if (ch.service) q.set("service", ch.service);
+        q.set("scope", ch.scope || `repository:${p.repo}:pull`);
+        const tr = await f(`${ch.realm}?${q}`, { headers: { Accept: "application/json" } });
+        if (!tr.ok) return { tags: null, reason: `registry token refused (HTTP ${tr.status})` };
+        const tj = await tr.json().catch(() => ({}));
+        token = tj.token || tj.access_token;
+        if (!token) return { tags: null, reason: "registry gave no anonymous token" };
+        r = await f(url, { headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
+      }
+      if (!r.ok) return { tags: tags.length ? tags : null, reason: `registry answered HTTP ${r.status}` };
+      const j = await r.json().catch(() => ({}));
+      tags.push(...(j.tags || []));
+      const link = r.headers.get("link");
+      const m = link && link.match(/<([^>]+)>;\s*rel="next"/);
+      url = m ? (m[1].startsWith("http") ? m[1] : `https://${host}${m[1]}`) : null;
+    }
+    return { tags };
+  } catch (e) {
+    return { tags: tags.length ? tags : null, reason: e?.name === "AbortError" ? "registry did not answer in time" : `registry unreachable (${e?.message || e})` };
+  }
+}
+
+const PRERELEASE = /(^|[-.])(rc|alpha|beta|dev|nightly|snapshot|pre|preview|edge|canary|test)\d*([-.]|$)/i;
+
+/** "v1.25.3-alpine" → { prefix:"v", nums:[1,25,3], flavor:"-alpine" }, or null for non-version tags. */
+export function parseVersionTag(tag) {
+  // A build number after "_" or "+" (eclipse-temurin's 17.0.8_7) is part of
+  // the version, not of the flavour that follows it (-jre-jammy).
+  const m = String(tag || "").match(/^(v?)(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?(?:[_+](\d+))?(.*)$/);
+  if (!m) return null;
+  const nums = [m[2], m[3], m[4], m[5]].filter((x) => x !== undefined).map(Number);
+  return { prefix: m[1], nums, build: m[6] !== undefined ? Number(m[6]) : null, flavor: m[7] || "" };
+}
+
+const cmpNums = (a, b) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] ?? 0) - (b[i] ?? 0); if (d) return d; } return 0; };
+
+/**
+ * From the registry's real tags, the upgrade candidates for `currentTag`:
+ * the newest patch (same major.minor), newest minor (same major) and newest
+ * overall — same flavour (-alpine, -slim, -debian-12 …), same precision,
+ * no pre-releases. Nothing is invented: each one is a tag that exists.
+ */
+export function upgradeCandidates(currentTag, tags) {
+  const cur = parseVersionTag(currentTag);
+  if (!cur || !Array.isArray(tags)) return [];
+  const pool = [];
+  for (const t of tags) {
+    if (PRERELEASE.test(t.replace(cur.flavor, ""))) continue;
+    const v = parseVersionTag(t);
+    if (!v || v.flavor !== cur.flavor || v.prefix !== cur.prefix || v.nums.length !== cur.nums.length || (v.build === null) !== (cur.build === null)) continue;
+    if (cmpNums([...v.nums, v.build ?? 0], [...cur.nums, cur.build ?? 0]) <= 0) continue;
+    v.nums = [...v.nums, v.build ?? 0];
+    pool.push({ tag: t, v });
+  }
+  pool.sort((a, b) => cmpNums(b.v.nums, a.v.nums));
+  const out = [];
+  const add = (kind, c) => { if (c && !out.some((o) => o.tag === c.tag)) out.push({ kind, tag: c.tag }); };
+  add("patch", pool.find((c) => c.v.nums[0] === cur.nums[0] && (cur.nums.length < 3 || c.v.nums[1] === cur.nums[1])));
+  add("minor", pool.find((c) => c.v.nums[0] === cur.nums[0]));
+  add("latest", pool[0]);
+  return out;
+}
+
+/** Real newer tags for an image, as full references. */
+export async function suggestUpgrades(ref, opts) {
+  const p = parseImageRef(ref);
+  if (!p || p.digest && !p.tag) return { candidates: [], reason: "pinned by digest only — no tag to compare" };
+  const list = await listTags(ref, opts);
+  if (!list.tags) return { candidates: [], reason: list.reason };
+  const base = String(ref).split("@")[0].replace(/:[^/:]+$/, "");
+  return { candidates: upgradeCandidates(p.tag, list.tags).map((c) => ({ ...c, image: `${base}:${c.tag}` })), totalTags: list.tags.length };
+}

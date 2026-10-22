@@ -290,16 +290,33 @@ function TargetSection({ rec, img, cluster, can, busy, act }) {
       const r = await fetch(clusterUrl("/api/ai/image-remediation", cluster), { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: rec.image, namespace: rec.namespace, deployment: rec.workload?.name || "", vulnerabilities: img.vulnerabilities || [] }) });
       const j = await r.json();
-      if (j.recommendedImage && !/[<>]/.test(j.recommendedImage)) { setImage(j.recommendedImage); setAiNote(j.imageCheck?.exists === true ? "AI suggestion — tag exists in its registry. Review, then save." : `AI suggestion — ${j.imageCheck?.reason || "not verified"}. Review, then save.`); }
+      if (j.recommendedImage && !/[<>]/.test(j.recommendedImage)) {
+        setImage(j.recommendedImage);
+        setAiNote(j.imageCheck?.registryPick ? `${j.note} Review, then save.` : j.imageCheck?.exists === true ? "AI suggestion — tag exists in its registry. Review, then save." : `AI suggestion — ${j.imageCheck?.reason || "not verified"}. Review, then save.`);
+      }
       else setAiNote(j.note || "The AI did not return a usable tag — enter one.");
     } catch (e) { setAiNote(e.message); } finally { setSuggesting(false); }
   };
   return (
     <section className="rw-sec">
       <header><span className="rw-n">2</span><h5>Replacement</h5><span className="vc-muted">{rec.firstParty ? "a patched tag, or leave empty to let CI build it from the source change" : "the vendor's patched tag"}</span></header>
-      {rec.target && <div className={"rw-card " + (rec.target.verified?.exists === true ? "ok" : "warn")}>Target <code>{rec.target.image}</code> — {rec.target.verified?.exists === true ? "exists in its registry" : `not verified: ${rec.target.verified?.reason}`}{rec.target.source !== "operator" ? ` · ${rec.target.source}` : ""}</div>}
+      {rec.target && <div className={"rw-card " + (rec.target.verified?.exists === true || rec.target.verified?.toBeBuilt ? "ok" : "warn")}>Target <code>{rec.target.image}</code> — {rec.target.verified?.exists === true ? "exists in its registry" : rec.target.verified?.toBeBuilt ? "will be built by CI from the source change" : `not verified: ${rec.target.verified?.reason}`}{rec.target.source !== "operator" ? ` · ${rec.target.source}` : ""}</div>}
       {editable && (
         <div className="rw-form">
+          {(rec.candidates || []).length > 0 && (
+            <div className="rw-cands">
+              <span className="vc-muted">Published by the registry</span>
+              {rec.candidates.map((c) => (
+                <button key={c.tag} type="button" className={"rw-cand" + (image === c.image ? " on" : "")} onClick={() => setImage(c.image)} title={c.image}>
+                  <b>{c.tag}</b><span>{c.kind === "patch" ? "newest patch" : c.kind === "minor" ? "newest minor" : "newest"}</span>
+                </button>
+              ))}
+              <button type="button" className="vc-btn ghost sm" disabled={!!busy} onClick={() => act("candidates")}>Re-check</button>
+            </div>
+          )}
+          {(rec.candidates || []).length === 0 && (
+            <div className="rw-cands"><span className="vc-muted">No newer published tag found for this image yet.</span><button type="button" className="vc-btn ghost sm" disabled={!!busy} onClick={() => act("candidates")}>Check registry</button></div>
+          )}
           <label>Replacement image<input value={image} onChange={(e) => setImage(e.target.value)} placeholder={`${splitImage(rec.image).path}/${splitImage(rec.image).name}:<patched tag>`} /></label>
           {needsBase && <label>New base image <span className="vc-muted">(for the Dockerfile FROM)</span><input value={base} onChange={(e) => setBase(e.target.value)} placeholder="e.g. registry.access.redhat.com/ubi9/ubi-minimal:9.5" /></label>}
           <div className="rw-form-actions">

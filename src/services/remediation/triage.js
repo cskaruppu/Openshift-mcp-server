@@ -11,6 +11,16 @@
 // package, and the plan groups them by the change that fixes them.
 
 import { kevDetails } from "../kev-feed.js";
+import { cmpVer } from "./git-providers.js";
+
+/** The fixed version to move to from `installed`, out of a scanner's "a, b, c" list. */
+export function neededFix(installed, fixedList) {
+  const opts = String(fixedList || "").split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+  if (!opts.length) return null;
+  const above = installed ? opts.filter((v) => cmpVer(v, installed) > 0) : opts;
+  const pool = above.length ? above : opts;
+  return pool.reduce((m, v) => (cmpVer(v, m) < 0 ? v : m), pool[0]);
+}
 
 export const FIX_TYPES = {
   "base-image": { label: "Rebuild on a patched base image", where: "Dockerfile FROM / base image", owner: "image" },
@@ -136,14 +146,36 @@ export function triageImage({ vulnerabilities = [], firstParty, firstSeen }) {
   const list = Object.values(groups).sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || a.due.localeCompare(b.due));
   for (const g of list) {
     // One line per package: the bump a reviewer will see in the PR.
+    // Scanners list one fixed version per release line ("2.15.0, 2.3.1,
+    // 2.12.2"). For each CVE the right one is the lowest that is still above
+    // what is installed; for the package, the highest of those across its
+    // CVEs — log4j 2.14.1 needs 2.17.1, not the 2.15.0 listed first.
     const byPkg = new Map();
     for (const it of g.items) {
-      const p = byPkg.get(it.package) || { package: it.package, installed: it.installed, fixed: it.fixed, cves: [] };
+      const p = byPkg.get(it.package) || { package: it.package, installed: it.installed, fixed: null, cves: [] };
       p.cves.push(it.id);
-      if (it.fixed && (!p.fixed || String(it.fixed) > String(p.fixed))) p.fixed = it.fixed;
+      const need = neededFix(it.installed, it.fixed);
+      if (need && (!p.fixed || cmpVer(need, p.fixed) > 0)) p.fixed = need;
       byPkg.set(it.package, p);
     }
     g.packages = [...byPkg.values()];
+    // Artifacts released together (log4j-core + log4j-api, the jackson-*
+    // family) move together: siblings in one group at one version get the
+    // highest version any of them needs, so the build is never half-upgraded.
+    if (g.type === "dependency" && g.ecosystem === "maven") {
+      const fam = new Map();
+      for (const p of g.packages) {
+        const grp = String(p.package).split(":")[0];
+        const k = `${grp}@${p.installed}`;
+        if (!fam.has(k)) fam.set(k, []);
+        fam.get(k).push(p);
+      }
+      for (const list of fam.values()) {
+        if (list.length < 2) continue;
+        const top = list.map((p) => p.fixed).filter(Boolean).reduce((m, v) => (!m || cmpVer(v, m) > 0 ? v : m), null);
+        if (top) for (const p of list) { if (p.fixed !== top) p.aligned = true; p.fixed = top; }
+      }
+    }
   }
   const due = items.length ? items.reduce((m, i) => (i.due < m ? i.due : m), items[0].due) : null;
   return { items, groups: list, due, policy };

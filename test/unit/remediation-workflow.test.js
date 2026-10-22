@@ -305,3 +305,40 @@ describe("GitHub", () => {
     assert.equal(st.checks, "failure", "one failed check fails the change");
   });
 });
+
+describe("first-party image: source PR on GitHub, CI as the gate", () => {
+  test("a tag CI will build is accepted; the PR bumps dependencies and the release version", async () => {
+    const POM = `<project>\n  <groupId>com.tcs.demo</groupId>\n  <artifactId>payments-api</artifactId>\n  <version>3.14.2</version>\n  <dependencies>\n    <dependency>\n      <groupId>org.apache.logging.log4j</groupId>\n      <artifactId>log4j-core</artifactId>\n      <version>2.14.1</version>\n    </dependency>\n  </dependencies>\n</project>\n`;
+    const puts = {};
+    const base = fakeFetch();
+    global.fetch = async (url, opts = {}) => {
+      const u = String(url);
+      const reply = (status, body) => ({ ok: status < 400, status, headers: { get: () => null }, text: async () => JSON.stringify(body), json: async () => body });
+      if (u.startsWith("https://quay.io/v2/") && u.includes("3.14.3")) return reply(404, null);
+      if (u.startsWith("https://api.github.com/repos/tcs/payments-api")) {
+        const rest = u.replace("https://api.github.com/repos/tcs/payments-api", "").split("?")[0];
+        if (rest === "") return reply(200, { default_branch: "main" });
+        if (rest === "/contents/pom.xml" && (opts.method || "GET") === "GET") return reply(200, { content: Buffer.from(POM).toString("base64"), sha: "p1" });
+        if (rest.startsWith("/contents/") && (opts.method || "GET") === "GET") return reply(404, { message: "Not Found" });
+        if (rest === "/git/ref/heads/main") return reply(200, { object: { sha: "s1" } });
+        if (rest === "/git/refs") return reply(201, {});
+        if (rest.startsWith("/contents/")) { puts[rest] = Buffer.from(JSON.parse(opts.body).content, "base64").toString(); return reply(200, {}); }
+        if (rest === "/pulls") return reply(201, { number: 9, html_url: "https://github.com/tcs/payments-api/pull/9" });
+        if (rest.startsWith("/issues/")) return reply(200, []);
+      }
+      return base(url, opts);
+    };
+    cluster = { deployment: deployment({ "app.openshift.io/vcs-uri": "https://github.com/tcs/payments-api" }) };
+    let rec = await W.create({ namespace: "payments", image: OLD, scan: SCAN, actor: "alice" });
+    assert.equal(rec.firstParty, true);
+    rec = await W.setTarget(rec.id, { image: NEW }, "alice");
+    assert.equal(rec.target.verified.toBeBuilt, true);
+    rec = await W.runGate(rec.id, "alice");
+    assert.equal(rec.gate.mode, "ci");
+    rec = await W.raiseChange(rec.id, {}, "alice");
+    const pom = puts["/contents/pom.xml"];
+    assert.match(pom, /<artifactId>log4j-core<\/artifactId>\s*<version>2\.15\.0<\/version>/);
+    assert.match(pom, /<artifactId>payments-api<\/artifactId>\s*<version>3\.14\.3<\/version>/, "release version follows the target tag");
+    assert.equal(rec.changes[0].url, "https://github.com/tcs/payments-api/pull/9");
+  });
+});
