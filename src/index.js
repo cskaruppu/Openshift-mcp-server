@@ -9108,6 +9108,37 @@ spec:
           kube = AX.parseKubeconfig(body.kubeconfig, body.context || null);
           input = { apiUrl: kube.apiUrl, token: kube.token, caCert: body.caCert || kube.caCert };
         }
+        // An admin login from a kubeconfig (a certificate one always, a token one
+        // when asked) is not kept: the hub uses it once to create limited access
+        // that expires, and saves only that. Never logged, never stored.
+        if (kube && (kube.auth === "certificate" || body.setupLimited === true)) {
+          const BS = await import("./services/private-ai/bootstrap.js");
+          const login = { apiUrl: kube.apiUrl, caCert: body.caCert || kube.caCert, token: kube.token || null, clientCert: kube.clientCert || null, clientKey: kube.clientKey || null };
+          if (!/^https:\/\//.test(login.apiUrl)) return sendJson(res, 400, { error: "The kubeconfig's server must be https://" });
+          const ctx = { contexts: kube.contexts, context: kube.context, notes: kube.notes, certificateLogin: kube.auth === "certificate" };
+          let who;
+          try { who = await AX.inspectAccess(login); }
+          catch (e) { return sendJson(res, 200, { ok: false, message: AX.explainFailure(e), ...ctx }); }
+          const hours = Math.min(720, Math.max(1, Math.round(Number(body.durationHours) || 72)));
+          if (url.pathname.endsWith("/test") || body.setupLimited !== true) {
+            return sendJson(res, 200, { ok: true, setupOffer: true, identity: who.identity, kind: who.kind, clusterAdmin: who.clusterAdmin, version: who.version, ...ctx,
+              message: `Connected to ${cluster} (OpenShift ${who.version}) as ${who.identity || "this login"}. ${kube.auth === "certificate" ? "A certificate login is not kept: " : ""}the hub will use it once to set up limited access that expires in ${hours} h, then forget it.` });
+          }
+          let setup;
+          try { setup = await BS.setupLimitedAccess(login, { durationHours: hours }); }
+          catch (e) { return sendJson(res, 200, { ok: false, message: `Setup failed: ${AX.explainFailure(e).replace(/^Could not connect: /, "")}`, ...ctx }); }
+          const a = PS.validateAccess({ apiUrl: login.apiUrl, token: setup.token, caCert: login.caCert });
+          let info;
+          try { info = await AX.inspectAccess(a); }
+          catch (e) { return sendJson(res, 200, { ok: false, message: `Limited access was created but does not work yet: ${AX.explainFailure(e)}`, ...ctx }); }
+          if (!info.expiresAt && setup.expiresAt) info.expiresAt = setup.expiresAt;
+          const out = await PS.saveClusterAccess(cluster, a, { actor, info, source: "kubeconfig-setup" });
+          logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
+            title: `Private AI: limited access to ${cluster} set up with ${who.identity || "an admin login"}'s ${kube.auth === "certificate" ? "certificate" : "login"} (not stored)`,
+            details: { apiUrl: a.apiUrl, applied: setup.applied, expiresAt: info.expiresAt, hours, storage: out.storage } }).catch(() => {});
+          return sendJson(res, 200, { ok: true, message: `Limited access to ${cluster} set up and saved (demo app deployed). The ${kube.auth === "certificate" ? "certificate" : "login"} you uploaded was not kept.`,
+            ...info, expiry: AX.expiryText(info.expiresAt), apiUrl: a.apiUrl, applied: setup.applied, ...ctx, ...out });
+        }
         const a = PS.validateAccess(input);
         let info;
         try { info = await AX.inspectAccess(a); }

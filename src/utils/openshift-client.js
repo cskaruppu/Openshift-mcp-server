@@ -21,9 +21,14 @@ const ocpAgent = new Agent({
 
 // A remote cluster registered for direct access may bring its own CA (its API
 // server is signed by that cluster's CA, which this pod does not trust). One
-// pooled agent per CA bundle.
+// pooled agent per CA bundle. A client-certificate login (one-off setup calls
+// only, never stored) gets an agent of its own for that context.
 const _caAgents = new Map();
 function dispatcherFor(remote) {
+  if (remote?.cert && remote?.key) {
+    if (!remote._agent) remote._agent = new Agent({ connect: { timeout: 15_000, ca: remote.ca || undefined, cert: remote.cert, key: remote.key }, pipelining: 1, connections: 4 });
+    return remote._agent;
+  }
   if (!remote?.ca) return ocpAgent;
   let a = _caAgents.get(remote.ca);
   if (!a) {
@@ -159,8 +164,8 @@ export function activeClusterContext() {
  * Run `fn` with all ocpFetch() calls routed to the given remote cluster.
  * Safe under concurrency — each async context gets its own override.
  */
-export function withRemoteCluster(apiUrl, token, fn, { ca = null } = {}) {
-  return clusterStore.run({ apiUrl, token, ca }, fn);
+export function withRemoteCluster(apiUrl, token, fn, { ca = null, cert = null, key = null } = {}) {
+  return clusterStore.run({ apiUrl, token, ca, cert, key }, fn);
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +277,7 @@ export async function ocpFetch(path, options = {}) {
       signal: controller.signal,
       dispatcher: dispatcherFor(remote),
       headers: {
-        Authorization: `Bearer ${tk}`,
+        ...(tk ? { Authorization: `Bearer ${tk}` } : {}),
         Accept: acceptsText ? "text/plain" : "application/json",
         "Content-Type": "application/json",
         ...options.headers,

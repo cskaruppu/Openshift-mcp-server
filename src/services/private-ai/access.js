@@ -34,12 +34,19 @@ export function parseKubeconfig(text, wanted = null) {
   if (cluster["certificate-authority"]) notes.push("The CA is a file on your machine (certificate-authority), not in the kubeconfig — paste it in the CA field if the test reports a certificate error");
   if (cluster["insecure-skip-tls-verify"]) notes.push("This kubeconfig skips certificate checks; the hub does not — paste the cluster's CA if the test reports a certificate error");
 
-  if (!user.token) {
-    const how = user["client-certificate-data"] || user["client-certificate"] ? "a client certificate"
-      : user.exec ? "an exec plugin" : user["auth-provider"] ? "an auth provider" : user.username ? "a username and password" : "no token";
-    throw fail(`Context "${name}" logs in with ${how}, which cannot be handed to the hub. Log in with a token (oc login) or use connect-gpu-cluster.sh`);
+  const base = { contexts, context: name, apiUrl: String(cluster.server).replace(/\/+$/, ""), caCert, notes };
+  if (user.token) return { ...base, auth: "token", token: String(user.token).trim() };
+  // A certificate login (e.g. the installer's system:admin kubeconfig) is never
+  // stored: it can only be used once, to set up limited expiring access.
+  if (user["client-certificate-data"] && user["client-key-data"]) {
+    return { ...base, auth: "certificate",
+      clientCert: Buffer.from(user["client-certificate-data"], "base64").toString("utf8"),
+      clientKey: Buffer.from(user["client-key-data"], "base64").toString("utf8") };
   }
-  return { contexts, context: name, apiUrl: String(cluster.server).replace(/\/+$/, ""), caCert, token: String(user.token).trim(), notes };
+  const how = user["client-certificate"] ? "a client certificate kept in a file on your machine (client-certificate), which is not in the kubeconfig — run: oc config view --minify --raw --flatten, and upload that instead"
+    : user.exec ? "an exec plugin, which cannot be handed to the hub" : user["auth-provider"] ? "an auth provider, which cannot be handed to the hub"
+    : user.username ? "a username and password, which cannot be handed to the hub" : "no credentials";
+  throw fail(`Context "${name}" logs in with ${how}. Log in with a token (oc login) or use connect-gpu-cluster.sh`);
 }
 
 /** Expiry written inside a service-account (JWT) token; null for other tokens. */
@@ -59,18 +66,19 @@ const oauthObjectName = (token) => "sha256~" + createHash("sha256").update(token
  * Connect with the token and report: cluster version, who it is, whether it is
  * cluster-admin, and when it expires. Throws when the cluster cannot be used.
  */
-export async function inspectAccess({ apiUrl, token, caCert }) {
+export async function inspectAccess({ apiUrl, token = null, caCert, clientCert = null, clientKey = null }) {
   return withRemoteCluster(apiUrl, token, async () => {
     const cv = await ocpGet("/apis/config.openshift.io/v1/clusterversions/version");
     const out = { version: cv?.status?.desired?.version || "unknown", identity: null, kind: "token", clusterAdmin: false, expiresAt: null, permanent: false };
 
-    const jwt = jwtExpiry(token);
-    if (jwt) {
+    const jwt = token ? jwtExpiry(token) : null;
+    if (!token) out.kind = "certificate login";
+    else if (jwt) {
       out.kind = "service account";
       out.identity = jwt.subject;
       out.expiresAt = jwt.expiresAt;
       out.permanent = !jwt.expiresAt;
-    } else if (token.startsWith("sha256~")) {
+    } else if (token && token.startsWith("sha256~")) {
       out.kind = "user login";
       try {
         const t = await ocpGet(`/apis/oauth.openshift.io/v1/useroauthaccesstokens/${encodeURIComponent(oauthObjectName(token))}`);
@@ -87,7 +95,7 @@ export async function inspectAccess({ apiUrl, token, caCert }) {
       out.clusterAdmin = !!r?.status?.allowed;
     } catch { /* unknown */ }
     return out;
-  }, { ca: caCert || null });
+  }, { ca: caCert || null, cert: clientCert, key: clientKey });
 }
 
 /** "expires in 2 d 5 h" / "expired 3 h ago" / null. */

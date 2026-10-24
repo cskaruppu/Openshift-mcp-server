@@ -1,0 +1,68 @@
+# Direct API access for the hub to the GPU cluster, when the GPU cluster is
+# connected through its agent (which only sends reports). Apply ON THE GPU
+# CLUSTER, after scenario-payments.yaml (the demo namespace must exist) —
+# connect-gpu-cluster.sh does both, issues an expiring token for the service
+# account (72 h by default) and prints what to paste into
+# Settings → Private AI → Cluster access.
+#
+# What the hub can do with it:
+#   read the cluster (view + nodes + GPU telemetry) — Dashboard, GPU check, incident detection
+#   change workloads in tcs-demo-payments only  — inject / reset the fault, roll back
+# Remove with: oc delete -f gpu-cluster-access.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tcs-agentic-ai-access
+  labels: { tcs.com/demo: private-ai-ops }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tcs-agentic-ai-hub
+  namespace: tcs-agentic-ai-access
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tcs-agentic-ai-hub-read
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["config.openshift.io"]
+    resources: ["clusterversions", "clusteroperators"]
+    verbs: ["get", "list"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tcs-agentic-ai-hub-read
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: tcs-agentic-ai-hub-read }
+subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tcs-agentic-ai-hub-view
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view }
+subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
+---
+# GPU telemetry (DCGM metrics through the cluster's monitoring stack)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tcs-agentic-ai-hub-monitoring
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-monitoring-view }
+subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
+---
+# Write access only where the demo runs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tcs-agentic-ai-hub-demo
+  namespace: tcs-demo-payments
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
+subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]

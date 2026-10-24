@@ -45,9 +45,13 @@ through its agent, give the hub direct API access to it. Two ways:
   ./connect-gpu-cluster.sh --context <gpu-cluster-context>                  # 72 h (default)
   ./connect-gpu-cluster.sh --context <gpu-cluster-context> --duration 168h  # a week
   ```
-- **A kubeconfig.** Paste or upload it (`oc config view --minify --raw`) in Settings. Nothing to set
-  up on the GPU cluster, but the hub acts with that login's rights (you must confirm if it is
-  cluster-admin) and stops working when the login expires (usually 24 h). Token logins only.
+- **A kubeconfig.** Paste or upload it (`oc config view --minify --raw`) in Settings → **Test**.
+  - A **certificate login** (e.g. the installer's `admin` kubeconfig, `system:admin`) is never
+    stored: **Set up limited access** uses it once to do what `connect-gpu-cluster.sh` does
+    (demo app, limited service account, expiring token — 24 h to 2 weeks) and keeps only that token.
+  - A **token login** (`oc login`) can be saved as is — the hub then acts with that login's rights
+    (you must confirm if it is cluster-admin) until it expires (usually 24 h) — or, better, used the
+    same way to set up limited access.
 
 Settings and the Command Center header show who the access acts as and when it expires, and warn
 from 24 h before; an expired access blocks the checks with the fix. Apply the demo app yourself on

@@ -1149,7 +1149,7 @@ function AccessFacts({ r }) {
   const rows = [
     ["Signed in as", `${r.identity || "unknown"}${r.kind ? ` (${r.kind})` : ""}`],
     ["Rights", r.clusterAdmin ? "cluster-admin — far more than the demo needs" : "limited"],
-    ["Expiry", r.expiry || (r.permanent ? "does not expire" : "unknown")],
+    ["Expiry", r.kind === "certificate login" ? "not kept — used once for the setup" : r.expiry || (r.permanent ? "does not expire" : "unknown")],
   ];
   return (
     <div style={{ fontSize: 12, margin: "0 0 10px", display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 12px" }}>
@@ -1170,9 +1170,10 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
   const [ackAdmin, setAckAdmin] = useState(false);
+  const [hours, setHours] = useState(72);
   const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setResult(null); setAckAdmin(false); };
   const body = () => (mode === "kubeconfig"
-    ? { cluster, kubeconfig: f.kubeconfig, context: f.context || null, caCert: f.caCert.trim() || null, acknowledgeAdmin: ackAdmin }
+    ? { cluster, kubeconfig: f.kubeconfig, context: f.context || null, caCert: f.caCert.trim() || null, acknowledgeAdmin: ackAdmin, durationHours: hours }
     : { cluster, apiUrl: f.apiUrl.trim(), token: f.token.trim(), caCert: f.caCert.trim() || null, acknowledgeAdmin: ackAdmin });
   const ready = mode === "kubeconfig" ? f.kubeconfig.trim() : f.apiUrl.trim() && f.token.trim();
   const call = async (path, method, payload) => {
@@ -1190,8 +1191,8 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
     setResult(j);
     if (j.context && !f.context) setF((x) => ({ ...x, context: j.context }));
   });
-  const save = () => run("save", async () => {
-    const j = await call("/api/private-ai/cluster-access", "POST", body());
+  const save = (extra = {}) => run("save", async () => {
+    const j = await call("/api/private-ai/cluster-access", "POST", { ...body(), ...extra });
     setResult(j);
     if (j.ok) { showToast(`Direct access to ${cluster} saved`, "ok"); setF({ apiUrl: j.apiUrl || "", token: "", caCert: "", kubeconfig: "", context: "" }); onSaved(); }
   });
@@ -1205,8 +1206,11 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
     file.text().then((t) => { setF((x) => ({ ...x, kubeconfig: t, context: "" })); setResult(null); });
     e.target.value = "";
   };
-  // Saving a cluster-admin login needs an explicit yes once the test has shown it.
+  // Saving a cluster-admin login needs an explicit yes once the test has shown it;
+  // setting up limited access with it instead needs none.
   const needsAck = result?.clusterAdmin && !ackAdmin;
+  const offer = result?.ok && result.setupOffer;
+  const canSetUp = mode === "kubeconfig" && result?.clusterAdmin && ("identity" in result);
   const tab = (key, label) => (
     <button style={{ ...S.tabBtn(mode === key), fontSize: 11 }} onClick={() => { setMode(key); setResult(null); setAckAdmin(false); }}>{label}</button>
   );
@@ -1225,7 +1229,7 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
       ) : (
         <div style={{ ...S.muted, ...S.mb8 }}>
           Uses your own login from the kubeconfig: nothing to set up on {cluster}, but the hub acts with your rights, and stops working when your login expires (usually 24 h).
-          Only token logins work (oc login); certificate logins cannot be handed over.
+          A certificate login (such as the installer's admin kubeconfig) is never stored: it is used once to set up limited access.
         </div>
       )}
 
@@ -1266,7 +1270,23 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
 
       {result && <div style={{ fontSize: 12, marginBottom: 8, color: result.ok ? "#22c55e" : result.needsAck ? "#f59e0b" : "#ef4444", wordBreak: "break-word" }}>{result.message || result.error}</div>}
       <AccessFacts r={result} />
-      {result?.clusterAdmin && (
+      {canSetUp && (
+        <div style={{ ...S.card, background: "var(--card)", padding: 12, marginBottom: 10, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{offer && result.certificateLogin ? "Set up limited access with this login (recommended)" : "Or set up limited access with this login instead (recommended)"}</div>
+          <div style={{ color: "var(--text2)", marginBottom: 8 }}>
+            The hub uses {result.identity || "this login"} once, to deploy the demo app and create a service account that can read {cluster} and change only the demo namespace, with a token that expires.
+            {result.certificateLogin ? " The certificate is not stored." : " Your login is not stored."}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label style={{ ...S.label, marginBottom: 0 }}>Valid for</label>
+            <select style={{ ...S.select, width: "auto" }} value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+              {[[24, "24 hours"], [72, "3 days"], [168, "1 week"], [336, "2 weeks"]].map(([h, l]) => <option key={h} value={h}>{l}</option>)}
+            </select>
+            <button style={{ ...S.btnPrimary, ...dim(!!busy) }} disabled={!!busy} onClick={() => save({ setupLimited: true })}>{busy === "save" ? "Setting up..." : "Set up limited access"}</button>
+          </div>
+        </div>
+      )}
+      {result?.clusterAdmin && !offer && (
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, marginBottom: 10 }}>
           <input type="checkbox" checked={ackAdmin} onChange={(e) => setAckAdmin(e.target.checked)} />
           <span>I understand the Command Center will act on {cluster} with cluster-admin rights, recorded as {result.identity || "this login"}.</span>
@@ -1274,7 +1294,7 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
       )}
       <div style={S.gap8}>
         <button style={{ ...S.btnOutline, ...dim(!ready || !!busy) }} disabled={!ready || !!busy} onClick={test}>{busy === "test" ? "Testing..." : "Test"}</button>
-        <button style={{ ...S.btnPrimary, ...dim(!ready || !!busy || needsAck) }} disabled={!ready || !!busy || needsAck} onClick={save} title={needsAck ? "Confirm the cluster-admin warning first" : ""}>{busy === "save" ? "Connecting..." : "Test and save"}</button>
+        {!offer && <button style={{ ...S.btnPrimary, ...dim(!ready || !!busy || needsAck) }} disabled={!ready || !!busy || needsAck} onClick={() => save()} title={needsAck ? "Confirm the cluster-admin warning first" : ""}>{busy === "save" ? "Connecting..." : "Test and save"}</button>}
         {saved && <button style={{ ...S.btnDanger, marginLeft: "auto" }} disabled={!!busy} onClick={remove}>Remove access</button>}
       </div>
     </div>

@@ -368,9 +368,11 @@ users:
     assert.equal(AX.parseKubeconfig(kc("{ token: x }"), "other").token, "sha256~other");
     assert.throws(() => AX.parseKubeconfig(kc("{ token: x }"), "nope"), /not in this kubeconfig/);
   });
-  test("certificate and exec logins are refused with the reason; a file CA or skipped TLS is flagged", async () => {
+  test("a certificate login is read (for one-time setup); file certificates and exec logins are refused with the reason", async () => {
     const AX = await AXp;
-    assert.throws(() => AX.parseKubeconfig(kc("{ client-certificate-data: AAAA, client-key-data: BBBB }")), /client certificate/);
+    const c = AX.parseKubeconfig(kc(`{ client-certificate-data: ${Buffer.from("CERT").toString("base64")}, client-key-data: ${Buffer.from("KEY").toString("base64")} }`));
+    assert.deepEqual([c.auth, c.clientCert, c.clientKey, c.token], ["certificate", "CERT", "KEY", undefined]);
+    assert.throws(() => AX.parseKubeconfig(kc("{ client-certificate: /home/me/admin.crt, client-key: /home/me/admin.key }")), /--flatten/);
     assert.throws(() => AX.parseKubeconfig(kc("{ exec: { command: oc } }")), /exec plugin/);
     assert.throws(() => AX.parseKubeconfig("not: [valid"), /Not a kubeconfig/);
     const k = AX.parseKubeconfig(kc("{ token: t }", "\n    insecure-skip-tls-verify: true"));
@@ -422,5 +424,44 @@ users:
     assert.equal(soon.expiringSoon, true);
     assert.match(soon.expiry, /^expires in 4 h|^expires in 5 h/);
     PS._resetClusterAccess(); CC.configureCommandCenter({ clusterAccess: null });
+  });
+});
+
+describe("one-time setup of limited access", () => {
+  test("the manifests the server applies are the same as the ones in deploy/", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const f of ["scenario-payments.yaml", "gpu-cluster-access.yaml"]) {
+      assert.equal(readFileSync(`src/services/private-ai/manifests/${f}`, "utf8"), readFileSync(`deploy/demo/private-ai-ops/${f}`, "utf8"), `${f} differs — copy deploy/demo/private-ai-ops/${f} to src/services/private-ai/manifests/`);
+    }
+  });
+  test("applies every object with server-side apply, then issues an expiring token — without a bearer header for a certificate login", async () => {
+    const BS = await import("../../src/services/private-ai/bootstrap.js");
+    const http = await import("node:http");
+    const calls = [];
+    const srv = http.createServer((q, r) => {
+      let body = "";
+      q.on("data", (d) => (body += d));
+      q.on("end", () => {
+        calls.push({ m: q.method, u: q.url, ct: q.headers["content-type"], auth: q.headers.authorization || null, body });
+        r.setHeader("content-type", "application/json");
+        if (q.url.endsWith("/serviceaccounts/tcs-agentic-ai-hub/token")) return r.end(JSON.stringify({ status: { token: "issued.jwt.token", expirationTimestamp: "2026-10-27T10:00:00Z" } }));
+        r.end("{}");
+      });
+    });
+    await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+    try {
+      const out = await BS.setupLimitedAccess({ apiUrl: `http://127.0.0.1:${srv.address().port}`, caCert: null, clientCert: null, clientKey: null }, { durationHours: 168 });
+      assert.equal(out.token, "issued.jwt.token");
+      assert.equal(out.hours, 168);
+      const objs = await BS.setupObjects();
+      const patches = calls.filter((c) => c.m === "PATCH");
+      assert.equal(patches.length, objs.length);
+      assert.ok(patches.every((c) => c.ct === "application/apply-patch+yaml" && c.u.includes("fieldManager=tcs-agentic-ai&force=true")));
+      assert.ok(patches[0].u.startsWith("/api/v1/namespaces/tcs-demo-payments?"), "the demo namespace comes first");
+      assert.ok(patches.some((c) => c.u.startsWith("/apis/rbac.authorization.k8s.io/v1/namespaces/tcs-demo-payments/rolebindings/tcs-agentic-ai-hub-demo")));
+      const tr = calls.at(-1);
+      assert.equal(JSON.parse(tr.body).spec.expirationSeconds, 168 * 3600);
+      assert.ok(calls.every((c) => c.auth === null), "no Authorization header when there is no token");
+    } finally { srv.close(); }
   });
 });

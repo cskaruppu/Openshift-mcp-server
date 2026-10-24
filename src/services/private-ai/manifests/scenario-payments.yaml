@@ -1,0 +1,98 @@
+# Act 2 scenario: a payments service that a "config release" breaks.
+#
+# Revision 1 runs with payments-api-config (healthy). Pressing "Inject fault"
+# in the Command Center rolls out revision 2, which mounts
+# payments-api-config-v2 — a config with a directive nginx does not know, the
+# kind of typo a real tuning change ships. The new pods crash-loop; the old
+# ones keep serving (maxUnavailable: 0), exactly like a bad release in
+# production. The platform detects it, finds the bad rollout, proposes
+# `oc rollout undo` with a change request, and fixes it after approval.
+#
+# Apply once:  oc apply -f deploy/demo/private-ai-ops/scenario-payments.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tcs-demo-payments
+  labels:
+    tcs.com/owner: payments-team
+    tcs.com/demo: private-ai-ops
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: payments-api-config, namespace: tcs-demo-payments }
+data:
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      client_body_temp_path /tmp/client; proxy_temp_path /tmp/proxy; fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi;
+      access_log /dev/stdout; error_log /dev/stderr warn;
+      server {
+        listen 8080;
+        location = /healthz { return 200 'ok'; }
+        location / { default_type application/json; return 200 '{"service":"payments-api","status":"ok"}'; }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: payments-api-config-v2, namespace: tcs-demo-payments }
+data:
+  # "Connection-pool tuning" release with a directive nginx does not have.
+  nginx.conf: |
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      client_body_temp_path /tmp/client; proxy_temp_path /tmp/proxy; fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi; scgi_temp_path /tmp/scgi;
+      access_log /dev/stdout; error_log /dev/stderr warn;
+      upstream_pool_timeout 3s;
+      server {
+        listen 8080;
+        location = /healthz { return 200 'ok'; }
+        location / { default_type application/json; return 200 '{"service":"payments-api","status":"ok"}'; }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: tcs-demo-payments
+  labels: { app: payments-api }
+  annotations:
+    tcs.com/owner: payments-team
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: payments-api } }
+  template:
+    metadata:
+      labels: { app: payments-api }
+      annotations:
+        tcs.com/release: "2026.10.1 (baseline)"
+    spec:
+      containers:
+        - name: payments-api
+          image: docker.io/nginxinc/nginx-unprivileged:1.27.5
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 10 }
+          resources: { requests: { cpu: 20m, memory: 32Mi }, limits: { cpu: 200m, memory: 128Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
+      volumes:
+        - name: config
+          configMap: { name: payments-api-config }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: payments-api, namespace: tcs-demo-payments }
+spec:
+  selector: { app: payments-api }
+  ports: [{ port: 8080, targetPort: 8080 }]
