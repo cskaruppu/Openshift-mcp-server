@@ -1,7 +1,8 @@
 /**
  * Private AI Operations Center: model routing, sensitive-data rule, the
  * llm.js hook, incident memory, the bad-rollout remediation, the Act 2
- * scenario, the egress switch and the batch VM assessment.
+ * scenario, the egress switch, the batch VM assessment and the
+ * Settings → Private AI switches.
  * Run with: node --test test/unit/private-ai.test.js
  */
 import { test, describe, beforeEach, after } from "node:test";
@@ -11,12 +12,16 @@ process.env.PRIVATE_AI_LARGE_URL = "http://large.test";
 process.env.PRIVATE_AI_SMALL_URL = "http://small.test";
 process.env.PRIVATE_AI_VISION_URL = "http://vision.test";
 process.env.PRIVATE_AI_LARGE_GPU = "GPU 0 · H100";
+const { mkdtempSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+process.env.PRIVATE_AI_SETTINGS_PATH = `${mkdtempSync(`${tmpdir()}/pai-`)}/settings.json`;
 
 const R = await import("../../src/services/private-ai/router.js");
 const E = await import("../../src/services/private-ai/embeddings.js");
 const SC = await import("../../src/services/private-ai/scenario.js");
 const CC = await import("../../src/services/private-ai/command-center.js");
 const VB = await import("../../src/services/private-ai/vm-batch.js");
+const PS = await import("../../src/services/private-ai/settings.js");
 const { recentBadRollout } = await import("../../src/services/incident-orchestrator.js");
 
 const realFetch = global.fetch;
@@ -214,4 +219,84 @@ test("on-prem model URLs bypass the egress proxy; cloud AI does not", async () =
   assert.equal(bypassesProxy("http://10.128.4.7:8080"), true);
   assert.equal(bypassesProxy("https://myco.openai.azure.com"), false);
   assert.equal(bypassesProxy("https://api.anthropic.com"), false);
+});
+
+describe("Settings → Private AI switches", () => {
+  const ENV = ["PRIVATE_AI_OPS", "COMMAND_CENTER_BANNER", "LLM_PROVIDER", "PRIVATE_AI_CLUSTER"];
+  const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+  beforeEach(() => { PS._resetPrivateAiSettings(); for (const k of ENV) delete process.env[k]; });
+  after(() => { for (const k of ENV) if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; PS._resetPrivateAiSettings(); });
+
+  test("off by default; the environment is the starting point", () => {
+    assert.equal(CC.commandCenterEnabled(), false);
+    process.env.PRIVATE_AI_OPS = "true"; process.env.COMMAND_CENTER_BANNER = "true"; process.env.LLM_PROVIDER = "private";
+    const e = PS.effectiveSettings();
+    assert.deepEqual([e.commandCenter, e.banner, e.routeChat, e.cluster], [true, true, true, "local"]);
+    assert.equal(e.source.commandCenter, "environment");
+  });
+  test("a saved switch wins over the environment, survives a restart, and null goes back to it", async () => {
+    process.env.PRIVATE_AI_OPS = "true";
+    await PS.savePrivateAiSettings({ commandCenter: false }, { actor: "karuppu" });
+    assert.equal(CC.commandCenterEnabled(), false);
+    assert.equal(PS.effectiveSettings().source.commandCenter, "settings");
+    await PS.savePrivateAiSettings({ commandCenter: true, cluster: "cluster02-gpu" });
+    PS._resetPrivateAiSettings();
+    await PS.restorePrivateAiSettings();
+    assert.equal(CC.commandCenterEnabled(), true);
+    assert.equal(PS.effectiveSettings().cluster, "cluster02-gpu");
+    await PS.savePrivateAiSettings({ commandCenter: null });
+    assert.equal(PS.effectiveSettings().source.commandCenter, "environment");
+  });
+  test("the banner never shows without the Command Center", async () => {
+    await PS.savePrivateAiSettings({ commandCenter: false, banner: true });
+    assert.equal(PS.effectiveSettings().banner, false);
+  });
+  test("PRIVATE_AI_OPS=false (disable.sh) switches everything off and Settings cannot override it", async () => {
+    await PS.savePrivateAiSettings({ commandCenter: true, routeChat: true });
+    process.env.PRIVATE_AI_OPS = "false";
+    const e = PS.effectiveSettings();
+    assert.deepEqual([e.commandCenter, e.routeChat, e.lockedOff], [false, false, true]);
+    await assert.rejects(PS.savePrivateAiSettings({ commandCenter: true }), /switched off by the deployment/);
+  });
+  test("a cluster name is validated", async () => {
+    await assert.rejects(PS.savePrivateAiSettings({ cluster: "../etc" }), /valid cluster/);
+  });
+});
+
+describe("prerequisites", () => {
+  test("GPU inventory counts whole GPUs and MIG slices per profile", () => {
+    const inv = CC.gpuInventory([
+      { status: { allocatable: { "nvidia.com/gpu": "1", "nvidia.com/mig-3g.40gb": "1", "nvidia.com/mig-1g.10gb": "2", cpu: "64" } } },
+      { status: { allocatable: { cpu: "8" } } },
+    ]);
+    assert.deepEqual(inv, { nodes: 1, gpus: 1, mig: { "3g.40gb": 1, "1g.10gb": 2 } });
+  });
+  test("each check reports what it found and how to fix it, on the chosen cluster", async () => {
+    const seen = [];
+    CC.configureCommandCenter({
+      runForCluster: (c, fn) => { seen.push(c); return fn(); },
+      ocp: {
+        fetch: async (path) => {
+          if (path === "/api/v1/nodes") return { items: [{ status: { allocatable: { "nvidia.com/gpu": "2" } } }] };
+          throw new Error("OCP API 404: not found");
+        },
+        post: async (_p, body) => ({ status: { allowed: body.spec.resourceAttributes.resource !== "networkpolicies" } }),
+      },
+    });
+    SC.configureScenario({ runForCluster: (_c, fn) => fn(), ocp: { fetch: async () => { throw new Error("OCP API 404: not found"); } } });
+    global.fetch = async (u) => (String(u).startsWith("http://small.test") ? reply(200, { data: [] }) : reply(503, {}));
+    R.models().forEach((m) => R.checkHealth(m, { force: true }).catch(() => {}));
+    const pre = await CC.prerequisites({ cluster: "cluster02-gpu" });
+    assert.ok(seen.every((c) => c === "cluster02-gpu") && seen.length >= 2);
+    assert.equal(pre.gpu.ok, true);
+    assert.match(pre.gpu.detail, /2 whole GPUs/);
+    assert.equal(pre.demo.ok, false);
+    assert.match(pre.demo.fix, /scenario-payments\.yaml/);
+    assert.equal(pre.permissions.ok, false);
+    assert.match(pre.permissions.detail, /network policies/);
+    assert.equal(pre.models.total, 3);
+    assert.equal(pre.models.chatReady, true);
+    assert.equal(pre.models.ok, false);
+    global.fetch = realFetch;
+  });
 });

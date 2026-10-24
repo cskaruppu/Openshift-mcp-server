@@ -2,8 +2,9 @@
 // that do the work — nothing here computes a number of its own beyond adding
 // up what those modules recorded since the session started.
 //
-//   PRIVATE_AI_OPS=true            turns the Command Center on (launchers appear)
-//   COMMAND_CENTER_BANNER=true     shows the launch banner on the dashboard
+//   PRIVATE_AI_OPS=true            Command Center on by default (Settings → Private AI can change it;
+//                                  PRIVATE_AI_OPS=false switches it off for good)
+//   COMMAND_CENTER_BANNER=true     launch banner on the dashboard by default
 //   PRIVATE_AI_CLOUD_PRICE_PER_MTOK  cloud price per million tokens, for "cost avoided"
 //   PRIVATE_AI_HARDWARE            the line in the header, e.g. "Dell PowerEdge XE9680 · 2× NVIDIA H100"
 
@@ -12,6 +13,7 @@ import * as router from "./router.js";
 import { embeddingModel, embeddingStats } from "./embeddings.js";
 import { scenarioStatus } from "./scenario.js";
 import { batchStatus } from "./vm-batch.js";
+import { effectiveSettings } from "./settings.js";
 
 const EGRESS_POLICY = "tcs-private-ai-no-internet";
 const ns = () => process.env.MCP_NAMESPACE || process.env.NAMESPACE || "openshift-mcp";
@@ -21,7 +23,7 @@ let _deps = { runForCluster: (_c, fn) => fn(), gpu: null, scanSummary: null, rem
 const O = () => _deps.ocp || { fetch: ocpFetch, post: ocpPost, del: ocpDelete };
 export function configureCommandCenter(deps) { _deps = { ..._deps, ...deps }; }
 
-export function commandCenterEnabled() { return process.env.PRIVATE_AI_OPS === "true"; }
+export function commandCenterEnabled() { return effectiveSettings().commandCenter; }
 
 export function startSession() {
   router.resetTraffic();
@@ -49,28 +51,27 @@ export function egressPolicy() {
   };
 }
 
-export async function egressStatus({ cluster = "local" } = {}) {
+// Always the platform's own namespace on the hub — whichever cluster has the GPUs.
+export async function egressStatus() {
   try {
-    const p = await _deps.runForCluster(cluster, () => O().fetch(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies/${EGRESS_POLICY}`));
+    const p = await O().fetch(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies/${EGRESS_POLICY}`);
     return { blocked: true, since: p.metadata?.creationTimestamp || _session.egressBlockedAt, policy: EGRESS_POLICY, namespace: ns() };
   } catch (e) {
     return { blocked: false, since: null, policy: EGRESS_POLICY, namespace: ns(), error: /404/.test(e.message) ? null : e.message };
   }
 }
 
-export async function setEgress(block, { cluster = "local" } = {}) {
-  await _deps.runForCluster(cluster, async () => {
-    if (block) {
-      try { await O().post(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies`, egressPolicy()); }
-      catch (e) { if (!/409/.test(e.message)) throw e; }
-      _session.egressBlockedAt = new Date().toISOString();
-    } else {
-      try { await O().del(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies/${EGRESS_POLICY}`); }
-      catch (e) { if (!/404/.test(e.message)) throw e; }
-      _session.egressBlockedAt = null;
-    }
-  });
-  return egressStatus({ cluster });
+export async function setEgress(block) {
+  if (block) {
+    try { await O().post(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies`, egressPolicy()); }
+    catch (e) { if (!/409/.test(e.message)) throw e; }
+    _session.egressBlockedAt = new Date().toISOString();
+  } else {
+    try { await O().del(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies/${EGRESS_POLICY}`); }
+    catch (e) { if (!/404/.test(e.message)) throw e; }
+    _session.egressBlockedAt = null;
+  }
+  return egressStatus();
 }
 
 /* ─────────────────────────── the read ─────────────────────────── */
@@ -83,7 +84,7 @@ export async function commandCenterState({ cluster = "local" } = {}) {
     Promise.all(list.map(healthOf)),
     embed ? healthOf(embed) : null,
     _deps.gpu ? _deps.runForCluster(cluster, () => _deps.gpu()).catch((e) => ({ available: false, reason: e.message })) : null,
-    egressStatus({ cluster }),
+    egressStatus(),
     scenarioStatus({ cluster }),
     _deps.scanSummary ? _deps.scanSummary(cluster).catch(() => null) : null,
     _deps.remediations ? _deps.remediations(cluster).catch(() => []) : [],
@@ -102,11 +103,11 @@ export async function commandCenterState({ cluster = "local" } = {}) {
 
   return {
     enabled: commandCenterEnabled(),
-    banner: process.env.COMMAND_CENTER_BANNER === "true",
+    banner: effectiveSettings().banner,
     hardware: process.env.PRIVATE_AI_HARDWARE || null,
     session: { ..._session },
     act1: {
-      routerOn: router.routerEnabled(), models, embed: embedModel ? { ...embedModel, stats: embeddingStats() } : null,
+      routerOn: effectiveSettings().routeChat, models, embed: embedModel ? { ...embedModel, stats: embeddingStats() } : null,
       traffic: { ...traffic, onPrem: traffic.total - traffic.cloudCalls }, log: router.trafficLog(40), gpu, egress,
     },
     act2: scenario,
@@ -124,4 +125,77 @@ export async function commandCenterState({ cluster = "local" } = {}) {
       gpuAvgUtil: gpu?.summary?.avgUtilPct ?? null,
     },
   };
+}
+
+/* ─────────────────────────── prerequisites ─────────────────────────── */
+
+// What each switch in Settings → Private AI needs, checked live. Every check
+// says what was found and, when it fails, the one thing to do about it.
+const DEMO_NS = () => process.env.PRIVATE_AI_SCENARIO_NS || "tcs-demo-payments";
+
+async function canI(verb, group, resource, namespace) {
+  const r = await O().post("/apis/authorization.k8s.io/v1/selfsubjectaccessreviews", {
+    apiVersion: "authorization.k8s.io/v1", kind: "SelfSubjectAccessReview",
+    spec: { resourceAttributes: { verb, group, resource, namespace } },
+  });
+  return !!r?.status?.allowed;
+}
+
+export function gpuInventory(nodes) {
+  const out = { nodes: 0, gpus: 0, mig: {} };
+  for (const n of nodes || []) {
+    const a = n.status?.allocatable || {};
+    let has = false;
+    for (const [k, v] of Object.entries(a)) {
+      const q = parseInt(v, 10) || 0;
+      if (k === "nvidia.com/gpu" && q > 0) { out.gpus += q; has = true; }
+      else if (k.startsWith("nvidia.com/mig-") && q > 0) { out.mig[k.slice("nvidia.com/mig-".length)] = (out.mig[k.slice("nvidia.com/mig-".length)] || 0) + q; has = true; }
+    }
+    if (has) out.nodes++;
+  }
+  return out;
+}
+
+export async function prerequisites({ cluster = "local" } = {}) {
+  const run = (fn) => _deps.runForCluster(cluster, fn);
+  const list = [...router.models(), ...(embeddingModel() ? [embeddingModel()] : [])];
+
+  const gpu = run(async () => {
+    const inv = gpuInventory((await O().fetch("/api/v1/nodes")).items);
+    const mig = Object.entries(inv.mig).map(([p, n]) => `${n}× ${p}`).join(" · ");
+    const ok = inv.gpus + Object.values(inv.mig).reduce((s, n) => s + n, 0) > 0;
+    return { ok, detail: ok ? [inv.gpus ? `${inv.gpus} whole GPU${inv.gpus > 1 ? "s" : ""}` : null, mig ? `MIG ${mig}` : null].filter(Boolean).join(" · ") + ` on ${inv.nodes} node${inv.nodes > 1 ? "s" : ""}` : "No NVIDIA GPUs offered by any node",
+      fix: ok ? null : "Install the NVIDIA GPU Operator; for four models on two GPUs apply models/10-gpu-mig.yaml", inventory: inv };
+  }).catch((e) => ({ ok: false, detail: `Could not read nodes: ${e.message}`, fix: null }));
+
+  const models = Promise.all(list.map(async (m) => ({ role: m.role, model: m.model, gpu: m.gpu, health: await router.checkHealth(m) }))).then((ms) => {
+    const ready = ms.filter((m) => m.health?.ok);
+    const chatReady = ready.some((m) => m.role === "large" || m.role === "small");
+    return {
+      ok: ms.length > 0 && ready.length === ms.length, chatReady, ready: ready.length, total: ms.length, models: ms,
+      detail: ms.length ? `${ready.length}/${ms.length} ready · ${ms.map((m) => `${m.model}${m.health?.ok ? "" : " (not answering)"}`).join(", ")}` : "No models connected to the platform",
+      fix: !ms.length ? "Deploy the models (oc apply -k deploy/demo/private-ai-ops/models) and run enable.sh --keep-llm to connect them"
+        : ready.length < ms.length ? "Check the InferenceServices: oc -n tcs-private-ai get inferenceservice" : null,
+    };
+  });
+
+  const demo = scenarioStatus({ cluster }).then((s) => ({
+    ok: !!s.live?.installed,
+    detail: s.live?.installed ? `${s.deployment} in ${s.namespace} · ${s.live.ready}/${s.live.replicas} ready` : `${DEMO_NS()} not found`,
+    fix: s.live?.installed ? null : "oc apply -f deploy/demo/private-ai-ops/scenario-payments.yaml",
+  })).catch((e) => ({ ok: false, detail: e.message, fix: null }));
+
+  const perms = run(async () => {
+    const checks = await Promise.all([
+      canI("patch", "apps", "deployments", DEMO_NS()).then((ok) => ["patch deployments in " + DEMO_NS(), ok]),
+      canI("create", "networking.k8s.io", "networkpolicies", ns()).then((ok) => ["create network policies in " + ns(), ok]),
+      canI("delete", "networking.k8s.io", "networkpolicies", ns()).then((ok) => ["delete network policies in " + ns(), ok]),
+    ]);
+    const missing = checks.filter(([, ok]) => !ok).map(([what]) => what);
+    return { ok: !missing.length, detail: missing.length ? `Missing: ${missing.join(", ")}` : "Can run the scenario, roll back and cut the internet",
+      fix: missing.length ? "Re-apply deploy/dashboard/manifests/serviceaccount.yaml (or the Helm chart) and bind the remediator role in the demo namespace" : null };
+  }).catch((e) => ({ ok: false, detail: `Could not check: ${e.message}`, fix: null }));
+
+  const [g, m, d, p] = await Promise.all([gpu, models, demo, perms]);
+  return { checkedAt: new Date().toISOString(), gpu: g, models: m, demo: d, permissions: p };
 }

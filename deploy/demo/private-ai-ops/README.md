@@ -1,7 +1,8 @@
 # Private AI Operations Center — runbook
 
 Four live acts on 2× H100 under OpenShift AI, plus a scorecard. Everything is
-off unless `PRIVATE_AI_OPS=true`; `disable.sh` turns it off again.
+off until an admin turns it on in **Settings → Private AI**; `disable.sh` turns
+it off for good.
 
 | Act | What the audience sees | What is real |
 |---|---|---|
@@ -14,6 +15,7 @@ off unless `PRIVATE_AI_OPS=true`; `disable.sh` turns it off again.
 
 ```bash
 cd deploy/demo/private-ai-ops
+# Run the GPU, MIG and model steps against the GPU cluster (e.g. oc config use-context <gpu-cluster-context>)
 oc apply -f models/00-namespace.yaml
 oc -n tcs-private-ai create secret generic hf-token --from-literal=HF_TOKEN=<your token>
 
@@ -27,8 +29,23 @@ oc label node <h100-node> nvidia.com/mig.config=tcs-demo --overwrite
 oc apply -k models/
 oc -n tcs-private-ai get inferenceservice -w     # wait for READY=True on all four
 
-./enable.sh            # or ./enable.sh --keep-llm to leave AI Chat's provider alone
+# Connect the platform to the models. Run with the PLATFORM (hub) cluster as the
+# current context; --models-context names the GPU cluster when it is a different one
+# (each model is then exposed with a Route the hub can reach).
+./enable.sh --models-context <gpu-cluster-context>
 ```
+
+Then, in the console: **Settings (gear) → Private AI**
+
+1. **GPU cluster**: pick the cluster with the GPUs (e.g. `cluster02-gpu`).
+2. **Prerequisites**: GPU nodes, models, demo app and permissions are checked live, each with the fix when it is missing. **Re-check** after fixing.
+3. Switches (admins only, recorded in the Audit trail, saved across restarts):
+   - **Command Center**: needs nothing; the workspace button and Ctrl+K appear immediately.
+   - **Dashboard banner**: needs the Command Center on.
+   - **Route AI Chat to the on-prem models**: unlocks once a reasoning or fast-answer model answers.
+
+Check from the hub that a model Route answers before the event:
+`oc -n openshift-mcp exec deploy/agentic-ai-control-plane -- curl -s http://<route-host>/v1/models`
 
 ## Rehearse
 
@@ -42,9 +59,11 @@ oc -n tcs-private-ai get inferenceservice -w     # wait for READY=True on all fo
 ## Turn it off
 
 ```bash
-./disable.sh                 # restores internet, previous AI provider; hides every launcher
-./disable.sh --remove-demo   # also deletes the tcs-demo-payments namespace
-oc delete -k models/         # frees the GPUs
+# Day to day: Settings → Private AI → Command Center off (also restores internet).
+./disable.sh                 # off for good: PRIVATE_AI_OPS=false overrides Settings,
+                             # restores internet and the previous AI provider
+./disable.sh --remove-demo --models-context <gpu-cluster-context>   # also deletes the demo namespace
+oc --context <gpu-cluster-context> delete -k models/   # frees the GPUs
 ```
 
 ## Check on your cluster before the event

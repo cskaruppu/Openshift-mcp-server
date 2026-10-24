@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
+import { refreshCommandCenterEnabled } from "./commandcenter/CommandCenter";
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -28,6 +29,7 @@ const TABS = [
   { key: "rbac", label: "RBAC / Access" },
   { key: "notifications", label: "Notifications" },
   { key: "flags", label: "Feature Flags" },
+  { key: "privateai", label: "Private AI" },
   { key: "appearance", label: "Appearance" },
   { key: "docs", label: "Documents" },
 ];
@@ -149,10 +151,10 @@ const S = {
 /*  Utility                                                            */
 /* ------------------------------------------------------------------ */
 
-function Toggle({ checked, onChange }) {
+function Toggle({ checked, onChange, disabled }) {
   return (
-    <label className="guardrail-toggle">
-      <input type="checkbox" checked={checked} onChange={onChange} />
+    <label className="guardrail-toggle" style={disabled ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
+      <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
       <span className="gt-slider" />
     </label>
   );
@@ -1131,6 +1133,123 @@ function FeatureFlagsTab() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Private AI tab: Command Center switches + live prerequisites       */
+/* ------------------------------------------------------------------ */
+
+const PRE_ROWS = [["gpu", "GPU nodes"], ["models", "Models"], ["demo", "Demo app"], ["permissions", "Permissions"]];
+
+function PrivateAITab() {
+  const [data, setData] = useState(null);
+  const [clusters, setClusters] = useState([]);
+  const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const load = useCallback(async () => {
+    setChecking(true);
+    try {
+      const r = await fetch("/api/private-ai/settings");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+      setData(j); setErr(null);
+    } catch (e) { setErr(e.message); }
+    finally { setChecking(false); }
+  }, []);
+
+  useEffect(() => {
+    load();
+    fetch("/api/agent/status").then((r) => (r.ok ? r.json() : null))
+      .then((d) => setClusters((d?.agents || []).map((a) => a.name).filter(Boolean)))
+      .catch(() => {});
+  }, [load]);
+
+  const save = async (patch, what) => {
+    setSaving(what);
+    try {
+      const r = await fetch("/api/private-ai/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+      refreshCommandCenterEnabled();
+      showToast("Private AI settings saved", "ok");
+      await load();
+    } catch (e) { showToast(e.message, "err"); }
+    finally { setSaving(null); }
+  };
+
+  if (!data && !err) return <div style={S.muted}>Checking prerequisites...</div>;
+  if (!data) return <div style={{ ...S.card, color: "#ef4444", fontSize: 13 }}>{err}</div>;
+
+  const { settings: st, prerequisites: pre, you } = data;
+  const canEdit = you?.canManage && !st.lockedOff;
+  const chatReady = !!pre.models?.chatReady;
+  const switches = [
+    { key: "commandCenter", label: "Command Center", desc: "The Private AI Operations Center and its launchers (workspace button, Ctrl+K)",
+      needs: "Nothing. Acts whose prerequisites are missing show “not ready”.", disabled: false },
+    { key: "banner", label: "Dashboard banner", desc: "The launch banner at the top of every cluster dashboard",
+      needs: st.commandCenter ? "Command Center on ✓" : "Turn the Command Center on first", disabled: !st.commandCenter },
+    { key: "routeChat", label: "Route AI Chat to the on-prem models", desc: "AI Chat defaults to Private AI: each question answered by the right model on your GPUs",
+      needs: chatReady ? "A chat model is answering ✓" : "A reasoning or fast-answer model must be answering", disabled: !st.routeChat && !chatReady },
+  ];
+  const sourceLabel = { settings: "set here", environment: "from the deployment", deployment: "locked by the deployment" };
+
+  return (
+    <div>
+      <div style={{ ...S.muted, ...S.mb12 }}>
+        Turn the Private AI Operations Center on and off. Each switch unlocks when what it needs is in place. Changes apply immediately for every user and are recorded in the Audit trail.
+      </div>
+
+      {st.lockedOff && (
+        <div style={{ ...S.card, borderColor: "#f59e0b", fontSize: 12 }}>
+          Switched off by the deployment (<code>PRIVATE_AI_OPS=false</code>, set by <code>disable.sh</code>). Run <code>enable.sh</code>, or remove that variable, to manage it here.
+        </div>
+      )}
+      {!you?.canManage && <div style={{ ...S.muted, ...S.mb12 }}>Read-only: changing these needs the Admin role.</div>}
+
+      <div style={S.card}>
+        <div style={{ fontWeight: 600, fontSize: 13, ...S.mb8 }}>GPU cluster</div>
+        <select style={S.select} value={st.cluster} disabled={!canEdit || saving === "cluster"} onChange={(e) => save({ cluster: e.target.value }, "cluster")}>
+          <option value="local">Hub cluster (this platform)</option>
+          {[...new Set([...clusters, ...(st.cluster !== "local" ? [st.cluster] : [])])].map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <div style={{ ...S.muted, ...S.mt8 }}>Where the GPUs, the models and the demo app run. The internet switch always applies to the platform itself.</div>
+      </div>
+
+      <div style={S.card}>
+        <div style={{ ...S.flexBetween, ...S.mb8 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Prerequisites <span style={{ ...S.muted, fontWeight: 400 }}>checked live on {st.cluster === "local" ? "the hub" : st.cluster}</span></div>
+          <button style={S.btnOutline} onClick={load} disabled={checking}>{checking ? "Checking..." : "↻ Re-check"}</button>
+        </div>
+        {PRE_ROWS.map(([k, label]) => {
+          const p = pre[k] || {};
+          return (
+            <div key={k} style={{ display: "flex", gap: 10, padding: "8px 0", borderTop: "1px solid var(--border)", fontSize: 12 }}>
+              <span aria-label={p.ok ? "met" : "not met"} style={{ width: 18, flexShrink: 0, fontWeight: 800, color: p.ok ? "#22c55e" : "#f59e0b" }}>{p.ok ? "✓" : "!"}</span>
+              <div style={{ minWidth: 0 }}>
+                <div><b>{label}</b> <span style={{ color: "var(--text2)" }}>{p.detail}</span></div>
+                {p.fix && <div style={{ ...S.muted, marginTop: 3 }}>Fix: <code style={{ wordBreak: "break-all" }}>{p.fix}</code></div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {switches.map((w) => (
+        <div key={w.key} style={{ ...S.card, ...S.flexBetween, gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{w.label}</div>
+            <div style={S.muted}>{w.desc}</div>
+            <div style={{ ...S.muted, marginTop: 4 }}>Needs: {w.needs} · <i>{sourceLabel[st.source?.[w.key]] || ""}</i></div>
+          </div>
+          <Toggle checked={!!st[w.key]} disabled={!canEdit || w.disabled || saving === w.key} onChange={() => save({ [w.key]: !st[w.key] }, w.key)} />
+        </div>
+      ))}
+
+      {st.updatedBy && <div style={S.muted}>Last changed by {st.updatedBy} · {new Date(st.updatedAt).toLocaleString()}</div>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Tab 6: Appearance                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -1285,6 +1404,7 @@ export function SettingsPanel({ open, onClose }) {
       case "rbac": return <RBACTab />;
       case "notifications": return <NotificationsTab />;
       case "flags": return <FeatureFlagsTab />;
+      case "privateai": return <PrivateAITab />;
       case "appearance": return <AppearanceTab theme={theme} toggleTheme={toggleTheme} />;
       case "docs": return <DocumentsTab />;
       default: return null;

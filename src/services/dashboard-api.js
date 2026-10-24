@@ -4,6 +4,7 @@
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { effectiveSettings as effectivePrivateAi } from "./private-ai/settings.js";
 import { gzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { ocpGet, ocpFetch, ocpDelete } from "../utils/openshift-client.js";
@@ -252,10 +253,11 @@ export async function handleLLMSettingsGet(req, res) {
   function addDefaultProvider(settings) {
     // Private AI (models on the cluster's own GPUs) is configured by the
     // deployment, not in this form, so it is added here whenever its
-    // endpoints are set — and becomes the default when LLM_PROVIDER=private.
+    // endpoints are set — and becomes the default when "Route AI Chat to the
+    // on-prem models" is on (Settings → Private AI; LLM_PROVIDER=private).
     const priv = (process.env.PRIVATE_AI_LARGE_URL || process.env.PRIVATE_AI_SMALL_URL)
       ? { private: { enabled: true, model: "auto-routed", apiUrl: "on-prem", apiKey: "" } } : {};
-    const isPrivateDefault = (process.env.LLM_PROVIDER || "").toLowerCase() === "private" && priv.private;
+    const isPrivateDefault = effectivePrivateAi().routeChat && priv.private;
     return { ...settings, providers: { ...(settings.providers || {}), ...priv },
       defaultProvider: isPrivateDefault ? "private" : (settings.defaults?.provider || null) };
   }

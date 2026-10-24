@@ -44,10 +44,6 @@ export function models() {
   return out;
 }
 
-export function routerEnabled() {
-  return (process.env.LLM_PROVIDER || "").toLowerCase() === "private" || process.env.PRIVATE_AI_OPS === "true";
-}
-
 /* ─────────────────────────── sensitivity ─────────────────────────── */
 
 const SENSITIVE = [

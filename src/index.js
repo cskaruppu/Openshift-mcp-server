@@ -2209,6 +2209,12 @@ async function startSSE() {
     await restoreIncidentSettings();
   } catch (e) { console.warn("[startup] incident settings restore:", e.message); }
 
+  // Private AI switches set in Settings → Private AI.
+  try {
+    const { restorePrivateAiSettings } = await import("./services/private-ai/settings.js");
+    await restorePrivateAiSettings();
+  } catch (e) { console.warn("[startup] private AI settings restore:", e.message); }
+
   // Hydrate LLM runtime defaults from the settings store so background LLM
   // calls (upgrade analysis, proactive insights) use the same provider config
   // as chat — not stale env defaults (azure + localhost = ECONNREFUSED).
@@ -9062,12 +9068,50 @@ spec:
       };
     };
 
+    // ── Settings → Private AI: the switches and their live prerequisites ──
+    if (url.pathname === "/api/private-ai/settings") {
+      const PS = await import("./services/private-ai/settings.js");
+      const CC = await import("./services/private-ai/command-center.js");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      const canManage = checkPermission(req, "manage");
+      try {
+        if (req.method === "GET") {
+          const cluster = url.searchParams.get("cluster") || PS.effectiveSettings().cluster;
+          return sendJson(res, 200, { settings: PS.effectiveSettings(), prerequisites: await CC.prerequisites({ cluster }), you: { canManage } });
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (!canManage) return sendJson(res, 403, { error: "Changing Private AI settings needs the Admin role" });
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        const before = PS.effectiveSettings();
+        const cluster = typeof body.cluster === "string" ? body.cluster : before.cluster;
+        const want = { ...before, ...Object.fromEntries(["commandCenter", "banner", "routeChat"].filter((k) => typeof body[k] === "boolean").map((k) => [k, body[k]])) };
+        if (want.banner && !want.commandCenter) return sendJson(res, 409, { error: "Turn the Command Center on before the banner" });
+        if (want.routeChat && !before.routeChat) {
+          const pre = await CC.prerequisites({ cluster });
+          if (!pre.models.chatReady) return sendJson(res, 409, { error: "No on-prem chat model is answering yet — AI Chat would stop working", prerequisites: pre });
+        }
+        // Switching the Command Center off also gives the platform its internet back.
+        if (before.commandCenter && !want.commandCenter) {
+          const eg = await CC.egressStatus();
+          if (eg.blocked) await CC.setEgress(false).catch(() => {});
+        }
+        const saved = await PS.savePrivateAiSettings({ commandCenter: want.commandCenter, banner: want.commandCenter && want.banner, routeChat: want.routeChat, ...(cluster !== before.cluster ? { cluster } : {}) }, { actor });
+        const changed = ["commandCenter", "banner", "routeChat", "cluster"].filter((k) => before[k] !== saved[k]);
+        if (changed.length) logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
+          title: `Private AI settings: ${changed.map((k) => `${{ commandCenter: "Command Center", banner: "dashboard banner", routeChat: "AI Chat on-prem routing", cluster: "GPU cluster" }[k]} ${k === "cluster" ? saved[k] : saved[k] ? "on" : "off"}`).join(", ")}`,
+          details: { before: Object.fromEntries(changed.map((k) => [k, before[k]])), after: Object.fromEntries(changed.map((k) => [k, saved[k]])), storage: saved.storage } }).catch(() => {});
+        return sendJson(res, 200, { settings: saved });
+      } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
+    }
+
     // ── Private AI Operations Center (services/private-ai/) ──
-    // Off unless PRIVATE_AI_OPS=true: the launchers ask /api/command-center
-    // first and stay hidden when it says disabled.
+    // Off unless switched on (Settings → Private AI, or PRIVATE_AI_OPS=true):
+    // the launchers ask /api/command-center first and stay hidden when it says disabled.
     if (url.pathname === "/api/command-center" || url.pathname.startsWith("/api/command-center/") || url.pathname === "/api/private-ai/traffic") {
       const CC = await import("./services/private-ai/command-center.js");
-      const cluster = url.searchParams.get("cluster") || "local";
+      // The GPU cluster chosen in Settings → Private AI, unless the request names one.
+      const cluster = url.searchParams.get("cluster") || (await import("./services/private-ai/settings.js")).effectiveSettings().cluster;
       const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
       try {
         if (req.method === "GET" && url.pathname === "/api/private-ai/traffic") {
@@ -9080,7 +9124,7 @@ spec:
           return sendJson(res, 200, await CC.commandCenterState({ cluster }));
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
-        if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Command Center is not enabled (PRIVATE_AI_OPS)" });
+        if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Command Center is switched off (Settings → Private AI)" });
         if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Command Center actions need the Operator or Admin role" });
         if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
         const body = await readJsonBody(req).catch(() => ({}));
@@ -9090,7 +9134,7 @@ spec:
         switch (url.pathname) {
           case "/api/command-center/session/start": audit("Command Center session started", {}); return sendJson(res, 200, CC.startSession());
           case "/api/command-center/egress": {
-            const out = await CC.setEgress(body.block === true, { cluster });
+            const out = await CC.setEgress(body.block === true);
             audit(`Internet egress ${out.blocked ? "blocked" : "restored"} for the platform`, { policy: out.policy, namespace: out.namespace });
             return sendJson(res, 200, out);
           }

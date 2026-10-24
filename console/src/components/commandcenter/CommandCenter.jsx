@@ -37,15 +37,20 @@ export function CommandCenterHost() {
   return <CommandCenter open={open} onClose={() => setOpen(false)} />;
 }
 
-/** Whether the Command Center is switched on (PRIVATE_AI_OPS). Cached per page load. */
+/** Whether the Command Center is switched on (Settings → Private AI). Asked once per
+    page load, and again whenever Settings changes it (refreshCommandCenterEnabled). */
 let _enabledPromise = null;
+const ask = () => (_enabledPromise = fetch("/api/command-center").then((r) => (r.ok ? r.json() : { enabled: false })).catch(() => ({ enabled: false })));
+export function refreshCommandCenterEnabled() { ask(); window.dispatchEvent(new Event("command-center-changed")); }
+
 export function useCommandCenterEnabled() {
   const [st, setSt] = useState({ enabled: false, banner: false });
   useEffect(() => {
-    _enabledPromise = _enabledPromise || fetch("/api/command-center").then((r) => (r.ok ? r.json() : { enabled: false })).catch(() => ({ enabled: false }));
     let live = true;
-    _enabledPromise.then((d) => { if (live) setSt({ enabled: !!d.enabled, banner: !!d.banner, hardware: d.hardware || null }); });
-    return () => { live = false; };
+    const read = () => (_enabledPromise || ask()).then((d) => { if (live) setSt({ enabled: !!d.enabled, banner: !!d.banner, hardware: d.hardware || null }); });
+    read();
+    window.addEventListener("command-center-changed", read);
+    return () => { live = false; window.removeEventListener("command-center-changed", read); };
   }, []);
   return st;
 }
@@ -128,7 +133,7 @@ export function CommandCenter({ open, onClose }) {
           <div className="cc-body">
             {err && <div className="vc-alert">{err}</div>}
             {!d && !err && <div className="cc-empty">Loading…</div>}
-            {d && !d.enabled && <div className="cc-empty">The Command Center is switched off on this deployment. Set PRIVATE_AI_OPS=true on the platform and restart it.</div>}
+            {d && !d.enabled && <div className="cc-empty">The Command Center is switched off. An admin can turn it on in Settings → Private AI.</div>}
             {d?.enabled && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act2" && <Act2 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act3" && <Act3 d={d} />}
@@ -406,7 +411,7 @@ function Kpi({ label, value, sub, tone }) {
   return <div className={"cc-kpi " + (tone || "")}><span className="cc-lbl">{label}</span><b>{value}</b><span className="cc-muted">{sub}</span></div>;
 }
 
-/** The dashboard's launch banner — shown only when COMMAND_CENTER_BANNER=true, dismissible per browser. */
+/** The dashboard's launch banner — shown only when switched on in Settings → Private AI, dismissible per browser. */
 export function CommandCenterBanner() {
   const { enabled, banner, hardware } = useCommandCenterEnabled();
   const [hidden, setHidden] = useState(() => { try { return localStorage.getItem("cc-banner-hidden") === "1"; } catch { return false; } });
