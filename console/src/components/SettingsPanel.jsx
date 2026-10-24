@@ -67,9 +67,10 @@ const EVENT_TYPES = ["alert.critical", "alert.warning", "deployment.started", "d
 
 const S = {
   tabBar: {
-    display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8,
+    // Wraps rather than scrolls: a hidden horizontal scroll hid the last tabs
+    // on narrower screens and at higher browser zoom.
+    display: "flex", flexWrap: "wrap", gap: 6, paddingBottom: 8,
     borderBottom: "1px solid var(--border)", marginBottom: 16,
-    scrollbarWidth: "none", msOverflowStyle: "none",
   },
   tabBtn: (active) => ({
     padding: "5px 12px", borderRadius: 14, border: "1px solid var(--border)",
