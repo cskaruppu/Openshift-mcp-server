@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# 10-gpu-mig.yaml lives in nvidia-gpu-operator and re-partitions a GPU:
+# apply it separately and deliberately (see its header).
+resources:
+  - 00-namespace.yaml
+  - 20-gpt-oss-120b.yaml
+  - 30-llama-3-1-8b.yaml
+  - 40-qwen2-5-vl-7b.yaml
+  - 50-bge-m3.yaml

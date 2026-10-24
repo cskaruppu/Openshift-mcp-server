@@ -155,7 +155,7 @@ export function hooksAfterReturn(src, afterName) {
  * check will keep it honest.
  */
 const KNOWN = new Set([
-  "console/src/views/ClusterPickerView.jsx:604 — ConnectClusterModal() calls useCallback() after returning at line 581",
+  "console/src/views/ClusterPickerView.jsx:605 — ConnectClusterModal() calls useCallback() after returning at line 582",
 ]);
 
 test("no React hook is called after an early return", () => {

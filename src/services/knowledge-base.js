@@ -145,7 +145,22 @@ export async function findSimilar({ type, resource, namespace, symptoms, limit =
   const scored = [];
   const queryEmbed = symptoms ? await computeEmbedding(symptoms) : null;
 
-  for (const entry of _memKB) {
+  // Meaning-based match when an embedding model is served on the GPU: one
+  // batched call for the query and every stored symptom (cached after the
+  // first). Falls back to the term-frequency vectors below when unavailable.
+  let dense = null;
+  if (symptoms) {
+    try {
+      const emb = await import("./private-ai/embeddings.js");
+      if (emb.embeddingsConfigured()) {
+        const texts = [symptoms, ..._memKB.map((e) => e.symptoms || "")];
+        const vecs = await emb.embedMany(texts);
+        if (vecs) dense = { q: vecs[0], byIndex: vecs.slice(1), cos: emb.denseCosine };
+      }
+    } catch { /* fall back to TF vectors */ }
+  }
+
+  for (const [entryIndex, entry] of _memKB.entries()) {
     let score = 0;
 
     // Original keyword scoring
@@ -168,8 +183,13 @@ export async function findSimilar({ type, resource, namespace, symptoms, limit =
       score += Math.min(overlap * 5, 25);
     }
 
-    // Semantic similarity boost (0-30 points)
-    if (queryEmbed && entry.symptoms) {
+    // Semantic similarity boost (0-30 points; 0-45 with a real embedding model,
+    // which earns more weight because it matches meaning, not words)
+    let semantic = null;
+    if (dense && entry.symptoms) {
+      semantic = Math.max(0, dense.cos(dense.q, dense.byIndex[entryIndex]));
+      score += Math.round(semantic * 45);
+    } else if (queryEmbed && entry.symptoms) {
       const entryEmbed = await computeEmbedding(entry.symptoms);
       const sim = cosineSimilarity(queryEmbed, entryEmbed);
       score += Math.round(sim * 30);
@@ -178,7 +198,7 @@ export async function findSimilar({ type, resource, namespace, symptoms, limit =
     score += Math.min(entry.effectiveness || 0, 10);
 
     if (score > 10) {
-      scored.push({ ...entry, relevanceScore: score });
+      scored.push({ ...entry, relevanceScore: score, semanticSimilarity: semantic, matchedBy: semantic != null ? "embedding model" : "keywords" });
     }
   }
 

@@ -35,6 +35,7 @@ export function CommandPalette() {
     { id: "nav-chat", group: "Navigate", label: "AI Chat", hint: "Ctrl+2", icon: "✦", run: () => go("chat"), kw: "assistant agent ask" },
     { id: "nav-audit", group: "Navigate", label: "Audit & Compliance", hint: "Ctrl+3", icon: "🛡", run: () => go("audit"), kw: "compliance cis trail change request" },
     { id: "nav-intel", group: "Navigate", label: "AI Intelligence", hint: "Ctrl+4", icon: "◎", run: () => go("intelligence"), kw: "insights incidents predictions alerts" },
+    { id: "nav-cc", group: "Navigate", label: "Open Command Center", hint: "", icon: "▣", run: () => { setOpen(false); window.dispatchEvent(new Event("open-command-center")); }, kw: "private ai operations center gpu h100 demo stage scorecard" },
     // Agentic actions
     { id: "act-rightsize", group: "AI Actions", label: "Right-size workloads", hint: "/rightsize", icon: "⊞", run: () => ask("/rightsize"), kw: "cpu memory requests limits overcommit optimize" },
     { id: "act-triage", group: "AI Actions", label: "Triage failing pods", hint: "/triage", icon: "⚑", run: () => ask("/triage"), kw: "crashloop oomkilled imagepull restart fix" },

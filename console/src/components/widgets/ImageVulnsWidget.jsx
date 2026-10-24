@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useClusterQuery, REFRESH } from "../../hooks/useClusterQuery";
 import { useActiveCluster } from "../../store/clusterStore";
 import { showToast } from "../../store/toastStore";
@@ -21,6 +21,12 @@ export function ImageVulnsWidget() {
   const [scanning, setScanning] = useState(false);
   const model = useMemo(() => (data && data.available !== false ? normalize(data) : null), [data]);
   const clearFocus = useCallback(() => setFocus(null), []);
+  // The Command Center's Act 3 links here.
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener("open-vulnerability-center", onOpen);
+    return () => window.removeEventListener("open-vulnerability-center", onOpen);
+  }, []);
   const close = useCallback(() => setOpen(false), []);
 
   const rescan = async () => {

@@ -16,6 +16,7 @@ import { ResourceOptimizationWidget } from "../components/widgets/ResourceOptimi
 import { CapacityWidget } from "../components/widgets/CapacityWidget";
 import { GpuOverviewWidget } from "../components/widgets/GpuOverviewWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
+import { CommandCenterBanner } from "../components/commandcenter/CommandCenter";
 import { REFRESH } from "../hooks/useClusterQuery";
 
 function FocusableWidget({ children, label }) {
@@ -87,6 +88,7 @@ function FocusableWidget({ children, label }) {
 export function DashboardView() {
   return (
     <div className="dash">
+      <CommandCenterBanner />
       {/* ── 1. Cluster Vitals (hero) ── */}
       <section className="dash-section">
         <div className="dash-hero-row">

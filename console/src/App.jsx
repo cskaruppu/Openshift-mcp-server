@@ -4,6 +4,7 @@ import { apiGet } from "./api/client";
 import { LoginOverlay } from "./components/LoginOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AutomationHub } from "./components/AutomationHub";
+import { CommandCenterHost } from "./components/commandcenter/CommandCenter";
 import { UserManagementPanel } from "./components/UserManagementPanel";
 import { AgentRegistryModal } from "./components/AgentRegistryModal";
 import { ToastStack } from "./components/ToastStack";
@@ -271,6 +272,9 @@ export default function App() {
       <UserManagementPanel open={userMgmtOpen} onClose={handleCloseUserMgmt} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <AutomationHub open={automationOpen} onClose={() => setAutomationOpen(false)} />
+      {/* Private AI Operations Center: opens on the "open-command-center" event
+          (workspace header, dashboard banner, Ctrl+K). Renders nothing until then. */}
+      {authenticated && <CommandCenterHost />}
       <KbdOverlay open={kbdOpen} onClose={() => setKbdOpen(false)} />
       <ToastStack />
     </ErrorBoundary>

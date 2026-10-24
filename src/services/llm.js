@@ -65,6 +65,24 @@ function makeDispatcher(proxyUri) {
 }
 
 let llmDispatcher = makeDispatcher(_activeProxy);
+// In-cluster and private-network endpoints (the on-prem models on OpenShift AI)
+// are never sent through the egress proxy: the proxy is for reaching cloud AI,
+// and a proxy that sees an in-cluster URL either fails or hairpins the call.
+const directDispatcher = makeDispatcher("");
+
+/** True for hosts that must be reached directly: in-cluster names, private and loopback IPs, and NO_PROXY entries. */
+export function bypassesProxy(url) {
+  let host;
+  try { host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, ""); } catch { return false; }
+  if (host === "localhost" || host === "::1" || /\.(svc|svc\.cluster\.local|cluster\.local|local)$/.test(host) || !host.includes(".")) return true;
+  const m = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return true;
+  }
+  const np = (process.env.NO_PROXY || process.env.no_proxy || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return np.some((e) => e === "*" || host === e.replace(/^\./, "") || host.endsWith(e.startsWith(".") ? e : `.${e}`));
+}
 
 /**
  * Update the LLM egress proxy at runtime (e.g. from hub heartbeat).
@@ -110,7 +128,7 @@ async function llmFetch(url, opts, retries = MAX_RETRIES) {
   recordEgress(url);
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await undiciFetch(url, { ...opts, dispatcher: llmDispatcher });
+      return await undiciFetch(url, { ...opts, dispatcher: bypassesProxy(url) ? directDispatcher : llmDispatcher });
     } catch (err) {
       const code = err.cause?.code || err.code || "";
       if (attempt < retries && DNS_RETRY_CODES.has(code)) {
@@ -130,7 +148,7 @@ export function llmEnabled(opts = {}) {
 }
 
 export function getSupportedProviders() {
-  return ["openai", "azure", "anthropic", "ollama", "none"];
+  return ["private", "openai", "azure", "anthropic", "ollama", "none"];
 }
 
 function resolveOpts(opts = {}) {
@@ -426,11 +444,33 @@ export function estimateCost(model, promptTokens, completionTokens, prices = nul
   };
 }
 
+// ---------------------------------------------------------------------------
+// Private AI — LLM_PROVIDER=private routes each call to a model on the
+// cluster's own GPUs (services/private-ai/router.js). The decision is made on
+// the ORIGINAL text, so a secret is recognised before redaction masks it.
+// ---------------------------------------------------------------------------
+let _router = null;
+async function routePrivate(o, original, messages, opts) {
+  _router = _router || await import("./private-ai/router.js");
+  const r = await _router.route(o, original, { useCase: opts?.metadata?.useCase || opts?.agentId || null, conversationId: opts?.conversationId || null });
+  if (r.cleaned != null) {
+    const idx = messages.map((m) => m.role).lastIndexOf("user");
+    if (idx >= 0) messages = messages.map((m, i) => (i === idx ? { ...m, content: redactIfEnabled(r.cleaned) } : m));
+  }
+  return { o: r.o, routed: r.decision, messages };
+}
+function completePrivate(decision, info) {
+  try { _router?.complete(decision, info); } catch { /* the call's own result is what matters */ }
+}
+
 // Non-streaming call — returns { text, toolCalls }
 // ---------------------------------------------------------------------------
 export async function callLLM({ messages, ...opts }) {
+  const original = messages;
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
-  const o = resolveOpts(opts);
+  let o = resolveOpts(opts);
+  let routed = null;
+  if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
   validateLLMConfig(o);
   const t0 = Date.now();
   let provider = o.provider;
@@ -446,9 +486,11 @@ export async function callLLM({ messages, ...opts }) {
     else result = { text: "", toolCalls: [] };
     // Usage lives inside the provider's raw body, not beside it.
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw) });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false });
     throw err;
   }
 }
@@ -459,8 +501,11 @@ export async function callLLM({ messages, ...opts }) {
 // When relay is active, streaming falls back to non-streaming via relay.
 // ---------------------------------------------------------------------------
 export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) {
+  const original = messages;
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
-  const o = resolveOpts(opts);
+  let o = resolveOpts(opts);
+  let routed = null;
+  if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
   validateLLMConfig(o);
   const hooks = { onDelta, onToolCall };
   const t0 = Date.now();
@@ -477,9 +522,11 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
     else result = { text: "", toolCalls: [] };
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, streaming: true });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw) });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message, streaming: true });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false });
     throw err;
   }
 }

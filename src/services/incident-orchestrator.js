@@ -255,6 +255,32 @@ async function findWorkload(ns, name) {
   return null;
 }
 
+const BAD_ROLLOUT_WINDOW_MIN = parseInt(process.env.INCIDENT_BAD_ROLLOUT_WINDOW_MIN || "360", 10);
+
+/**
+ * Did this Deployment's current revision roll out recently while an older
+ * revision is still retained? Returns { current, previous, ageMin } or null.
+ * Read-only: ReplicaSets owned by the Deployment carry the revision number and
+ * their creation time is when that revision rolled out.
+ */
+export async function recentBadRollout(ns, dep, { now = Date.now(), get = ocpGet } = {}) {
+  const cur = parseInt(dep?.metadata?.annotations?.["deployment.kubernetes.io/revision"] || "0", 10);
+  if (!cur || cur < 2) return null;
+  let items = [];
+  try { items = (await get(`/apis/apps/v1/namespaces/${ns}/replicasets?limit=200`)).items || []; } catch { return null; }
+  const owned = items.filter((rs) => (rs.metadata?.ownerReferences || []).some((o) => o.kind === "Deployment" && o.name === dep.metadata.name));
+  const rev = (rs) => parseInt(rs.metadata?.annotations?.["deployment.kubernetes.io/revision"] || "0", 10);
+  const current = owned.find((rs) => rev(rs) === cur);
+  const previous = owned.filter((rs) => rev(rs) > 0 && rev(rs) < cur).sort((a, b) => rev(b) - rev(a))[0];
+  if (!current || !previous) return null;
+  const ageMin = Math.round((now - new Date(current.metadata.creationTimestamp).getTime()) / 60000);
+  if (!(ageMin >= 0 && ageMin <= BAD_ROLLOUT_WINDOW_MIN)) return null;
+  // The new revision is the one failing: not all of its replicas are ready.
+  const want = current.spec?.replicas ?? dep.spec?.replicas ?? 1;
+  if ((current.status?.readyReplicas || 0) >= want && want > 0) return null;
+  return { current: cur, previous: rev(previous), ageMin };
+}
+
 function parseMemToMi(q) {
   if (!q) return null;
   const m = /^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|K|M|G|T)?$/.exec(String(q).trim());
@@ -282,6 +308,23 @@ async function planRemediation(d) {
     const wl = await findWorkload(ns, owner);
     if (!wl) return null;
     const wname = wl.obj.metadata.name;   // resolved name (may differ from `owner`)
+
+    // A failure that began right after a new revision rolled out is a bad
+    // release, not a stuck pod: restarting re-runs the same broken template.
+    // When the previous revision is still retained, rolling back to it is the
+    // reversible fix — and it is the one an on-call engineer would reach for.
+    const undo = wl.plural === "deployments" ? await recentBadRollout(ns, wl.obj) : null;
+    if (undo) {
+      return {
+        action: "rollout_undo",
+        workloadKind: "deployment",
+        command: `oc rollout undo deployment/${wname} -n ${ns} --to-revision=${undo.previous}`,
+        risk: "low",
+        reversible: true,
+        rationale: `${d.signal || "The failure"} started after revision ${undo.current} of ${wname} rolled out ${undo.ageMin} min ago; revision ${undo.previous} ran before it. Rolling back restores the last known-good pod template — a restart would only re-run the new revision. Backout: re-apply revision ${undo.current}.`,
+        verify: { kind: wl.plural, namespace: ns, name: wname },
+      };
+    }
 
     // A rolling restart is only credible as a "first response" if restarting has
     // not already been tried. A container that has restarted hundreds of times

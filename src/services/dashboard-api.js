@@ -250,7 +250,14 @@ export async function handleLLMSettingsGet(req, res) {
   }
 
   function addDefaultProvider(settings) {
-    return { ...settings, defaultProvider: settings.defaults?.provider || null };
+    // Private AI (models on the cluster's own GPUs) is configured by the
+    // deployment, not in this form, so it is added here whenever its
+    // endpoints are set — and becomes the default when LLM_PROVIDER=private.
+    const priv = (process.env.PRIVATE_AI_LARGE_URL || process.env.PRIVATE_AI_SMALL_URL)
+      ? { private: { enabled: true, model: "auto-routed", apiUrl: "on-prem", apiKey: "" } } : {};
+    const isPrivateDefault = (process.env.LLM_PROVIDER || "").toLowerCase() === "private" && priv.private;
+    return { ...settings, providers: { ...(settings.providers || {}), ...priv },
+      defaultProvider: isPrivateDefault ? "private" : (settings.defaults?.provider || null) };
   }
   try {
     const fromDB = await loadSettingsFromDB();

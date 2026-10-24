@@ -6,6 +6,7 @@ import { useAuthStore } from "../store/authStore";
 import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
+import { useCommandCenterEnabled } from "../components/commandcenter/CommandCenter";
 import { renderMarkdown } from "../utils/markdown";
 
 class ModalErrorBoundary extends Component {
@@ -920,6 +921,7 @@ function ConnectClusterModal({ open, onClose, onConnected, editCluster }) {
 
 // ─── Main View ──────────────────────────────────────────────────────────
 export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, onOpenAgentRegistry, onOpenUserMgmt, onOpenAutomation }) {
+  const { enabled: ccEnabled } = useCommandCenterEnabled();
   const user = useAuthStore((s) => s.user);
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggle);
@@ -982,6 +984,13 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
         </div>
         <div className="cp-user">
           <div className="cp-header-actions">
+            {ccEnabled && (
+              <button className="cc-launch" onClick={() => window.dispatchEvent(new Event("open-command-center"))}
+                title="Private AI Operations Center — AI on your GPUs, incidents, security and modernisation, live">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2" /><path d="M8 21h8M12 17v4" /><path d="M6 13l3-3 2.5 2.5L16 8l2 2" /></svg>
+                Command Center<span className="cc-launch-dot" aria-hidden="true" />
+              </button>
+            )}
             {onOpenAutomation && (
               <button className="cp-icon-btn" onClick={onOpenAutomation} title="Automation Hub — App Deployment & ServiceNow agents (fleet-wide)">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

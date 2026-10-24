@@ -1,0 +1,43 @@
+# Embeddings for incident memory: Hugging Face Text Embeddings Inference
+# (Hopper build) serving BAAI/bge-m3. GPU 1, MIG 1g.10gb. OpenAI-compatible
+# /v1/embeddings; health at /health.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: bge-m3-cache, namespace: tcs-private-ai }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: bge-m3
+  namespace: tcs-private-ai
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    openshift.io/display-name: bge-m3
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
+        args: ["--model-id", "BAAI/bge-m3", "--port", "8080", "--served-model-name", "bge-m3", "--huggingface-hub-cache", "/models-cache"]
+        env:
+          - name: HF_TOKEN
+            valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
+          - { name: HOME, value: /tmp }
+        ports: [{ containerPort: 8080, protocol: TCP }]
+        readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
+        startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }
+        resources:
+          requests: { cpu: "2", memory: 8Gi, nvidia.com/mig-1g.10gb: "1" }
+          limits: { cpu: "8", memory: 16Gi, nvidia.com/mig-1g.10gb: "1" }
+        volumeMounts:
+          - { name: cache, mountPath: /models-cache }
+    volumes:
+      - { name: cache, persistentVolumeClaim: { claimName: bge-m3-cache } }
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }

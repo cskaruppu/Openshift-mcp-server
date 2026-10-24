@@ -807,6 +807,25 @@ async function withClusterContext(url, handler) {
   return handler();
 }
 
+// The Command Center's Act 3 card: the newest cluster-wide scan, summarised
+// from the priority the image-vulns handler already attached to each row.
+function summariseLatestScan() {
+  const all = Object.values(getScanResults() || {}).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  const rec = all.find((r) => r.namespace === "all") || all[0];
+  if (!rec) return null;
+  const rows = rec.results || [];
+  const kev = new Set();
+  for (const r of rows) for (const v of (r.vulnerabilities || [])) if (v.kev) kev.add(v.id);
+  const ranked = rows.filter((r) => r.priority).sort((a, b) => (b.priority.score || 0) - (a.priority.score || 0));
+  const top = ranked[0];
+  return {
+    timestamp: rec.timestamp, images: rows.length, live: rows.filter((r) => r.source !== "static").length,
+    fixNow: rows.filter((r) => r.priority?.tier === "fix-now").length, kevCves: kev.size,
+    top: top ? { image: top.image, namespace: top.namespace, tier: top.priority.tier, score: top.priority.score, critical: top.critical, high: top.high,
+      kev: (top.vulnerabilities || []).filter((v) => v.kev).map((v) => v.id).slice(0, 6) } : null,
+  };
+}
+
 // ── Vulnerability remediation: cluster context + the server's own scan ──
 // Background steps (gate polling, rollout watch, verification) run outside a
 // request, so they reach the record's cluster the same way a request would.
@@ -2093,6 +2112,19 @@ async function startSSE() {
       });
       W.startWorker();
     } catch (e) { console.error("[remediation] worker not started:", e.message); }
+    try {
+      const SC = await import("./services/private-ai/scenario.js");
+      const CC = await import("./services/private-ai/command-center.js");
+      const { detectIncidents } = await import("./services/incident-detector.js");
+      const IO = await import("./services/incident-orchestrator.js");
+      SC.configureScenario({ runForCluster: runForClusterCtx, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
+      CC.configureCommandCenter({
+        runForCluster: runForClusterCtx,
+        gpu: getGpuOverview,
+        scanSummary: async () => summariseLatestScan(),
+        remediations: async (cluster) => (await import("./services/remediation/workflow.js")).list({ cluster }),
+      });
+    } catch (e) { console.error("[command-center] not configured:", e.message); }
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
     setTimeout(() => {
@@ -9029,6 +9061,57 @@ spec:
         topImages: merged.slice(0, 30),
       };
     };
+
+    // ── Private AI Operations Center (services/private-ai/) ──
+    // Off unless PRIVATE_AI_OPS=true: the launchers ask /api/command-center
+    // first and stay hidden when it says disabled.
+    if (url.pathname === "/api/command-center" || url.pathname.startsWith("/api/command-center/") || url.pathname === "/api/private-ai/traffic") {
+      const CC = await import("./services/private-ai/command-center.js");
+      const cluster = url.searchParams.get("cluster") || "local";
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      try {
+        if (req.method === "GET" && url.pathname === "/api/private-ai/traffic") {
+          const R = await import("./services/private-ai/router.js");
+          const n = Math.min(100, Number(url.searchParams.get("limit")) || 20);
+          return sendJson(res, 200, { log: R.trafficLog(n, { conversationId: url.searchParams.get("conversationId") }), counts: R.trafficCounts() });
+        }
+        if (req.method === "GET" && url.pathname === "/api/command-center") {
+          if (!CC.commandCenterEnabled()) return sendJson(res, 200, { enabled: false });
+          return sendJson(res, 200, await CC.commandCenterState({ cluster }));
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Command Center is not enabled (PRIVATE_AI_OPS)" });
+        if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Command Center actions need the Operator or Admin role" });
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        const SC = await import("./services/private-ai/scenario.js");
+        const VB = await import("./services/private-ai/vm-batch.js");
+        const audit = (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: actor, source: "command-center" }).catch(() => {});
+        switch (url.pathname) {
+          case "/api/command-center/session/start": audit("Command Center session started", {}); return sendJson(res, 200, CC.startSession());
+          case "/api/command-center/egress": {
+            const out = await CC.setEgress(body.block === true, { cluster });
+            audit(`Internet egress ${out.blocked ? "blocked" : "restored"} for the platform`, { policy: out.policy, namespace: out.namespace });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/scenario/inject": audit("Scenario: bad release injected", { namespace: SC.NS }); return sendJson(res, 200, await SC.injectFault({ cluster, actor }));
+          case "/api/command-center/scenario/reset": audit("Scenario: reset", { namespace: SC.NS }); return sendJson(res, 200, await SC.resetScenario({ cluster, actor }));
+          case "/api/command-center/incident/approve": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Approving a production fix needs the Admin role" });
+            const { approveSession } = await import("./services/incident-orchestrator.js");
+            return sendJson(res, 200, await runForClusterCtx(cluster, () => approveSession(body.sessionId, { actor })));
+          }
+          case "/api/command-center/vm-assessment": {
+            let vms = null;
+            if (body.csv) { const mc = await import("./services/machine-csv.js"); vms = mc.parseMachineCsv(String(body.csv)).vms || []; }
+            const out = VB.startBatch({ vms: Array.isArray(vms) ? vms : null, sample: !body.csv, count: body.count, actor });
+            audit(`VM estate assessment started (${out.synthetic ? "synthetic sample" : "uploaded inventory"})`, { total: out.total });
+            return sendJson(res, 200, out);
+          }
+          default: return sendJson(res, 404, { error: "Not found" });
+        }
+      } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
+    }
 
     // ── Vulnerability remediation workflow (services/remediation/) ──
     // Triage → plan → pre-deploy gate → PR/MR + change request → approval →

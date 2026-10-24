@@ -6,6 +6,7 @@ import { showToast } from "../store/toastStore";
 import { ChatMessageBody, computeResponseWidth } from "./ChatTokens";
 
 const PROVIDER_META = {
+  private:   { icon: "PA", color: "#1559b4",  label: "Private AI",        desc: "Auto-routed · your GPUs" },
   builtin:   { icon: "TA", color: "#e04040",  label: "Built-in Analysis", desc: "No API key needed" },
   anthropic: { icon: "Cl", color: "#d97706",  label: "Anthropic",         desc: "Claude Sonnet / Opus" },
   openai:    { icon: "GP", color: "#10a37f",  label: "OpenAI",            desc: "GPT-4 / GPT-4o" },
@@ -766,6 +767,17 @@ export function ChatView() {
                     usage: evt.usage || null,
                   },
                 }));
+                // Private AI: which on-prem model answered, on which GPU, and why.
+                if (resolvedProvider === "private" && evt.conversationId) {
+                  const at = msgIndexRef.current;
+                  fetch(`/api/private-ai/traffic?limit=6&conversationId=${encodeURIComponent(evt.conversationId)}`)
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((t) => {
+                      const route = t?.log?.[0];
+                      if (route) setMsgMeta((prev) => ({ ...prev, [at]: { ...prev[at], route, routeCalls: t.log.length } }));
+                    })
+                    .catch(() => {});
+                }
               }
             } catch { /* ignore */ }
           }
@@ -1156,6 +1168,16 @@ export function ChatView() {
                     </div>
                     {ts && <span className="ac-win-time">{ts}</span>}
                   </div>
+                  {meta.route && (
+                    <div className="ac-route-tag" title={meta.route.reason}>
+                      <span className="ac-route-dot" style={{ background: meta.route.onPrem ? "#2bb673" : "#f7802f" }} />
+                      Answered by <b>{meta.route.model}</b>{meta.route.gpu ? <> on <b>{meta.route.gpu}</b></> : null}
+                      {meta.route.ms ? ` · ${(meta.route.ms / 1000).toFixed(1)} s` : ""}
+                      {" · "}{meta.route.onPrem ? "on-prem" : "cloud"}
+                      {" · "}{meta.route.reason}
+                      {meta.route.sensitive?.length ? <span className="ac-route-sens">sensitive data kept on-prem</span> : null}
+                    </div>
+                  )}
 
                   {/* Thinking stages */}
                   {busy && isLastAI && stage && (
