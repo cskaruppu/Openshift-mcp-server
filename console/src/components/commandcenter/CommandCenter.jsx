@@ -108,6 +108,11 @@ export function CommandCenter({ open, onClose }) {
               <span className="ah-lockup-mod"><span className="ah-lockup-qual">Command Center</span><span className="ah-lockup-module">Private AI Operations Center</span></span>
             </div>
             {d?.hardware && <span className="cc-hw">{d.hardware}</span>}
+            {(d?.access?.expired || d?.access?.expiringSoon) && (
+              <span className={"cc-access" + (d.access.expired ? " bad" : "")} title={`Direct access to ${d.cluster}: renew it in Settings → Private AI → Cluster access`}>
+                {`Access to ${d.cluster} ${d.access.expiry}`}
+              </span>
+            )}
             {d?.enabled && (
               <span className={"cc-egress" + (d.act1.egress.blocked ? " on" : "")} title={d.act1.egress.blocked ? `NetworkPolicy ${d.act1.egress.policy} in ${d.act1.egress.namespace}` : "The platform can reach the internet"}>
                 ● {d.act1.egress.blocked ? `Internet egress blocked · since ${fmtTime(d.act1.egress.since)}` : "Internet egress open"}

@@ -9085,8 +9085,12 @@ spec:
     };
 
     // ── Settings → Private AI → Cluster access: direct API access to the GPU cluster ──
+    // Given as three values or as a kubeconfig. /test connects and reports who
+    // the token is, whether it is cluster-admin and when it expires; saving
+    // runs the same check first. The token itself never goes back to the browser.
     if (url.pathname === "/api/private-ai/cluster-access" || url.pathname === "/api/private-ai/cluster-access/test") {
       const PS = await import("./services/private-ai/settings.js");
+      const AX = await import("./services/private-ai/access.js");
       const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
       if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Connecting a cluster needs the Admin role" });
       if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
@@ -9099,24 +9103,25 @@ spec:
           return sendJson(res, 200, out);
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
-        const a = PS.validateAccess(body);
-        // Prove the access works before keeping it: who am I, and the cluster version.
-        let version = null;
-        try {
-          const cv = await withRemoteCluster(a.apiUrl, a.token, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"), { ca: a.caCert });
-          version = cv?.status?.desired?.version || "unknown";
-        } catch (e) {
-          const why = [e.message, e.cause?.code, e.cause?.message].filter((x, i, l) => x && l.indexOf(x) === i).join(" · ");
-          const hint = /CERT|certificate|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(why) ? " — paste the cluster's CA certificate"
-            : /401|Unauthorized/i.test(why) ? " — the token was rejected" : /403|Forbidden/i.test(why) ? " — the token works but lacks read access (apply gpu-cluster-access.yaml)"
-            : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout|abort/i.test(why) ? " — the hub cannot reach that address" : "";
-          return sendJson(res, 200, { ok: false, message: `Could not connect: ${why}${hint}` });
+        let input = body, kube = null;
+        if (body.kubeconfig) {
+          kube = AX.parseKubeconfig(body.kubeconfig, body.context || null);
+          input = { apiUrl: kube.apiUrl, token: kube.token, caCert: body.caCert || kube.caCert };
         }
-        if (url.pathname.endsWith("/test")) return sendJson(res, 200, { ok: true, message: `Connected to ${cluster || "the cluster"} (OpenShift ${version})` });
-        const out = await PS.saveClusterAccess(cluster, a, { actor });
-        logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
-          title: `Private AI: direct access to ${cluster} saved`, details: { apiUrl: out.apiUrl, customCa: out.customCa, storage: out.storage } }).catch(() => {});
-        return sendJson(res, 200, { ok: true, message: `Connected to ${cluster} (OpenShift ${version}) and saved`, ...out });
+        const a = PS.validateAccess(input);
+        let info;
+        try { info = await AX.inspectAccess(a); }
+        catch (e) { return sendJson(res, 200, { ok: false, message: AX.explainFailure(e), contexts: kube?.contexts, context: kube?.context, notes: kube?.notes }); }
+        const facts = { ...info, expiry: AX.expiryText(info.expiresAt), apiUrl: a.apiUrl, contexts: kube?.contexts, context: kube?.context, notes: kube?.notes || [] };
+        if (url.pathname.endsWith("/test")) return sendJson(res, 200, { ok: true, message: `Connected to ${cluster || "the cluster"} (OpenShift ${info.version})`, ...facts });
+        if (info.clusterAdmin && body.acknowledgeAdmin !== true) {
+          return sendJson(res, 200, { ok: false, needsAck: true, message: `This login has cluster-admin rights on ${cluster}. Confirm below to use it anyway, or use limited access instead.`, ...facts });
+        }
+        const out = await PS.saveClusterAccess(cluster, a, { actor, info, source: kube ? "kubeconfig" : "token" });
+        logAuditTrailEvent({ type: "config_change", severity: info.clusterAdmin ? "warning" : "info", source: "private-ai-settings", username: actor,
+          title: `Private AI: direct access to ${cluster} saved (${info.kind}${info.identity ? " " + info.identity : ""}${info.clusterAdmin ? ", cluster-admin" : ""})`,
+          details: { apiUrl: out.apiUrl, customCa: out.customCa, from: kube ? "kubeconfig" : "token", expiresAt: info.expiresAt, permanent: info.permanent, storage: out.storage } }).catch(() => {});
+        return sendJson(res, 200, { ok: true, message: `Connected to ${cluster} (OpenShift ${info.version}) and saved`, ...facts, ...out });
       } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
     }
 

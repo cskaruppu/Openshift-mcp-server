@@ -108,7 +108,8 @@ let _access = {};
 export function getClusterAccess(cluster) { return (cluster && _access[cluster]) || null; }
 export function clusterAccessSummary(cluster) {
   const a = getClusterAccess(cluster);
-  return a ? { apiUrl: a.apiUrl, customCa: !!a.caCert, savedBy: a.savedBy, savedAt: a.savedAt } : null;
+  return a ? { apiUrl: a.apiUrl, customCa: !!a.caCert, savedBy: a.savedBy, savedAt: a.savedAt, source: a.source || "token",
+    identity: a.identity || null, kind: a.kind || null, clusterAdmin: !!a.clusterAdmin, expiresAt: a.expiresAt || null, permanent: !!a.permanent } : null;
 }
 
 async function persistAccess() {
@@ -136,9 +137,11 @@ export function validateAccess({ apiUrl, token, caCert } = {}) {
   return { apiUrl: apiUrl.trim().replace(/\/+$/, ""), token: token.trim(), caCert: caCert ? caCert.trim() : null };
 }
 
-export async function saveClusterAccess(cluster, input, { actor = "admin" } = {}) {
+/** `info` is what inspectAccess found: identity, kind, clusterAdmin, expiresAt, permanent; `source` token | kubeconfig. */
+export async function saveClusterAccess(cluster, input, { actor = "admin", info = {}, source = "token" } = {}) {
   if (!validCluster(cluster) || cluster === "local") throw Object.assign(new Error("Pick the GPU cluster first"), { status: 400 });
-  _access = { ..._access, [cluster]: { ...validateAccess(input), savedBy: actor, savedAt: new Date().toISOString() } };
+  const { identity = null, kind = null, clusterAdmin = false, expiresAt = null, permanent = false } = info;
+  _access = { ..._access, [cluster]: { ...validateAccess(input), source, identity, kind, clusterAdmin, expiresAt, permanent, savedBy: actor, savedAt: new Date().toISOString() } };
   return { storage: await persistAccess(), ...clusterAccessSummary(cluster) };
 }
 

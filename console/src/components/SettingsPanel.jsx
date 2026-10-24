@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { refreshCommandCenterEnabled } from "./commandcenter/CommandCenter";
@@ -1140,14 +1140,41 @@ function FeatureFlagsTab() {
 const PRE_ROWS = [["access", "Cluster access"], ["gpu", "GPU nodes"], ["models", "Models"], ["demo", "Demo app"], ["permissions", "Permissions"]];
 
 /* Direct API access for the hub to the GPU cluster, used by the Command Center
-   only (the rest of the console keeps reaching the cluster as before).
-   connect-gpu-cluster.sh prints the three values. */
+   only (the rest of the console keeps reaching the cluster as before). Either
+   the three values connect-gpu-cluster.sh prints (a limited, expiring service
+   account — recommended) or a kubeconfig (your own login: quick, but with your
+   rights and your login's expiry). Tokens never come back from the server. */
+function AccessFacts({ r }) {
+  if (!r || !("identity" in r)) return null;
+  const rows = [
+    ["Signed in as", `${r.identity || "unknown"}${r.kind ? ` (${r.kind})` : ""}`],
+    ["Rights", r.clusterAdmin ? "cluster-admin — far more than the demo needs" : "limited"],
+    ["Expiry", r.expiry || (r.permanent ? "does not expire" : "unknown")],
+  ];
+  return (
+    <div style={{ fontSize: 12, margin: "0 0 10px", display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 12px" }}>
+      {rows.map(([k, v]) => (
+        <Fragment key={k}><span style={{ color: "var(--text2)" }}>{k}</span>
+          <span style={{ color: (k === "Rights" && r.clusterAdmin) || (k === "Expiry" && r.permanent) ? "#f59e0b" : "var(--text)", fontWeight: 600 }}>{v}</span></Fragment>
+      ))}
+      {(r.notes || []).map((n) => <span key={n} style={{ gridColumn: "1 / -1", color: "#f59e0b" }}>{n}</span>)}
+    </div>
+  );
+}
+
+const dim = (off) => (off ? { opacity: 0.5, cursor: "not-allowed" } : null);
+
 function ClusterAccessForm({ cluster, saved, onSaved }) {
-  const [f, setF] = useState({ apiUrl: saved?.apiUrl || "", token: "", caCert: "" });
+  const [mode, setMode] = useState("values");
+  const [f, setF] = useState({ apiUrl: saved?.apiUrl || "", token: "", caCert: "", kubeconfig: "", context: "" });
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
-  const body = () => ({ cluster, apiUrl: f.apiUrl.trim(), token: f.token.trim(), caCert: f.caCert.trim() || null });
-  const ready = f.apiUrl.trim() && f.token.trim();
+  const [ackAdmin, setAckAdmin] = useState(false);
+  const set = (k) => (e) => { setF({ ...f, [k]: e.target.value }); setResult(null); setAckAdmin(false); };
+  const body = () => (mode === "kubeconfig"
+    ? { cluster, kubeconfig: f.kubeconfig, context: f.context || null, caCert: f.caCert.trim() || null, acknowledgeAdmin: ackAdmin }
+    : { cluster, apiUrl: f.apiUrl.trim(), token: f.token.trim(), caCert: f.caCert.trim() || null, acknowledgeAdmin: ackAdmin });
+  const ready = mode === "kubeconfig" ? f.kubeconfig.trim() : f.apiUrl.trim() && f.token.trim();
   const call = async (path, method, payload) => {
     const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: payload ? JSON.stringify(payload) : undefined });
     const j = await r.json().catch(() => ({}));
@@ -1158,38 +1185,96 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
     setBusy(what);
     try { await fn(); } catch (e) { setResult({ ok: false, message: e.message }); } finally { setBusy(null); }
   };
-  const test = () => run("test", async () => setResult(await call("/api/private-ai/cluster-access/test", "POST", body())));
+  const test = () => run("test", async () => {
+    const j = await call("/api/private-ai/cluster-access/test", "POST", body());
+    setResult(j);
+    if (j.context && !f.context) setF((x) => ({ ...x, context: j.context }));
+  });
   const save = () => run("save", async () => {
     const j = await call("/api/private-ai/cluster-access", "POST", body());
     setResult(j);
-    if (j.ok) { showToast(`Direct access to ${cluster} saved`, "ok"); setF({ apiUrl: j.apiUrl || f.apiUrl, token: "", caCert: "" }); onSaved(); }
+    if (j.ok) { showToast(`Direct access to ${cluster} saved`, "ok"); setF({ apiUrl: j.apiUrl || "", token: "", caCert: "", kubeconfig: "", context: "" }); onSaved(); }
   });
   const remove = () => run("remove", async () => {
     await call(`/api/private-ai/cluster-access?cluster=${encodeURIComponent(cluster)}`, "DELETE");
     showToast(`Direct access to ${cluster} removed`, "ok"); onSaved();
   });
+  const upload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    file.text().then((t) => { setF((x) => ({ ...x, kubeconfig: t, context: "" })); setResult(null); });
+    e.target.value = "";
+  };
+  // Saving a cluster-admin login needs an explicit yes once the test has shown it.
+  const needsAck = result?.clusterAdmin && !ackAdmin;
+  const tab = (key, label) => (
+    <button style={{ ...S.tabBtn(mode === key), fontSize: 11 }} onClick={() => { setMode(key); setResult(null); setAckAdmin(false); }}>{label}</button>
+  );
+
   return (
     <div style={{ ...S.card, marginTop: 10, marginBottom: 0 }}>
-      <div style={{ ...S.muted, ...S.mb8 }}>
-        On a machine logged in to {cluster}, run <code>deploy/demo/private-ai-ops/connect-gpu-cluster.sh --context &lt;{cluster} context&gt;</code> and paste what it prints.
-        Read access cluster-wide, write access only in the demo namespace. Used by the Command Center only.
+      <div style={{ display: "flex", gap: 6, ...S.mb8 }}>
+        {tab("values", "Limited access (recommended)")}
+        {tab("kubeconfig", "Use a kubeconfig")}
       </div>
+      {mode === "values" ? (
+        <div style={{ ...S.muted, ...S.mb8 }}>
+          On a machine logged in to {cluster}, run <code>deploy/demo/private-ai-ops/connect-gpu-cluster.sh --context &lt;{cluster} context&gt;</code> and paste what it prints.
+          It creates access that can read the cluster and change only the demo namespace, and expires by itself (72 h by default).
+        </div>
+      ) : (
+        <div style={{ ...S.muted, ...S.mb8 }}>
+          Uses your own login from the kubeconfig: nothing to set up on {cluster}, but the hub acts with your rights, and stops working when your login expires (usually 24 h).
+          Only token logins work (oc login); certificate logins cannot be handed over.
+        </div>
+      )}
+
+      {mode === "values" ? (
+        <>
+          <div style={S.field}>
+            <label style={S.label}>API URL</label>
+            <input style={S.input} placeholder="https://api.cluster02-gpu.example:6443" value={f.apiUrl} onChange={set("apiUrl")} />
+          </div>
+          <div style={S.field}>
+            <label style={S.label}>Service account token</label>
+            <input style={S.input} type="password" autoComplete="off" placeholder={saved ? "saved — paste a new one to replace it" : ""} value={f.token} onChange={set("token")} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={S.field}>
+            <div style={{ ...S.flexBetween, marginBottom: 3 }}>
+              <label style={{ ...S.label, marginBottom: 0 }}>Kubeconfig</label>
+              <label style={{ ...S.btnOutline, padding: "3px 10px", fontSize: 11 }}>Upload file<input type="file" accept=".yaml,.yml,.conf,.config,*" style={{ display: "none" }} onChange={upload} /></label>
+            </div>
+            <textarea style={{ ...S.input, minHeight: 90, fontFamily: "var(--tcs-font-mono)", fontSize: 11 }} placeholder={"apiVersion: v1\nkind: Config\n…   (oc config view --minify --raw)"} value={f.kubeconfig} onChange={set("kubeconfig")} />
+          </div>
+          {result?.contexts?.length > 1 && (
+            <div style={S.field}>
+              <label style={S.label}>Context</label>
+              <select style={S.select} value={f.context || result.context || ""} onChange={set("context")}>
+                {result.contexts.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
+        </>
+      )}
       <div style={S.field}>
-        <label style={S.label}>API URL</label>
-        <input style={S.input} placeholder="https://api.cluster02-gpu.example:6443" value={f.apiUrl} onChange={(e) => setF({ ...f, apiUrl: e.target.value })} />
+        <label style={S.label}>CA certificate <span style={{ fontWeight: 400 }}>(PEM; {mode === "kubeconfig" ? "taken from the kubeconfig when it has one" : "leave empty if the API certificate is already trusted"})</span></label>
+        <textarea style={{ ...S.input, minHeight: 56, fontFamily: "var(--tcs-font-mono)", fontSize: 11 }} placeholder="-----BEGIN CERTIFICATE-----" value={f.caCert} onChange={set("caCert")} />
       </div>
-      <div style={S.field}>
-        <label style={S.label}>Service account token</label>
-        <input style={S.input} type="password" autoComplete="off" placeholder={saved ? "saved — paste a new one to replace it" : ""} value={f.token} onChange={(e) => setF({ ...f, token: e.target.value })} />
-      </div>
-      <div style={S.field}>
-        <label style={S.label}>CA certificate <span style={{ fontWeight: 400 }}>(PEM; leave empty if the API certificate is already trusted)</span></label>
-        <textarea style={{ ...S.input, minHeight: 70, fontFamily: "var(--tcs-font-mono)", fontSize: 11 }} placeholder="-----BEGIN CERTIFICATE-----" value={f.caCert} onChange={(e) => setF({ ...f, caCert: e.target.value })} />
-      </div>
-      {result && <div style={{ fontSize: 12, marginBottom: 10, color: result.ok ? "#22c55e" : "#ef4444", wordBreak: "break-word" }}>{result.message || result.error}</div>}
+
+      {result && <div style={{ fontSize: 12, marginBottom: 8, color: result.ok ? "#22c55e" : result.needsAck ? "#f59e0b" : "#ef4444", wordBreak: "break-word" }}>{result.message || result.error}</div>}
+      <AccessFacts r={result} />
+      {result?.clusterAdmin && (
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, marginBottom: 10 }}>
+          <input type="checkbox" checked={ackAdmin} onChange={(e) => setAckAdmin(e.target.checked)} />
+          <span>I understand the Command Center will act on {cluster} with cluster-admin rights, recorded as {result.identity || "this login"}.</span>
+        </label>
+      )}
       <div style={S.gap8}>
-        <button style={S.btnOutline} disabled={!ready || !!busy} onClick={test}>{busy === "test" ? "Testing..." : "Test"}</button>
-        <button style={S.btnPrimary} disabled={!ready || !!busy} onClick={save}>{busy === "save" ? "Connecting..." : "Test and save"}</button>
+        <button style={{ ...S.btnOutline, ...dim(!ready || !!busy) }} disabled={!ready || !!busy} onClick={test}>{busy === "test" ? "Testing..." : "Test"}</button>
+        <button style={{ ...S.btnPrimary, ...dim(!ready || !!busy || needsAck) }} disabled={!ready || !!busy || needsAck} onClick={save} title={needsAck ? "Confirm the cluster-admin warning first" : ""}>{busy === "save" ? "Connecting..." : "Test and save"}</button>
         {saved && <button style={{ ...S.btnDanger, marginLeft: "auto" }} disabled={!!busy} onClick={remove}>Remove access</button>}
       </div>
     </div>
@@ -1282,18 +1367,18 @@ function PrivateAITab() {
           const p = pre[k] || {};
           return (
             <div key={k} style={{ display: "flex", gap: 10, padding: "8px 0", borderTop: "1px solid var(--border)", fontSize: 12 }}>
-              <span aria-label={p.ok ? "met" : "not met"} style={{ width: 18, flexShrink: 0, fontWeight: 800, color: p.ok ? "#22c55e" : "#f59e0b" }}>{p.ok ? "✓" : "!"}</span>
+              <span aria-label={p.ok && !p.fix ? "met" : p.ok ? "met, with a warning" : "not met"} style={{ width: 18, flexShrink: 0, fontWeight: 800, color: p.ok && !p.fix ? "#22c55e" : "#f59e0b" }}>{p.ok && !p.fix ? "✓" : "!"}</span>
               <div style={{ minWidth: 0 }}>
                 <div><b>{label}</b> <span style={{ color: "var(--text2)" }}>{p.detail}</span></div>
                 {p.fix && <div style={{ ...S.muted, marginTop: 3 }}>Fix: <code style={{ wordBreak: "break-all" }}>{p.fix}</code></div>}
-                {k === "access" && st.cluster !== "local" && canEdit && p.mode === "direct" && !showAccess && (
-                  <button style={{ ...S.btnOutline, marginTop: 6 }} onClick={() => setShowAccess(true)}>Update access</button>
+                {k === "access" && st.cluster !== "local" && canEdit && p.mode === "direct" && !p.expired && !showAccess && (
+                  <button style={{ ...S.btnOutline, marginTop: 6 }} onClick={() => setShowAccess(true)}>{p.expiringSoon ? "Renew access" : "Update access"}</button>
                 )}
               </div>
             </div>
           );
         })}
-        {st.cluster !== "local" && canEdit && pre.access && (pre.access.mode !== "direct" || showAccess) && (
+        {st.cluster !== "local" && canEdit && pre.access && (pre.access.mode !== "direct" || pre.access.expired || showAccess) && (
           <ClusterAccessForm key={st.cluster} cluster={st.cluster} saved={savedAccess} onSaved={() => { setShowAccess(false); load(); }} />
         )}
       </div>

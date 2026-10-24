@@ -1,7 +1,8 @@
 # Direct API access for the hub to the GPU cluster, when the GPU cluster is
 # connected through its agent (which only sends reports). Apply ON THE GPU
 # CLUSTER, after scenario-payments.yaml (the demo namespace must exist) —
-# connect-gpu-cluster.sh does both and prints what to paste into
+# connect-gpu-cluster.sh does both, issues an expiring token for the service
+# account (72 h by default) and prints what to paste into
 # Settings → Private AI → Cluster access.
 #
 # What the hub can do with it:
@@ -19,15 +20,6 @@ kind: ServiceAccount
 metadata:
   name: tcs-agentic-ai-hub
   namespace: tcs-agentic-ai-access
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: tcs-agentic-ai-hub-token
-  namespace: tcs-agentic-ai-access
-  annotations:
-    kubernetes.io/service-account.name: tcs-agentic-ai-hub
-type: kubernetes.io/service-account-token
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

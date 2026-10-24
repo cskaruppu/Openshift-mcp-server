@@ -36,17 +36,28 @@ oc -n tcs-private-ai get inferenceservice -w     # wait for READY=True on all fo
 ```
 
 If the GPU cluster is a different cluster from the platform and is connected
-through its agent, give the hub direct API access to it (read cluster-wide,
-write only in `tcs-demo-payments`). This also deploys the demo app:
+through its agent, give the hub direct API access to it. Two ways:
 
-```bash
-./connect-gpu-cluster.sh --context <gpu-cluster-context>   # prints API URL, token, CA
-```
+- **Limited, expiring access (recommended).** A service account that can read the cluster and
+  change workloads only in `tcs-demo-payments`, with a token that stops working by itself. Also
+  deploys the demo app. Re-run to renew.
+  ```bash
+  ./connect-gpu-cluster.sh --context <gpu-cluster-context>                  # 72 h (default)
+  ./connect-gpu-cluster.sh --context <gpu-cluster-context> --duration 168h  # a week
+  ```
+- **A kubeconfig.** Paste or upload it (`oc config view --minify --raw`) in Settings. Nothing to set
+  up on the GPU cluster, but the hub acts with that login's rights (you must confirm if it is
+  cluster-admin) and stops working when the login expires (usually 24 h). Token logins only.
+
+Settings and the Command Center header show who the access acts as and when it expires, and warn
+from 24 h before; an expired access blocks the checks with the fix. Apply the demo app yourself on
+this path: `oc --context <gpu-cluster-context> apply -f scenario-payments.yaml`.
 
 Then, in the console: **Settings (gear) → Private AI**
 
 1. **GPU cluster**: pick the cluster with the GPUs (e.g. `cluster02-gpu`). If **Cluster access** says
-   "connected through its agent", paste the three values from `connect-gpu-cluster.sh` → **Test and save**.
+   "connected through its agent", choose **Limited access** (paste the three values from
+   `connect-gpu-cluster.sh`) or **Use a kubeconfig** → **Test** → **Test and save**.
    This access is used by the Command Center only; the rest of the console reaches the cluster as before.
 2. **Prerequisites**: GPU nodes, models, demo app and permissions are checked live, each with the fix when it is missing. **Re-check** after fixing.
 3. Switches (admins only, recorded in the Audit trail, saved across restarts):

@@ -338,3 +338,89 @@ describe("GPU cluster access", () => {
     assert.equal(PS.getClusterAccess("cluster02-gpu"), null);
   });
 });
+
+describe("kubeconfig and token facts", () => {
+  const AXp = import("../../src/services/private-ai/access.js");
+  const CA_PEM = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n";
+  const kc = (user, extra = "") => `apiVersion: v1
+kind: Config
+current-context: gpu
+clusters:
+- name: c1
+  cluster:
+    server: https://api.aiinfra.tcs.local:6443/
+    certificate-authority-data: ${Buffer.from(CA_PEM).toString("base64")}${extra}
+contexts:
+- name: gpu
+  context: { cluster: c1, user: u1 }
+- name: other
+  context: { cluster: c1, user: u2 }
+users:
+- name: u1
+  user: ${user}
+- name: u2
+  user: { token: sha256~other }
+`;
+  test("reads server, CA and token of the current (or chosen) context", async () => {
+    const AX = await AXp;
+    const k = AX.parseKubeconfig(kc("{ token: sha256~abc }"));
+    assert.deepEqual([k.context, k.apiUrl, k.token, k.caCert, k.contexts], ["gpu", "https://api.aiinfra.tcs.local:6443", "sha256~abc", CA_PEM, ["gpu", "other"]]);
+    assert.equal(AX.parseKubeconfig(kc("{ token: x }"), "other").token, "sha256~other");
+    assert.throws(() => AX.parseKubeconfig(kc("{ token: x }"), "nope"), /not in this kubeconfig/);
+  });
+  test("certificate and exec logins are refused with the reason; a file CA or skipped TLS is flagged", async () => {
+    const AX = await AXp;
+    assert.throws(() => AX.parseKubeconfig(kc("{ client-certificate-data: AAAA, client-key-data: BBBB }")), /client certificate/);
+    assert.throws(() => AX.parseKubeconfig(kc("{ exec: { command: oc } }")), /exec plugin/);
+    assert.throws(() => AX.parseKubeconfig("not: [valid"), /Not a kubeconfig/);
+    const k = AX.parseKubeconfig(kc("{ token: t }", "\n    insecure-skip-tls-verify: true"));
+    assert.match(k.notes.join(" "), /skips certificate checks/);
+  });
+  test("a service-account token's expiry and subject come from the token itself", async () => {
+    const AX = await AXp;
+    const exp = Math.floor(Date.parse("2026-10-27T10:00:00Z") / 1000);
+    const jwt = ["e30", Buffer.from(JSON.stringify({ exp, sub: "system:serviceaccount:tcs-agentic-ai-access:tcs-agentic-ai-hub" })).toString("base64url"), "sig"].join(".");
+    assert.deepEqual(AX.jwtExpiry(jwt), { expiresAt: "2026-10-27T10:00:00.000Z", subject: "system:serviceaccount:tcs-agentic-ai-access:tcs-agentic-ai-hub" });
+    assert.equal(AX.jwtExpiry("sha256~abc"), null);
+    const now = Date.parse("2026-10-24T10:00:00Z");
+    assert.equal(AX.expiryText("2026-10-27T15:00:00Z", now), "expires in 3 d 5 h");
+    assert.equal(AX.expiryText("2026-10-24T09:00:00Z", now), "expired 1 h 0 min ago");
+  });
+  test("an OpenShift login: identity, cluster-admin and expiry are read from the cluster", async () => {
+    const AX = await AXp;
+    const http = await import("node:http");
+    const { createHash } = await import("node:crypto");
+    const token = "sha256~secret-login-token";
+    const name = "sha256~" + createHash("sha256").update("secret-login-token").digest("base64url");
+    const seen = [];
+    const srv = http.createServer((q, r) => {
+      seen.push(`${q.method} ${q.url} ${q.headers.authorization}`);
+      r.setHeader("content-type", "application/json");
+      if (q.url === "/apis/config.openshift.io/v1/clusterversions/version") return r.end(JSON.stringify({ status: { desired: { version: "4.22.4" } } }));
+      if (q.url === `/apis/oauth.openshift.io/v1/useroauthaccesstokens/${encodeURIComponent(name)}`) return r.end(JSON.stringify({ userName: "aiiadm", expiresIn: 86400, metadata: { creationTimestamp: "2026-10-24T08:00:00Z" } }));
+      if (q.url.endsWith("selfsubjectaccessreviews")) return r.end(JSON.stringify({ status: { allowed: true } }));
+      r.statusCode = 404; r.end("{}");
+    });
+    await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+    try {
+      const info = await AX.inspectAccess({ apiUrl: `http://127.0.0.1:${srv.address().port}`, token, caCert: null });
+      assert.deepEqual([info.version, info.kind, info.identity, info.clusterAdmin, info.expiresAt], ["4.22.4", "user login", "aiiadm", true, "2026-10-25T08:00:00.000Z"]);
+      assert.ok(seen.every((l) => l.endsWith(`Bearer ${token}`)));
+    } finally { srv.close(); }
+  });
+  test("expired saved access blocks the cluster checks and says how to renew", async () => {
+    await PS.saveClusterAccess("cluster02-gpu", { apiUrl: "https://api.x:6443", token: "t".repeat(40) }, { info: { identity: "aiiadm", kind: "user login", expiresAt: new Date(Date.now() - 3600e3).toISOString() }, source: "kubeconfig" });
+    CC.configureCommandCenter({ clusterAccess: async () => "direct", runForCluster: () => { throw new Error("must not call the cluster"); }, ocp: { post: async () => ({ status: { allowed: true } }) } });
+    const pre = await CC.prerequisites({ cluster: "cluster02-gpu" });
+    assert.equal(pre.access.ok, false);
+    assert.equal(pre.access.expired, true);
+    assert.match(pre.access.detail, /as aiiadm \(user login, from kubeconfig\) · expired/);
+    assert.match(pre.access.fix, /Renew/);
+    assert.equal(pre.gpu.detail, "Needs cluster access first");
+    await PS.saveClusterAccess("cluster02-gpu", { apiUrl: "https://api.x:6443", token: "t".repeat(40) }, { info: { expiresAt: new Date(Date.now() + 5 * 3600e3).toISOString() } });
+    const soon = CC.accessExpiry("cluster02-gpu");
+    assert.equal(soon.expiringSoon, true);
+    assert.match(soon.expiry, /^expires in 4 h|^expires in 5 h/);
+    PS._resetClusterAccess(); CC.configureCommandCenter({ clusterAccess: null });
+  });
+});

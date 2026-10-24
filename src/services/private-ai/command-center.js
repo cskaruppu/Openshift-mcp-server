@@ -13,7 +13,8 @@ import * as router from "./router.js";
 import { embeddingModel, embeddingStats } from "./embeddings.js";
 import { scenarioStatus } from "./scenario.js";
 import { batchStatus } from "./vm-batch.js";
-import { effectiveSettings } from "./settings.js";
+import { effectiveSettings, clusterAccessSummary } from "./settings.js";
+import { expiryText } from "./access.js";
 
 const EGRESS_POLICY = "tcs-private-ai-no-internet";
 const ns = () => process.env.MCP_NAMESPACE || process.env.NAMESPACE || "openshift-mcp";
@@ -105,6 +106,7 @@ export async function commandCenterState({ cluster = "local" } = {}) {
     enabled: commandCenterEnabled(),
     banner: effectiveSettings().banner,
     hardware: process.env.PRIVATE_AI_HARDWARE || null,
+    cluster, access: accessExpiry(cluster),
     session: { ..._session },
     act1: {
       routerOn: effectiveSettings().routeChat, models, embed: embedModel ? { ...embedModel, stats: embeddingStats() } : null,
@@ -156,6 +158,14 @@ export function gpuInventory(nodes) {
   return out;
 }
 
+/** Expiry of the saved access to `cluster`: expired / expiringSoon (< 24 h) / text. */
+export function accessExpiry(cluster, now = Date.now()) {
+  const a = cluster && cluster !== "local" ? clusterAccessSummary(cluster) : null;
+  if (!a?.expiresAt) return { expiresAt: null, expired: false, expiringSoon: false, expiry: a?.permanent ? "does not expire" : null };
+  const left = new Date(a.expiresAt).getTime() - now;
+  return { expiresAt: a.expiresAt, expired: left <= 0, expiringSoon: left > 0 && left < 86400000, expiry: expiryText(a.expiresAt, now) };
+}
+
 const ACCESS = {
   local: { ok: true, detail: "The platform runs on this cluster" },
   direct: { ok: true, detail: "Direct API access (stored credentials)" },
@@ -168,8 +178,16 @@ export async function prerequisites({ cluster = "local" } = {}) {
   const run = (fn) => _deps.runForCluster(cluster, fn);
   const list = [...router.models(), ...(embeddingModel() ? [embeddingModel()] : [])];
   const mode = cluster === "local" ? "local" : _deps.clusterAccess ? (await _deps.clusterAccess(cluster)) : "direct";
-  const access = { ...(ACCESS[mode] || ACCESS.none), mode,
+  const access = { ...(ACCESS[mode] || ACCESS.none), mode, ...accessExpiry(cluster),
     fix: ["local", "direct"].includes(mode) ? null : "Connect it for direct access below (deploy/demo/private-ai-ops/connect-gpu-cluster.sh prints the values)" };
+  const saved = cluster === "local" ? null : clusterAccessSummary(cluster);
+  if (saved) {
+    const who = [saved.identity, saved.kind && `(${saved.kind}${saved.source === "kubeconfig" ? ", from kubeconfig" : ""})`].filter(Boolean).join(" ");
+    access.detail = `Direct API access${who ? " as " + who : ""} · ${saved.expiresAt ? expiryText(saved.expiresAt) : saved.permanent ? "does not expire" : "expiry unknown"}${saved.clusterAdmin ? " · cluster-admin rights" : ""}`;
+    if (access.expired) { access.ok = false; access.fix = "Renew it: re-run connect-gpu-cluster.sh (or log in again for a kubeconfig) and save the new token below"; }
+    else if (access.expiringSoon) access.fix = "Expires within a day — renew before the demo: re-run connect-gpu-cluster.sh and save the new token";
+    else if (saved.clusterAdmin) access.fix = "Works, but with far more rights than the demo needs — prefer connect-gpu-cluster.sh (read-only + the demo namespace)";
+  }
   // A failed call through stored credentials comes back as "not reachable":
   // say what is worth checking instead of the internal wording.
   const why = (e) => (/not reachable/i.test(e.message) ? `the hub could not call ${cluster}'s API — check the URL, token and CA in Cluster access` : e.message);

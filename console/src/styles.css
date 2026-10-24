@@ -9747,6 +9747,8 @@ code.new { color: #22a06b; }
 .cc-shell .vc-alert { color: #ff9a9e; }
 .cc-hw { padding: 6px 11px; border-radius: 8px; background: #16213a; border: 1px solid #2a3756; font: 600 0.78rem var(--tcs-font); color: #c7d3e6; white-space: nowrap; }
 .cc-egress { padding: 6px 11px; border-radius: 8px; font: 700 0.78rem var(--tcs-font); white-space: nowrap; color: #c7d3e6; background: #16213a; border: 1px solid #2a3756; }
+.cc-access { padding: 6px 11px; border-radius: 8px; font: 700 0.78rem var(--tcs-font); white-space: nowrap; color: #f2c230; background: rgba(242,194,48,.12); border: 1px solid rgba(242,194,48,.45); }
+.cc-access.bad { color: #ff9a9e; background: rgba(242,85,90,.14); border-color: rgba(242,85,90,.5); }
 .cc-egress.on { color: #5fd49a; background: rgba(43,182,115,.14); border-color: rgba(43,182,115,.45); }
 .cc-clock { font: 500 0.85rem var(--tcs-font-mono); color: #8fa1bd; }
 .cc-nav { display: flex; align-items: center; gap: 8px; padding: 12px 24px; border-bottom: 1px solid #1a2438; flex-wrap: wrap; }
