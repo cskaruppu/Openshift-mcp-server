@@ -38,6 +38,9 @@
 #   DASHBOARD_IMAGE - Override dashboard image
 #   AUTH_MODE       - token | password | none (default: token)
 #   LLM_PROVIDER    - azure | openai | anthropic | ollama | none
+#   HOST_ALIASES    - lab names to pin in the control plane's /etc/hosts:
+#                     "host=ip" or "host@dns-ip" (looked up now), comma-separated
+#                     (default: api.aiinfra.tcs.local@10.131.16.39)
 #
 # ============================================================================
 
@@ -309,35 +312,34 @@ $CLI apply -f "$K8S_DIR/networkpolicy.yaml" 2>/dev/null || true
 
 # 5. DNS forwarding for spoke cluster hostnames
 next "Configuring DNS forwarding for spoke clusters..."
-# SPOKE_DNS_SERVER: the default lab DNS (10.131.19.154 for caaslab).
-# SPOKE_DNS_ZONES: every lab domain other clusters live in, comma-separated,
-# each optionally with its own DNS server — "zone" uses SPOKE_DNS_SERVER,
-# "zone=ip" uses that server (e.g. "ocp.caaslab.local,aiinfra.tcs.local=10.131.16.39").
+# Extract SPOKE_DNS_SERVER from configmap (hardcoded 10.131.19.154 for caaslab)
 SPOKE_DNS=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.SPOKE_DNS_SERVER}' 2>/dev/null || echo "")
-SPOKE_ZONES=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.SPOKE_DNS_ZONES}' 2>/dev/null || echo "")
-SPOKE_ZONES="${SPOKE_ZONES:-ocp.caaslab.local}"
-if [ "$CLI" = "oc" ] && [ -n "$SPOKE_DNS$SPOKE_ZONES" ]; then
-  # One CoreDNS forwarding entry per zone, so each domain asks the server that knows it.
-  SERVERS_JSON=""
-  for entry in $(echo "$SPOKE_ZONES" | tr ',' ' '); do
-    zone="${entry%%=*}"; up="${entry#*=}"; [ "$up" = "$entry" ] && up="${SPOKE_DNS%%,*}"
-    [ -z "$zone" ] || [ -z "$up" ] && continue
-    SERVERS_JSON="$SERVERS_JSON${SERVERS_JSON:+,}{\"name\":\"lab-$(echo "$zone" | tr '.' '-')\",\"zones\":[\"$zone\"],\"forwardPlugin\":{\"upstreams\":[\"$up\"],\"policy\":\"Random\"}}"
-  done
+if [ "$CLI" = "oc" ] && [ -n "$SPOKE_DNS" ]; then
+  # Add DNS Operator forwarding rules for spoke zones so CoreDNS can resolve
+  # spoke Route hostnames (e.g. *.apps.ocp.caaslab.local) via the custom DNS.
+  echo "  Adding DNS forwarding rules for spoke zones → $SPOKE_DNS"
+  # Check current forwarding config
   EXISTING_FWD=$(oc get dns.operator/default -o jsonpath='{.spec.servers}' 2>/dev/null || echo "")
-  MISSING=""
-  for entry in $(echo "$SPOKE_ZONES" | tr ',' ' '); do
-    zone="${entry%%=*}"; up="${entry#*=}"; [ "$up" = "$entry" ] && up="${SPOKE_DNS%%,*}"
-    # Present = an entry named for the zone that already points at its server.
-    echo "$EXISTING_FWD" | sed 's/},{"/}\n{"/g' | grep "\"lab-$(echo "$zone" | tr '.' '-')\"" | grep -q "\"$up\"" || MISSING="$MISSING $zone"
-  done
-  if [ -z "$MISSING" ]; then
-    echo "  DNS forwarding already covers: $SPOKE_ZONES"
-  elif [ -n "$SERVERS_JSON" ]; then
-    echo "  Forwarding [$SPOKE_ZONES] (adding:$MISSING)"
-    # Replaces spec.servers: other forwarding entries on this cluster must be listed in SPOKE_DNS_ZONES too.
-    oc patch dns.operator/default --type=merge -p "{\"spec\":{\"servers\":[$SERVERS_JSON]}}" 2>/dev/null \
-      && echo "  ✓ DNS Operator forwarding configured" || echo "  ⚠  DNS Operator patch skipped (needs cluster-admin) — the platform still falls back to SPOKE_DNS_SERVER itself"
+  if echo "$EXISTING_FWD" | grep -q "$SPOKE_DNS" 2>/dev/null; then
+    echo "  DNS forwarding already configured for $SPOKE_DNS — skipping"
+  else
+    oc patch dns.operator/default --type=merge -p "$(cat <<DNSPATCH
+{
+  "spec": {
+    "servers": [
+      {
+        "name": "spoke-caaslab-dns",
+        "zones": ["ocp.caaslab.local"],
+        "forwardPlugin": {
+          "upstreams": ["$SPOKE_DNS"],
+          "policy": "Random"
+        }
+      }
+    ]
+  }
+}
+DNSPATCH
+)" 2>/dev/null && echo "  ✓ DNS Operator forwarding configured" || echo "  ⚠  DNS Operator patch skipped (may need admin privileges)"
   fi
 else
   echo "  Skipped (not OpenShift or no SPOKE_DNS_SERVER configured)"
@@ -357,6 +359,34 @@ next "Deploying Control Plane (MCP_MODE=control)..."
 $CLI apply -f "$K8S_DIR/deployment.yaml"
 $CLI apply -f "$K8S_DIR/service.yaml"
 $CLI set image deployment/agentic-ai-control-plane agentic-ai-control-plane="$MCP_IMAGE" -n "$NS" 2>/dev/null || true
+# Host aliases: lab names the hub's DNS does not know, pinned in the control
+# plane's /etc/hosts. Each entry is "hostname=ip", or "hostname@dns-ip" to look
+# the address up on that DNS server now (from this machine). Entries already on
+# the deployment (e.g. the 10.131.74.x ones) are kept: the patch merges by IP.
+HOST_ALIASES="${HOST_ALIASES:-api.aiinfra.tcs.local@10.131.16.39}"
+if [ -n "$HOST_ALIASES" ]; then
+  ALIASES_JSON=""
+  for entry in $(echo "$HOST_ALIASES" | tr ',' ' '); do
+    host=""; ip=""; dns=""
+    case "$entry" in
+      *=*) host="${entry%%=*}"; ip="${entry#*=}" ;;
+      *@*) host="${entry%%@*}"; dns="${entry#*@}"
+           ip=$( (dig +short "@$dns" "$host" A 2>/dev/null || true) | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1 || true)
+           [ -z "$ip" ] && ip=$( (nslookup "$host" "$dns" 2>/dev/null || true) | awk '/^Address: /{print $2}' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1 || true) ;;
+      *) echo "  ⚠  Skipping host alias '$entry' (use hostname=ip or hostname@dns-ip)"; continue ;;
+    esac
+    if ! echo "$ip" | grep -qE '^[0-9]+(\.[0-9]+){3}$'; then
+      echo "  ⚠  Could not resolve $host${dns:+ via $dns} — skipping (set HOST_ALIASES=\"$host=<ip>\" instead)"; continue
+    fi
+    echo "  Host alias: $host → $ip"
+    ALIASES_JSON="$ALIASES_JSON${ALIASES_JSON:+,}{\"ip\":\"$ip\",\"hostnames\":[\"$host\"]}"
+  done
+  if [ -n "$ALIASES_JSON" ]; then
+    $CLI -n "$NS" patch deployment agentic-ai-control-plane --type strategic \
+      -p "{\"spec\":{\"template\":{\"spec\":{\"hostAliases\":[$ALIASES_JSON]}}}}" >/dev/null \
+      && echo "  ✓ Host aliases set on agentic-ai-control-plane" || echo "  ⚠  Could not set host aliases"
+  fi
+fi
 # Control plane is internal-only — remove any legacy external route from prior deploys.
 if [ "$CLI" = "oc" ]; then
   oc delete route agentic-ai-server -n "$NS" --ignore-not-found 2>/dev/null || true
