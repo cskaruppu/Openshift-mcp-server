@@ -113,6 +113,7 @@ export function explainFailure(e) {
   const hint = /CERT|certificate|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(why) ? " — paste the cluster's CA certificate"
     : /401|Unauthorized/i.test(why) ? " — the token was rejected or has expired"
     : /403|Forbidden/i.test(why) ? " — the token works but lacks read access (apply gpu-cluster-access.yaml)"
-    : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout|abort/i.test(why) ? " — the hub cannot reach that address" : "";
+    : /ENOTFOUND|EAI_AGAIN/i.test(why) ? " — the hub's DNS does not know this name: add its domain to SPOKE_DNS_ZONES (and a DNS server that knows it to SPOKE_DNS_SERVER) in agentic-ai-server-config"
+    : /ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|timeout|abort/i.test(why) ? " — the hub cannot reach that address (firewall or routing between the clusters)" : "";
   return `Could not connect: ${why}${hint}`;
 }

@@ -29,6 +29,9 @@ data:
   # CoreDNS zone (e.g. *.apps.ocp.caaslab.local). Set to a DNS IP reachable
   # from the hub pod that can resolve spoke Route hostnames.
   SPOKE_DNS_SERVER: "10.131.19.154"
+  # Lab domains other clusters live in — forwarded to SPOKE_DNS_SERVER by
+  # deploy.sh. Add a domain when a cluster from a new one joins.
+  SPOKE_DNS_ZONES: "ocp.caaslab.local,aiinfra.tcs.local"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)

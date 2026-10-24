@@ -10,6 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Agent, fetch as undiciFetch } from "undici";
+import { withLanDns } from "./lan-dns.js";
 
 const ocpAgent = new Agent({
   connect: { timeout: 15_000 },
@@ -24,16 +25,20 @@ const ocpAgent = new Agent({
 // pooled agent per CA bundle. A client-certificate login (one-off setup calls
 // only, never stored) gets an agent of its own for that context.
 const _caAgents = new Map();
+// Remote clusters are often in another DNS zone the in-cluster DNS does not
+// know (lab names like api.aiinfra.tcs.local): their agents also resolve via
+// SPOKE_DNS_SERVER (utils/lan-dns.js). This cluster's own API keeps ocpAgent.
 function dispatcherFor(remote) {
-  if (remote?.cert && remote?.key) {
-    if (!remote._agent) remote._agent = new Agent({ connect: { timeout: 15_000, ca: remote.ca || undefined, cert: remote.cert, key: remote.key }, pipelining: 1, connections: 4 });
+  if (!remote || remote.bridge) return ocpAgent;
+  if (remote.cert && remote.key) {
+    if (!remote._agent) remote._agent = new Agent({ connect: withLanDns({ timeout: 15_000, ca: remote.ca || undefined, cert: remote.cert, key: remote.key }), pipelining: 1, connections: 4 });
     return remote._agent;
   }
-  if (!remote?.ca) return ocpAgent;
-  let a = _caAgents.get(remote.ca);
+  const key = remote.ca || "";
+  let a = _caAgents.get(key);
   if (!a) {
-    a = new Agent({ connect: { timeout: 15_000, ca: remote.ca }, keepAliveTimeout: 30_000, keepAliveMaxTimeout: 60_000, pipelining: 1, connections: 10 });
-    _caAgents.set(remote.ca, a);
+    a = new Agent({ connect: withLanDns({ timeout: 15_000, ...(remote.ca ? { ca: remote.ca } : {}) }), keepAliveTimeout: 30_000, keepAliveMaxTimeout: 60_000, pipelining: 1, connections: 20 });
+    _caAgents.set(key, a);
   }
   return a;
 }

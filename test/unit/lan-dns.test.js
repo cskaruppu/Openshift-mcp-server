@@ -1,0 +1,68 @@
+/**
+ * Lab DNS fallback (utils/lan-dns.js): a name the normal resolver cannot find
+ * is retried against SPOKE_DNS_SERVER — here a real DNS server on loopback.
+ * Run with: node --test test/unit/lan-dns.test.js
+ */
+import { test, after } from "node:test";
+import assert from "node:assert";
+import dgram from "node:dgram";
+
+// Minimal DNS server: answers A 10.131.20.15 for *.aiinfra.tcs.local (127.0.0.1
+// for loop.aiinfra.tcs.local), NXDOMAIN otherwise.
+const sock = dgram.createSocket("udp4");
+sock.on("message", (q, rinfo) => {
+  let i = 12; const labels = [];
+  while (q[i]) { labels.push(q.subarray(i + 1, i + 1 + q[i]).toString()); i += q[i] + 1; }
+  const name = labels.join("."), qEnd = i + 5;
+  const hit = name.endsWith("aiinfra.tcs.local");
+  const head = Buffer.from([q[0], q[1], 0x81, hit ? 0x80 : 0x83, 0, 1, 0, hit ? 1 : 0, 0, 0, 0, 0]);
+  const question = q.subarray(12, qEnd);
+  const ip = name === "loop.aiinfra.tcs.local" ? [127, 0, 0, 1] : [10, 131, 20, 15];
+  const answer = hit ? Buffer.from([0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, ...ip]) : Buffer.alloc(0);
+  sock.send(Buffer.concat([head, question, answer]), rinfo.port, rinfo.address);
+});
+await new Promise((r) => sock.bind(0, "127.0.0.1", r));
+process.env.SPOKE_DNS_SERVER = `127.0.0.1:${sock.address().port}`;
+const L = await import("../../src/utils/lan-dns.js");
+after(() => sock.close());
+
+const look = (host, opts = {}) => new Promise((res) => L.lanLookup(host, opts, (err, address, family) => res({ err, address, family })));
+
+test("a lab name the system resolver cannot find is answered by the lab DNS", async () => {
+  const r = await look("api.aiinfra.tcs.local");
+  assert.equal(r.err, null);
+  assert.deepEqual([r.address, r.family], ["10.131.20.15", 4]);
+  const all = await look("gpt-oss-120b-tcs-private-ai.apps.aiinfra.tcs.local", { all: true });
+  assert.deepEqual(all.address, [{ address: "10.131.20.15", family: 4 }]);
+});
+
+test("names the system resolver knows never reach the lab DNS", async () => {
+  const r = await look("localhost");
+  assert.equal(r.err, null);
+  assert.ok(["127.0.0.1", "::1"].includes(r.address));
+});
+
+test("a name neither knows fails, and the error says where it looked", async () => {
+  const r = await look("api.unknown-zone.invalid");
+  assert.ok(r.err);
+  assert.match(r.err.message, /also not found via SPOKE_DNS_SERVER 127\.0\.0\.1:\d+/);
+});
+
+test("connect options carry the lookup only when a lab DNS is configured", () => {
+  assert.equal(L.withLanDns({ timeout: 1 }).lookup, L.lanLookup);
+  assert.deepEqual(L.lanDnsServers(), [process.env.SPOKE_DNS_SERVER]);
+});
+
+test("a cluster API call and a model health check by lab name both get through", async () => {
+  const http = await import("node:http");
+  const srv = http.createServer((q, r) => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify({ status: { desired: { version: "4.22.4" } }, data: [] })); });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  try {
+    const { withRemoteCluster, ocpGet } = await import("../../src/utils/openshift-client.js");
+    const base = `http://loop.aiinfra.tcs.local:${srv.address().port}`;
+    const cv = await withRemoteCluster(base, "t", () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"));
+    assert.equal(cv.status.desired.version, "4.22.4");
+    const r = await L.lanFetch(`${base}/v1/models`);
+    assert.equal(r.status, 200);
+  } finally { srv.close(); }
+});

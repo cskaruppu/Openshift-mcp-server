@@ -24,6 +24,7 @@
 //   PRIVATE_AI_API_KEY     bearer token, if the endpoints require one
 
 import { randomBytes } from "node:crypto";
+import { lanFetch } from "../../utils/lan-dns.js";
 
 export const ROLES = ["large", "small", "vision", "coder"];
 const ROLE_LABEL = { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML" };
@@ -129,7 +130,7 @@ export async function checkHealth(m, { force = false } = {}) {
   const timer = setTimeout(() => ctl.abort(), 4000);
   let res;
   try {
-    const r = await fetch(`${m.url}${m.healthPath || "/v1/models"}`, { signal: ctl.signal, headers: process.env.PRIVATE_AI_API_KEY ? { Authorization: `Bearer ${process.env.PRIVATE_AI_API_KEY}` } : {} });
+    const r = await lanFetch(`${m.url}${m.healthPath || "/v1/models"}`, { signal: ctl.signal, headers: process.env.PRIVATE_AI_API_KEY ? { Authorization: `Bearer ${process.env.PRIVATE_AI_API_KEY}` } : {} });
     res = { ok: r.ok, at: Date.now(), ms: Date.now() - t0, error: r.ok ? null : `HTTP ${r.status}` };
   } catch (e) {
     res = { ok: false, at: Date.now(), ms: Date.now() - t0, error: e?.name === "AbortError" ? "timed out" : e.message };

@@ -10,6 +10,8 @@
 //   PRIVATE_AI_EMBED_MODEL  default bge-m3
 //   PRIVATE_AI_EMBED_GPU    label shown on screen
 
+import { lanFetch } from "../../utils/lan-dns.js";
+
 const CACHE_MAX = 4000;
 const _cache = new Map();
 let _stats = { calls: 0, texts: 0, failures: 0, lastError: null, lastMs: null };
@@ -28,7 +30,7 @@ export async function embedMany(texts, { fetchImpl } = {}) {
   const missing = [];
   texts.forEach((t, i) => { const c = _cache.get(t); if (c) out[i] = c; else missing.push(i); });
   if (missing.length) {
-    const f = fetchImpl || fetch;
+    const f = fetchImpl || lanFetch;
     const t0 = Date.now();
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 15000);

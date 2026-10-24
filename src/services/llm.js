@@ -13,6 +13,7 @@
  */
 
 import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
+import { withLanDns } from "../utils/lan-dns.js";
 import { recordEgress } from "./agent-context.js";
 import { redactIfEnabled } from "./redaction.js";
 
@@ -56,7 +57,8 @@ function makeDispatcher(proxyUri) {
     return new ProxyAgent({ uri: proxyUri, requestTls: { rejectUnauthorized: false } });
   }
   return new Agent({
-    connect: { rejectUnauthorized: false, timeout: 30_000 },
+    // Lab names (on-prem models exposed on another cluster) also resolve via SPOKE_DNS_SERVER.
+    connect: withLanDns({ rejectUnauthorized: false, timeout: 30_000 }),
     bodyTimeout: 120_000,
     headersTimeout: 90_000,
     keepAliveTimeout: 10_000,
