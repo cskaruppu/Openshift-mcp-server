@@ -49,21 +49,33 @@ const _skipTLS =
 // can resolve those external hostnames (e.g. *.apps.ocp.caaslab.local).
 // Cluster-internal names (.svc.cluster.local) still go through default DNS.
 // ---------------------------------------------------------------------------
-const _spokeDnsServer = process.env.SPOKE_DNS_SERVER || "";
-let _spokeResolver = null;
-
-if (_spokeDnsServer) {
-  _spokeResolver = new DnsResolver();
-  _spokeResolver.setServers([_spokeDnsServer]);
-  console.log(`[federation] Custom DNS resolver configured: ${_spokeDnsServer}`);
+// SPOKE_DNS_SERVER may list several servers, comma-separated (one per lab
+// domain): each is asked in turn, then the default resolver. An entry that is
+// not an IP is skipped with a warning — it must never stop the pod starting.
+const _spokeDnsServers = (process.env.SPOKE_DNS_SERVER || "").split(",").map((x) => x.trim()).filter(Boolean);
+const _spokeResolvers = [];
+const _spokeDnsUsed = [];
+for (const srv of _spokeDnsServers) {
+  try {
+    const r = new DnsResolver();
+    r.setServers([srv]);
+    _spokeResolvers.push(r);
+    _spokeDnsUsed.push(srv);
+  } catch (e) {
+    console.warn(`[federation] Ignoring SPOKE_DNS_SERVER entry "${srv}": ${e.message}`);
+  }
 }
+const _spokeResolver = _spokeResolvers.length ? _spokeResolvers : null;
+if (_spokeResolver) console.log(`[federation] Custom DNS resolver configured: ${_spokeDnsUsed.join(", ")}`);
 
 function customLookup(hostname, opts, cb) {
   if (!_spokeResolver || hostname.endsWith(".svc.cluster.local") || hostname === "localhost") {
     return defaultLookup(hostname, opts, cb);
   }
-  _spokeResolver.resolve4(hostname, (err, addresses) => {
-    if (!err && addresses.length > 0) {
+  const next = (i) => {
+    if (i >= _spokeResolvers.length) return defaultLookup(hostname, opts, cb);
+    _spokeResolvers[i].resolve4(hostname, (err, addresses) => {
+      if (err || !addresses.length) return next(i + 1);
       // Node 20+ (autoSelectFamily) calls lookup with opts.all=true and
       // requires an array of {address, family} — a bare string triggers
       // ERR_INVALID_IP_ADDRESS on every connection to a hostname spoke URL.
@@ -71,9 +83,9 @@ function customLookup(hostname, opts, cb) {
         return cb(null, addresses.map((address) => ({ address, family: 4 })));
       }
       return cb(null, addresses[0], 4);
-    }
-    defaultLookup(hostname, opts, cb);
-  });
+    });
+  };
+  next(0);
 }
 
 const _connectOpts = {};

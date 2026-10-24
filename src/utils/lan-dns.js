@@ -15,10 +15,15 @@
 import { Resolver, lookup as systemLookup } from "node:dns";
 import { Agent, fetch as undiciFetch } from "undici";
 
-const servers = (process.env.SPOKE_DNS_SERVER || "").split(",").map((s) => s.trim()).filter(Boolean);
+const configured = (process.env.SPOKE_DNS_SERVER || "").split(",").map((s) => s.trim()).filter(Boolean);
+const servers = [];
 // One resolver per server, asked in turn: each lab DNS may know only its own
 // domain, and a resolver given several servers stops at the first "no such name".
-const _resolvers = servers.map((srv) => { const r = new Resolver({ timeout: 4000, tries: 2 }); r.setServers([srv]); return r; });
+// An entry that is not an IP is skipped with a warning: it must never stop the pod starting.
+const _resolvers = configured.flatMap((srv) => {
+  try { const r = new Resolver({ timeout: 4000, tries: 2 }); r.setServers([srv]); servers.push(srv); return [r]; }
+  catch (e) { console.warn(`[lan-dns] Ignoring SPOKE_DNS_SERVER entry "${srv}": ${e.message}`); return []; }
+});
 const _resolver = _resolvers.length ? true : null;
 
 function resolveViaLab(hostname, i, cb) {

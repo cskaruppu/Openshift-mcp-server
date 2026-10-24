@@ -95,3 +95,12 @@ test("each lab DNS is asked in turn: the second answers for its own domain after
   assert.equal(r.err, null);
   assert.equal(r.address, "10.131.16.50");
 });
+
+test("the spoke proxy starts with several DNS servers and with an invalid entry (it once crashed the pod)", async () => {
+  const { execFileSync } = await import("node:child_process");
+  for (const value of ["10.131.19.154,10.131.16.39", "10.131.19.154, not-an-ip"]) {
+    const out = execFileSync(process.execPath, ["--input-type=module", "-e", 'await import("./src/services/spoke-proxy.js"); console.log("started")'],
+      { env: { ...process.env, SPOKE_DNS_SERVER: value }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    assert.match(out, /started/, `did not start with SPOKE_DNS_SERVER="${value}"`);
+  }
+});
