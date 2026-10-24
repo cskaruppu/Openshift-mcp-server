@@ -826,6 +826,19 @@ function summariseLatestScan() {
   };
 }
 
+// The Private AI Operations Center reaches its GPU cluster with the access
+// saved in Settings → Private AI when there is one (read + write), otherwise
+// the way the rest of the platform does. Background steps started inside fn
+// (RCA, rollback, verification) inherit the same connection.
+async function privateAiRun(cluster, fn) {
+  if (cluster && cluster !== "local") {
+    const { getClusterAccess } = await import("./services/private-ai/settings.js");
+    const a = getClusterAccess(cluster);
+    if (a) return withRemoteCluster(a.apiUrl, a.token, fn, { ca: a.caCert });
+  }
+  return runForClusterCtx(cluster, fn);
+}
+
 // ── Vulnerability remediation: cluster context + the server's own scan ──
 // Background steps (gate polling, rollout watch, verification) run outside a
 // request, so they reach the record's cluster the same way a request would.
@@ -2117,12 +2130,14 @@ async function startSSE() {
       const CC = await import("./services/private-ai/command-center.js");
       const { detectIncidents } = await import("./services/incident-detector.js");
       const IO = await import("./services/incident-orchestrator.js");
-      SC.configureScenario({ runForCluster: runForClusterCtx, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
+      const PS = await import("./services/private-ai/settings.js");
+      SC.configureScenario({ runForCluster: privateAiRun, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
       CC.configureCommandCenter({
-        runForCluster: runForClusterCtx,
+        runForCluster: privateAiRun,
         gpu: getGpuOverview,
         scanSummary: async () => summariseLatestScan(),
         remediations: async (cluster) => (await import("./services/remediation/workflow.js")).list({ cluster }),
+        clusterAccess: async (c) => (PS.getClusterAccess(c) || hasCredentials(c) ? "direct" : hasActiveChannel(c) ? "agent" : hasSpoke(c) ? "spoke" : "none"),
       });
     } catch (e) { console.error("[command-center] not configured:", e.message); }
     captureCapacitySnapshot().catch(() => {});
@@ -2211,8 +2226,9 @@ async function startSSE() {
 
   // Private AI switches set in Settings → Private AI.
   try {
-    const { restorePrivateAiSettings } = await import("./services/private-ai/settings.js");
+    const { restorePrivateAiSettings, restoreClusterAccess } = await import("./services/private-ai/settings.js");
     await restorePrivateAiSettings();
+    await restoreClusterAccess();
   } catch (e) { console.warn("[startup] private AI settings restore:", e.message); }
 
   // Hydrate LLM runtime defaults from the settings store so background LLM
@@ -9068,6 +9084,42 @@ spec:
       };
     };
 
+    // ── Settings → Private AI → Cluster access: direct API access to the GPU cluster ──
+    if (url.pathname === "/api/private-ai/cluster-access" || url.pathname === "/api/private-ai/cluster-access/test") {
+      const PS = await import("./services/private-ai/settings.js");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Connecting a cluster needs the Admin role" });
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+      try {
+        const body = req.method === "DELETE" ? {} : await readJsonBody(req).catch(() => ({}));
+        const cluster = String(body.cluster || url.searchParams.get("cluster") || "");
+        if (req.method === "DELETE") {
+          const out = await PS.removeClusterAccess(cluster);
+          logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor, title: `Private AI: direct access to ${cluster} removed`, details: {} }).catch(() => {});
+          return sendJson(res, 200, out);
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        const a = PS.validateAccess(body);
+        // Prove the access works before keeping it: who am I, and the cluster version.
+        let version = null;
+        try {
+          const cv = await withRemoteCluster(a.apiUrl, a.token, () => ocpGet("/apis/config.openshift.io/v1/clusterversions/version"), { ca: a.caCert });
+          version = cv?.status?.desired?.version || "unknown";
+        } catch (e) {
+          const why = [e.message, e.cause?.code, e.cause?.message].filter((x, i, l) => x && l.indexOf(x) === i).join(" · ");
+          const hint = /CERT|certificate|SELF_SIGNED|UNABLE_TO_VERIFY/i.test(why) ? " — paste the cluster's CA certificate"
+            : /401|Unauthorized/i.test(why) ? " — the token was rejected" : /403|Forbidden/i.test(why) ? " — the token works but lacks read access (apply gpu-cluster-access.yaml)"
+            : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout|abort/i.test(why) ? " — the hub cannot reach that address" : "";
+          return sendJson(res, 200, { ok: false, message: `Could not connect: ${why}${hint}` });
+        }
+        if (url.pathname.endsWith("/test")) return sendJson(res, 200, { ok: true, message: `Connected to ${cluster || "the cluster"} (OpenShift ${version})` });
+        const out = await PS.saveClusterAccess(cluster, a, { actor });
+        logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
+          title: `Private AI: direct access to ${cluster} saved`, details: { apiUrl: out.apiUrl, customCa: out.customCa, storage: out.storage } }).catch(() => {});
+        return sendJson(res, 200, { ok: true, message: `Connected to ${cluster} (OpenShift ${version}) and saved`, ...out });
+      } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
+    }
+
     // ── Settings → Private AI: the switches and their live prerequisites ──
     if (url.pathname === "/api/private-ai/settings") {
       const PS = await import("./services/private-ai/settings.js");
@@ -9077,7 +9129,7 @@ spec:
       try {
         if (req.method === "GET") {
           const cluster = url.searchParams.get("cluster") || PS.effectiveSettings().cluster;
-          return sendJson(res, 200, { settings: PS.effectiveSettings(), prerequisites: await CC.prerequisites({ cluster }), you: { canManage } });
+          return sendJson(res, 200, { settings: PS.effectiveSettings(), prerequisites: await CC.prerequisites({ cluster }), access: PS.clusterAccessSummary(cluster), you: { canManage } });
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
         if (!canManage) return sendJson(res, 403, { error: "Changing Private AI settings needs the Admin role" });
@@ -9143,7 +9195,7 @@ spec:
           case "/api/command-center/incident/approve": {
             if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Approving a production fix needs the Admin role" });
             const { approveSession } = await import("./services/incident-orchestrator.js");
-            return sendJson(res, 200, await runForClusterCtx(cluster, () => approveSession(body.sessionId, { actor })));
+            return sendJson(res, 200, await privateAiRun(cluster, () => approveSession(body.sessionId, { actor })));
           }
           case "/api/command-center/vm-assessment": {
             let vms = null;

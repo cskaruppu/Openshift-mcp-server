@@ -35,9 +35,19 @@ oc -n tcs-private-ai get inferenceservice -w     # wait for READY=True on all fo
 ./enable.sh --models-context <gpu-cluster-context>
 ```
 
+If the GPU cluster is a different cluster from the platform and is connected
+through its agent, give the hub direct API access to it (read cluster-wide,
+write only in `tcs-demo-payments`). This also deploys the demo app:
+
+```bash
+./connect-gpu-cluster.sh --context <gpu-cluster-context>   # prints API URL, token, CA
+```
+
 Then, in the console: **Settings (gear) → Private AI**
 
-1. **GPU cluster**: pick the cluster with the GPUs (e.g. `cluster02-gpu`).
+1. **GPU cluster**: pick the cluster with the GPUs (e.g. `cluster02-gpu`). If **Cluster access** says
+   "connected through its agent", paste the three values from `connect-gpu-cluster.sh` → **Test and save**.
+   This access is used by the Command Center only; the rest of the console reaches the cluster as before.
 2. **Prerequisites**: GPU nodes, models, demo app and permissions are checked live, each with the fix when it is missing. **Re-check** after fixing.
 3. Switches (admins only, recorded in the Audit trail, saved across restarts):
    - **Command Center**: needs nothing; the workspace button and Ctrl+K appear immediately.
@@ -64,6 +74,8 @@ Check from the hub that a model Route answers before the event:
                              # restores internet and the previous AI provider
 ./disable.sh --remove-demo --models-context <gpu-cluster-context>   # also deletes the demo namespace
 oc --context <gpu-cluster-context> delete -k models/   # frees the GPUs
+oc --context <gpu-cluster-context> delete -f gpu-cluster-access.yaml   # removes the hub's access
+# (and Settings → Private AI → Cluster access → Remove access)
 ```
 
 ## Check on your cluster before the event

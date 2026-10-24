@@ -1137,7 +1137,64 @@ function FeatureFlagsTab() {
 /*  Private AI tab: Command Center switches + live prerequisites       */
 /* ------------------------------------------------------------------ */
 
-const PRE_ROWS = [["gpu", "GPU nodes"], ["models", "Models"], ["demo", "Demo app"], ["permissions", "Permissions"]];
+const PRE_ROWS = [["access", "Cluster access"], ["gpu", "GPU nodes"], ["models", "Models"], ["demo", "Demo app"], ["permissions", "Permissions"]];
+
+/* Direct API access for the hub to the GPU cluster, used by the Command Center
+   only (the rest of the console keeps reaching the cluster as before).
+   connect-gpu-cluster.sh prints the three values. */
+function ClusterAccessForm({ cluster, saved, onSaved }) {
+  const [f, setF] = useState({ apiUrl: saved?.apiUrl || "", token: "", caCert: "" });
+  const [busy, setBusy] = useState(null);
+  const [result, setResult] = useState(null);
+  const body = () => ({ cluster, apiUrl: f.apiUrl.trim(), token: f.token.trim(), caCert: f.caCert.trim() || null });
+  const ready = f.apiUrl.trim() && f.token.trim();
+  const call = async (path, method, payload) => {
+    const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: payload ? JSON.stringify(payload) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+    return j;
+  };
+  const run = async (what, fn) => {
+    setBusy(what);
+    try { await fn(); } catch (e) { setResult({ ok: false, message: e.message }); } finally { setBusy(null); }
+  };
+  const test = () => run("test", async () => setResult(await call("/api/private-ai/cluster-access/test", "POST", body())));
+  const save = () => run("save", async () => {
+    const j = await call("/api/private-ai/cluster-access", "POST", body());
+    setResult(j);
+    if (j.ok) { showToast(`Direct access to ${cluster} saved`, "ok"); setF({ apiUrl: j.apiUrl || f.apiUrl, token: "", caCert: "" }); onSaved(); }
+  });
+  const remove = () => run("remove", async () => {
+    await call(`/api/private-ai/cluster-access?cluster=${encodeURIComponent(cluster)}`, "DELETE");
+    showToast(`Direct access to ${cluster} removed`, "ok"); onSaved();
+  });
+  return (
+    <div style={{ ...S.card, marginTop: 10, marginBottom: 0 }}>
+      <div style={{ ...S.muted, ...S.mb8 }}>
+        On a machine logged in to {cluster}, run <code>deploy/demo/private-ai-ops/connect-gpu-cluster.sh --context &lt;{cluster} context&gt;</code> and paste what it prints.
+        Read access cluster-wide, write access only in the demo namespace. Used by the Command Center only.
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>API URL</label>
+        <input style={S.input} placeholder="https://api.cluster02-gpu.example:6443" value={f.apiUrl} onChange={(e) => setF({ ...f, apiUrl: e.target.value })} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>Service account token</label>
+        <input style={S.input} type="password" autoComplete="off" placeholder={saved ? "saved — paste a new one to replace it" : ""} value={f.token} onChange={(e) => setF({ ...f, token: e.target.value })} />
+      </div>
+      <div style={S.field}>
+        <label style={S.label}>CA certificate <span style={{ fontWeight: 400 }}>(PEM; leave empty if the API certificate is already trusted)</span></label>
+        <textarea style={{ ...S.input, minHeight: 70, fontFamily: "var(--tcs-font-mono)", fontSize: 11 }} placeholder="-----BEGIN CERTIFICATE-----" value={f.caCert} onChange={(e) => setF({ ...f, caCert: e.target.value })} />
+      </div>
+      {result && <div style={{ fontSize: 12, marginBottom: 10, color: result.ok ? "#22c55e" : "#ef4444", wordBreak: "break-word" }}>{result.message || result.error}</div>}
+      <div style={S.gap8}>
+        <button style={S.btnOutline} disabled={!ready || !!busy} onClick={test}>{busy === "test" ? "Testing..." : "Test"}</button>
+        <button style={S.btnPrimary} disabled={!ready || !!busy} onClick={save}>{busy === "save" ? "Connecting..." : "Test and save"}</button>
+        {saved && <button style={{ ...S.btnDanger, marginLeft: "auto" }} disabled={!!busy} onClick={remove}>Remove access</button>}
+      </div>
+    </div>
+  );
+}
 
 function PrivateAITab() {
   const [data, setData] = useState(null);
@@ -1145,6 +1202,7 @@ function PrivateAITab() {
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(null);
   const [err, setErr] = useState(null);
+  const [showAccess, setShowAccess] = useState(false);
 
   const load = useCallback(async () => {
     setChecking(true);
@@ -1180,7 +1238,7 @@ function PrivateAITab() {
   if (!data && !err) return <div style={S.muted}>Checking prerequisites...</div>;
   if (!data) return <div style={{ ...S.card, color: "#ef4444", fontSize: 13 }}>{err}</div>;
 
-  const { settings: st, prerequisites: pre, you } = data;
+  const { settings: st, prerequisites: pre, access: savedAccess, you } = data;
   const canEdit = you?.canManage && !st.lockedOff;
   const chatReady = !!pre.models?.chatReady;
   const switches = [
@@ -1220,7 +1278,7 @@ function PrivateAITab() {
           <div style={{ fontWeight: 600, fontSize: 13 }}>Prerequisites <span style={{ ...S.muted, fontWeight: 400 }}>checked live on {st.cluster === "local" ? "the hub" : st.cluster}</span></div>
           <button style={S.btnOutline} onClick={load} disabled={checking}>{checking ? "Checking..." : "↻ Re-check"}</button>
         </div>
-        {PRE_ROWS.map(([k, label]) => {
+        {PRE_ROWS.filter(([k]) => pre[k]).map(([k, label]) => {
           const p = pre[k] || {};
           return (
             <div key={k} style={{ display: "flex", gap: 10, padding: "8px 0", borderTop: "1px solid var(--border)", fontSize: 12 }}>
@@ -1228,10 +1286,16 @@ function PrivateAITab() {
               <div style={{ minWidth: 0 }}>
                 <div><b>{label}</b> <span style={{ color: "var(--text2)" }}>{p.detail}</span></div>
                 {p.fix && <div style={{ ...S.muted, marginTop: 3 }}>Fix: <code style={{ wordBreak: "break-all" }}>{p.fix}</code></div>}
+                {k === "access" && st.cluster !== "local" && canEdit && p.mode === "direct" && !showAccess && (
+                  <button style={{ ...S.btnOutline, marginTop: 6 }} onClick={() => setShowAccess(true)}>Update access</button>
+                )}
               </div>
             </div>
           );
         })}
+        {st.cluster !== "local" && canEdit && pre.access && (pre.access.mode !== "direct" || showAccess) && (
+          <ClusterAccessForm key={st.cluster} cluster={st.cluster} saved={savedAccess} onSaved={() => { setShowAccess(false); load(); }} />
+        )}
       </div>
 
       {switches.map((w) => (

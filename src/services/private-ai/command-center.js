@@ -156,46 +156,65 @@ export function gpuInventory(nodes) {
   return out;
 }
 
+const ACCESS = {
+  local: { ok: true, detail: "The platform runs on this cluster" },
+  direct: { ok: true, detail: "Direct API access (stored credentials)" },
+  agent: { ok: false, detail: "Connected through its agent, which only sends reports: the hub cannot read GPUs, run the scenario or roll back there" },
+  spoke: { ok: false, detail: "Connected as a spoke, which only answers the dashboard: the hub cannot run the scenario or roll back there" },
+  none: { ok: false, detail: "Not connected to this platform" },
+};
+
 export async function prerequisites({ cluster = "local" } = {}) {
   const run = (fn) => _deps.runForCluster(cluster, fn);
   const list = [...router.models(), ...(embeddingModel() ? [embeddingModel()] : [])];
+  const mode = cluster === "local" ? "local" : _deps.clusterAccess ? (await _deps.clusterAccess(cluster)) : "direct";
+  const access = { ...(ACCESS[mode] || ACCESS.none), mode,
+    fix: ["local", "direct"].includes(mode) ? null : "Connect it for direct access below (deploy/demo/private-ai-ops/connect-gpu-cluster.sh prints the values)" };
+  // A failed call through stored credentials comes back as "not reachable":
+  // say what is worth checking instead of the internal wording.
+  const why = (e) => (/not reachable/i.test(e.message) ? `the hub could not call ${cluster}'s API — check the URL, token and CA in Cluster access` : e.message);
+  const blocked = { ok: false, detail: "Needs cluster access first", fix: null };
 
-  const gpu = run(async () => {
+  const gpu = !access.ok ? blocked : run(async () => {
     const inv = gpuInventory((await O().fetch("/api/v1/nodes")).items);
     const mig = Object.entries(inv.mig).map(([p, n]) => `${n}× ${p}`).join(" · ");
     const ok = inv.gpus + Object.values(inv.mig).reduce((s, n) => s + n, 0) > 0;
     return { ok, detail: ok ? [inv.gpus ? `${inv.gpus} whole GPU${inv.gpus > 1 ? "s" : ""}` : null, mig ? `MIG ${mig}` : null].filter(Boolean).join(" · ") + ` on ${inv.nodes} node${inv.nodes > 1 ? "s" : ""}` : "No NVIDIA GPUs offered by any node",
       fix: ok ? null : "Install the NVIDIA GPU Operator; for four models on two GPUs apply models/10-gpu-mig.yaml", inventory: inv };
-  }).catch((e) => ({ ok: false, detail: `Could not read nodes: ${e.message}`, fix: null }));
+  }).catch((e) => ({ ok: false, detail: `Could not read nodes: ${why(e)}`, fix: null }));
 
+  // Models are called by the platform itself, so this check runs from here whatever the cluster.
   const models = Promise.all(list.map(async (m) => ({ role: m.role, model: m.model, gpu: m.gpu, health: await router.checkHealth(m) }))).then((ms) => {
     const ready = ms.filter((m) => m.health?.ok);
     const chatReady = ready.some((m) => m.role === "large" || m.role === "small");
     return {
       ok: ms.length > 0 && ready.length === ms.length, chatReady, ready: ready.length, total: ms.length, models: ms,
       detail: ms.length ? `${ready.length}/${ms.length} ready · ${ms.map((m) => `${m.model}${m.health?.ok ? "" : " (not answering)"}`).join(", ")}` : "No models connected to the platform",
-      fix: !ms.length ? "Deploy the models (oc apply -k deploy/demo/private-ai-ops/models) and run enable.sh --keep-llm to connect them"
-        : ready.length < ms.length ? "Check the InferenceServices: oc -n tcs-private-ai get inferenceservice" : null,
+      fix: !ms.length ? `Deploy the models (oc apply -k deploy/demo/private-ai-ops/models) and connect them: ./enable.sh${cluster === "local" ? "" : " --models-context <" + cluster + " context>"}`
+        : ready.length < ms.length ? "Check the InferenceServices (oc -n tcs-private-ai get inferenceservice) and that the platform can reach their URLs" : null,
     };
   });
 
-  const demo = scenarioStatus({ cluster }).then((s) => ({
+  const demo = !access.ok ? blocked : scenarioStatus({ cluster }).then((s) => ({
     ok: !!s.live?.installed,
-    detail: s.live?.installed ? `${s.deployment} in ${s.namespace} · ${s.live.ready}/${s.live.replicas} ready` : `${DEMO_NS()} not found`,
-    fix: s.live?.installed ? null : "oc apply -f deploy/demo/private-ai-ops/scenario-payments.yaml",
-  })).catch((e) => ({ ok: false, detail: e.message, fix: null }));
+    detail: s.live?.installed ? `${s.deployment} in ${s.namespace} · ${s.live.ready}/${s.live.replicas} ready`
+      : /Not installed/.test(s.live?.error || "Not installed") ? `${DEMO_NS()} not found` : `Could not check: ${why({ message: s.live.error })}`,
+    fix: s.live?.installed ? null : `oc apply -f deploy/demo/private-ai-ops/scenario-payments.yaml${cluster === "local" ? "" : " (on " + cluster + ")"}`,
+  })).catch((e) => ({ ok: false, detail: why(e), fix: null }));
 
-  const perms = run(async () => {
-    const checks = await Promise.all([
-      canI("patch", "apps", "deployments", DEMO_NS()).then((ok) => ["patch deployments in " + DEMO_NS(), ok]),
-      canI("create", "networking.k8s.io", "networkpolicies", ns()).then((ok) => ["create network policies in " + ns(), ok]),
-      canI("delete", "networking.k8s.io", "networkpolicies", ns()).then((ok) => ["delete network policies in " + ns(), ok]),
-    ]);
+  // The scenario and the rollback act on the GPU cluster; the internet switch on the platform's own namespace.
+  const perms = Promise.all([
+    access.ok ? run(() => canI("patch", "apps", "deployments", DEMO_NS())).then((ok) => [`patch deployments in ${DEMO_NS()}${cluster === "local" ? "" : " on " + cluster}`, ok]).catch(() => [`patch deployments in ${DEMO_NS()} (could not check)`, false]) : null,
+    canI("create", "networking.k8s.io", "networkpolicies", ns()).then((ok) => [`create network policies in ${ns()}`, ok]),
+    canI("delete", "networking.k8s.io", "networkpolicies", ns()).then((ok) => [`delete network policies in ${ns()}`, ok]),
+  ].filter(Boolean)).then((checks) => {
     const missing = checks.filter(([, ok]) => !ok).map(([what]) => what);
-    return { ok: !missing.length, detail: missing.length ? `Missing: ${missing.join(", ")}` : "Can run the scenario, roll back and cut the internet",
-      fix: missing.length ? "Re-apply deploy/dashboard/manifests/serviceaccount.yaml (or the Helm chart) and bind the remediator role in the demo namespace" : null };
+    const gpuSide = missing.some((m) => m.startsWith("patch"));
+    return { ok: access.ok && !missing.length, detail: missing.length ? `Missing: ${missing.join(", ")}` : access.ok ? "Can run the scenario, roll back and cut the internet" : "Internet switch OK; the rest needs cluster access first",
+      fix: !missing.length ? null : gpuSide && cluster !== "local" ? "Run deploy/demo/private-ai-ops/connect-gpu-cluster.sh (grants the demo namespace) and re-apply the platform RBAC on the hub"
+        : "Re-apply deploy/dashboard/manifests/serviceaccount.yaml (or the Helm chart) and bind the remediator role in the demo namespace" };
   }).catch((e) => ({ ok: false, detail: `Could not check: ${e.message}`, fix: null }));
 
   const [g, m, d, p] = await Promise.all([gpu, models, demo, perms]);
-  return { checkedAt: new Date().toISOString(), gpu: g, models: m, demo: d, permissions: p };
+  return { checkedAt: new Date().toISOString(), cluster, access, gpu: g, models: m, demo: d, permissions: p };
 }

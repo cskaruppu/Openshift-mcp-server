@@ -95,3 +95,69 @@ export async function savePrivateAiSettings(patch, { actor = "admin" } = {}) {
 }
 
 export function _resetPrivateAiSettings() { _saved = { ...EMPTY }; }
+
+/* ───────────── direct API access to the GPU cluster ─────────────
+   Kept here, not in the platform's shared cluster credentials, so that
+   connecting a cluster for the Command Center changes nothing about how the
+   rest of the console reaches it. Tokens never leave the server. */
+
+const ACCESS_KEY = "private_ai_cluster_access";
+const ACCESS_FILE = process.env.PRIVATE_AI_ACCESS_PATH || "/data/mcp-private-ai-access.json";
+let _access = {};
+
+export function getClusterAccess(cluster) { return (cluster && _access[cluster]) || null; }
+export function clusterAccessSummary(cluster) {
+  const a = getClusterAccess(cluster);
+  return a ? { apiUrl: a.apiUrl, customCa: !!a.caCert, savedBy: a.savedBy, savedAt: a.savedAt } : null;
+}
+
+async function persistAccess() {
+  try {
+    if (await dbEnabled()) {
+      await dbQuery(
+        `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+        [ACCESS_KEY, JSON.stringify(_access)]
+      );
+      return "database";
+    }
+  } catch { /* DB optional */ }
+  try {
+    await mkdir(dirname(ACCESS_FILE), { recursive: true }).catch(() => {});
+    await writeFile(ACCESS_FILE, JSON.stringify(_access), { encoding: "utf8", mode: 0o600 });
+    return "file";
+  } catch { return "memory"; }
+}
+
+export function validateAccess({ apiUrl, token, caCert } = {}) {
+  if (typeof apiUrl !== "string" || !/^https:\/\/[^\s/]+(:\d+)?\/?$/.test(apiUrl.trim())) throw Object.assign(new Error("API URL must look like https://api.<cluster>:6443"), { status: 400 });
+  if (typeof token !== "string" || token.trim().length < 20) throw Object.assign(new Error("A service account token is required"), { status: 400 });
+  if (caCert != null && caCert !== "" && (typeof caCert !== "string" || !caCert.includes("BEGIN CERTIFICATE"))) throw Object.assign(new Error("The CA certificate must be PEM (-----BEGIN CERTIFICATE-----)"), { status: 400 });
+  return { apiUrl: apiUrl.trim().replace(/\/+$/, ""), token: token.trim(), caCert: caCert ? caCert.trim() : null };
+}
+
+export async function saveClusterAccess(cluster, input, { actor = "admin" } = {}) {
+  if (!validCluster(cluster) || cluster === "local") throw Object.assign(new Error("Pick the GPU cluster first"), { status: 400 });
+  _access = { ..._access, [cluster]: { ...validateAccess(input), savedBy: actor, savedAt: new Date().toISOString() } };
+  return { storage: await persistAccess(), ...clusterAccessSummary(cluster) };
+}
+
+export async function removeClusterAccess(cluster) {
+  const { [cluster]: _gone, ...rest } = _access;
+  _access = rest;
+  return { storage: await persistAccess() };
+}
+
+export async function restoreClusterAccess() {
+  try {
+    if (await dbEnabled()) {
+      const r = await dbQuery("SELECT value FROM kv_store WHERE key = $1", [ACCESS_KEY]);
+      let v = r?.rows?.[0]?.value;
+      if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
+      if (v && typeof v === "object") { _access = v; return; }
+    }
+  } catch { /* fall through */ }
+  try { const v = JSON.parse(await readFile(ACCESS_FILE, "utf8")); if (v && typeof v === "object") _access = v; } catch { /* nothing stored */ }
+}
+
+export function _resetClusterAccess() { _access = {}; }

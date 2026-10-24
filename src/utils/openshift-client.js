@@ -19,6 +19,20 @@ const ocpAgent = new Agent({
   connections: 20,
 });
 
+// A remote cluster registered for direct access may bring its own CA (its API
+// server is signed by that cluster's CA, which this pod does not trust). One
+// pooled agent per CA bundle.
+const _caAgents = new Map();
+function dispatcherFor(remote) {
+  if (!remote?.ca) return ocpAgent;
+  let a = _caAgents.get(remote.ca);
+  if (!a) {
+    a = new Agent({ connect: { timeout: 15_000, ca: remote.ca }, keepAliveTimeout: 30_000, keepAliveMaxTimeout: 60_000, pipelining: 1, connections: 10 });
+    _caAgents.set(remote.ca, a);
+  }
+  return a;
+}
+
 const OPENSHIFT_API_URL =
   process.env.OPENSHIFT_API_URL ||
   `https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT}`;
@@ -145,8 +159,8 @@ export function activeClusterContext() {
  * Run `fn` with all ocpFetch() calls routed to the given remote cluster.
  * Safe under concurrency — each async context gets its own override.
  */
-export function withRemoteCluster(apiUrl, token, fn) {
-  return clusterStore.run({ apiUrl, token }, fn);
+export function withRemoteCluster(apiUrl, token, fn, { ca = null } = {}) {
+  return clusterStore.run({ apiUrl, token, ca }, fn);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,8 +192,8 @@ export function enterRemoteClusterBridge(cluster) {
  * Route all subsequent ocpGet/ocpFetch calls to a remote cluster using
  * direct API credentials. Persists across awaits within this request only.
  */
-export function enterRemoteClusterDirect(apiUrl, token) {
-  clusterStore.enterWith({ apiUrl, token });
+export function enterRemoteClusterDirect(apiUrl, token, ca = null) {
+  clusterStore.enterWith({ apiUrl, token, ca });
 }
 
 /**
@@ -256,7 +270,7 @@ export async function ocpFetch(path, options = {}) {
     resp = await undiciFetch(url, {
       ...options,
       signal: controller.signal,
-      dispatcher: ocpAgent,
+      dispatcher: dispatcherFor(remote),
       headers: {
         Authorization: `Bearer ${tk}`,
         Accept: acceptsText ? "text/plain" : "application/json",

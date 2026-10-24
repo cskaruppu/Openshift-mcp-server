@@ -14,7 +14,9 @@ process.env.PRIVATE_AI_VISION_URL = "http://vision.test";
 process.env.PRIVATE_AI_LARGE_GPU = "GPU 0 · H100";
 const { mkdtempSync } = await import("node:fs");
 const { tmpdir } = await import("node:os");
-process.env.PRIVATE_AI_SETTINGS_PATH = `${mkdtempSync(`${tmpdir()}/pai-`)}/settings.json`;
+const _paiDir = mkdtempSync(`${tmpdir()}/pai-`);
+process.env.PRIVATE_AI_SETTINGS_PATH = `${_paiDir}/settings.json`;
+process.env.PRIVATE_AI_ACCESS_PATH = `${_paiDir}/access.json`;
 
 const R = await import("../../src/services/private-ai/router.js");
 const E = await import("../../src/services/private-ai/embeddings.js");
@@ -298,5 +300,41 @@ describe("prerequisites", () => {
     assert.equal(pre.models.chatReady, true);
     assert.equal(pre.models.ok, false);
     global.fetch = realFetch;
+  });
+});
+
+describe("GPU cluster access", () => {
+  after(() => { PS._resetClusterAccess(); CC.configureCommandCenter({ clusterAccess: null }); });
+  test("a cluster reached only through its agent: the cluster checks wait for access, and say how to get it", async () => {
+    CC.configureCommandCenter({
+      clusterAccess: async () => "agent",
+      runForCluster: () => { throw new Error("must not call the cluster"); },
+      ocp: { post: async () => ({ status: { allowed: true } }) },
+    });
+    const pre = await CC.prerequisites({ cluster: "cluster02-gpu" });
+    assert.equal(pre.access.ok, false);
+    assert.match(pre.access.detail, /agent/);
+    assert.match(pre.access.fix, /connect-gpu-cluster\.sh/);
+    assert.equal(pre.gpu.detail, "Needs cluster access first");
+    assert.equal(pre.demo.detail, "Needs cluster access first");
+    assert.equal(pre.permissions.ok, false);
+    assert.match(pre.permissions.detail, /Internet switch OK/);
+  });
+  test("saved access is validated, and its token is never returned", async () => {
+    assert.throws(() => PS.validateAccess({ apiUrl: "http://api.x:6443", token: "x".repeat(40) }), /https/);
+    assert.throws(() => PS.validateAccess({ apiUrl: "https://api.x:6443", token: "short" }), /token/);
+    assert.throws(() => PS.validateAccess({ apiUrl: "https://api.x:6443", token: "x".repeat(40), caCert: "nope" }), /PEM/);
+    await assert.rejects(PS.saveClusterAccess("local", { apiUrl: "https://api.x:6443", token: "x".repeat(40) }), /GPU cluster/);
+    const out = await PS.saveClusterAccess("cluster02-gpu", { apiUrl: "https://api.x:6443/", token: "t".repeat(40), caCert: "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----" }, { actor: "admin" });
+    assert.equal(out.apiUrl, "https://api.x:6443");
+    assert.equal(out.customCa, true);
+    assert.ok(!JSON.stringify(out).includes("t".repeat(40)));
+    assert.ok(!JSON.stringify(PS.clusterAccessSummary("cluster02-gpu")).includes("t".repeat(40)));
+    assert.equal(PS.getClusterAccess("cluster02-gpu").token, "t".repeat(40));
+    PS._resetClusterAccess();
+    await PS.restoreClusterAccess();
+    assert.equal(PS.getClusterAccess("cluster02-gpu").apiUrl, "https://api.x:6443");
+    await PS.removeClusterAccess("cluster02-gpu");
+    assert.equal(PS.getClusterAccess("cluster02-gpu"), null);
   });
 });
