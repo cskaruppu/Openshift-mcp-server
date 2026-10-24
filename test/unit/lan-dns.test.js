@@ -23,6 +23,7 @@ sock.on("message", (q, rinfo) => {
 });
 await new Promise((r) => sock.bind(0, "127.0.0.1", r));
 process.env.SPOKE_DNS_SERVER = `127.0.0.1:${sock.address().port}`;
+process.env.LAN_HOSTS = "api.pinned.lab.local=10.131.74.6, *.apps.pinned.lab.local=10.131.74.7";
 const L = await import("../../src/utils/lan-dns.js");
 after(() => sock.close());
 
@@ -65,4 +66,15 @@ test("a cluster API call and a model health check by lab name both get through",
     const r = await L.lanFetch(`${base}/v1/models`);
     assert.equal(r.status, 200);
   } finally { srv.close(); }
+});
+
+test("LAN_HOSTS pins names like a hosts file, with wildcards for a cluster's Routes", async () => {
+  assert.equal((await look("api.pinned.lab.local")).address, "10.131.74.6");
+  assert.equal((await look("gpt-oss-120b-tcs-private-ai.apps.pinned.lab.local")).address, "10.131.74.7");
+  assert.ok((await look("apps.pinned.lab.local")).err, "a wildcard does not match the zone itself");
+  const list = L.parseLanHosts("a.x.local=1.1.1.1\n*.x.local=2.2.2.2, junk, *.y.x.local=3.3.3.3");
+  assert.equal(list.length, 3);
+  assert.equal(L.lanHostsMatch("a.x.local", list), "1.1.1.1");
+  assert.equal(L.lanHostsMatch("b.y.x.local", list), "3.3.3.3", "the most specific wildcard wins");
+  assert.equal(L.lanHostsMatch("b.x.local", list), "2.2.2.2");
 });

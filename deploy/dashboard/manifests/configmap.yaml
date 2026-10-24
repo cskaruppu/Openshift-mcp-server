@@ -32,6 +32,11 @@ data:
   # Lab domains other clusters live in — forwarded to SPOKE_DNS_SERVER by
   # deploy.sh. Add a domain when a cluster from a new one joins.
   SPOKE_DNS_ZONES: "ocp.caaslab.local,aiinfra.tcs.local"
+  # LAN_HOSTS — when no DNS server knows a lab domain, pin names to IPs like a
+  # hosts file, with wildcards (one entry covers every Route of a cluster):
+  #   LAN_HOSTS: "api.aiinfra.tcs.local=<API VIP>,*.apps.aiinfra.tcs.local=<ingress VIP>"
+  # Left out of this file on purpose: set it on the cluster with oc patch, and
+  # re-running deploy.sh keeps it.
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)
