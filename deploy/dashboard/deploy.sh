@@ -309,28 +309,35 @@ $CLI apply -f "$K8S_DIR/networkpolicy.yaml" 2>/dev/null || true
 
 # 5. DNS forwarding for spoke cluster hostnames
 next "Configuring DNS forwarding for spoke clusters..."
-# SPOKE_DNS_SERVER: the lab DNS (hardcoded 10.131.19.154 for caaslab).
-# SPOKE_DNS_ZONES: every lab domain other clusters live in, comma-separated —
-# add a zone here when a cluster in a new domain joins (e.g. aiinfra.tcs.local).
+# SPOKE_DNS_SERVER: the default lab DNS (10.131.19.154 for caaslab).
+# SPOKE_DNS_ZONES: every lab domain other clusters live in, comma-separated,
+# each optionally with its own DNS server — "zone" uses SPOKE_DNS_SERVER,
+# "zone=ip" uses that server (e.g. "ocp.caaslab.local,aiinfra.tcs.local=10.131.16.39").
 SPOKE_DNS=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.SPOKE_DNS_SERVER}' 2>/dev/null || echo "")
 SPOKE_ZONES=$($CLI get configmap agentic-ai-server-config -n "$NS" -o jsonpath='{.data.SPOKE_DNS_ZONES}' 2>/dev/null || echo "")
 SPOKE_ZONES="${SPOKE_ZONES:-ocp.caaslab.local}"
-if [ "$CLI" = "oc" ] && [ -n "$SPOKE_DNS" ]; then
-  # CoreDNS forwards these zones to the lab DNS, so every pod resolves the
-  # spoke API and Route hostnames (e.g. api.aiinfra.tcs.local).
-  ZONES_JSON=$(echo "$SPOKE_ZONES" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd, -)
-  UPSTREAMS_JSON=$(echo "$SPOKE_DNS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$' | sed 's/.*/"&"/' | paste -sd, -)
+if [ "$CLI" = "oc" ] && [ -n "$SPOKE_DNS$SPOKE_ZONES" ]; then
+  # One CoreDNS forwarding entry per zone, so each domain asks the server that knows it.
+  SERVERS_JSON=""
+  for entry in $(echo "$SPOKE_ZONES" | tr ',' ' '); do
+    zone="${entry%%=*}"; up="${entry#*=}"; [ "$up" = "$entry" ] && up="${SPOKE_DNS%%,*}"
+    [ -z "$zone" ] || [ -z "$up" ] && continue
+    SERVERS_JSON="$SERVERS_JSON${SERVERS_JSON:+,}{\"name\":\"lab-$(echo "$zone" | tr '.' '-')\",\"zones\":[\"$zone\"],\"forwardPlugin\":{\"upstreams\":[\"$up\"],\"policy\":\"Random\"}}"
+  done
   EXISTING_FWD=$(oc get dns.operator/default -o jsonpath='{.spec.servers}' 2>/dev/null || echo "")
   MISSING=""
-  for z in $(echo "$SPOKE_ZONES" | tr ',' ' '); do
-    echo "$EXISTING_FWD" | grep -q "\"$z\"" || MISSING="$MISSING $z"
+  for entry in $(echo "$SPOKE_ZONES" | tr ',' ' '); do
+    zone="${entry%%=*}"; up="${entry#*=}"; [ "$up" = "$entry" ] && up="${SPOKE_DNS%%,*}"
+    # Present = an entry named for the zone that already points at its server.
+    echo "$EXISTING_FWD" | sed 's/},{"/}\n{"/g' | grep "\"lab-$(echo "$zone" | tr '.' '-')\"" | grep -q "\"$up\"" || MISSING="$MISSING $zone"
   done
   if [ -z "$MISSING" ]; then
-    echo "  DNS forwarding already covers: $SPOKE_ZONES → $SPOKE_DNS"
-  else
-    echo "  Forwarding zones [$SPOKE_ZONES] → $SPOKE_DNS (adding:$MISSING)"
-    oc patch dns.operator/default --type=merge -p "{\"spec\":{\"servers\":[{\"name\":\"spoke-caaslab-dns\",\"zones\":[$ZONES_JSON],\"forwardPlugin\":{\"upstreams\":[$UPSTREAMS_JSON],\"policy\":\"Random\"}}]}}" 2>/dev/null \
-      && echo "  ✓ DNS Operator forwarding configured" || echo "  ⚠  DNS Operator patch skipped (needs cluster-admin) — the platform still falls back to $SPOKE_DNS itself"
+    echo "  DNS forwarding already covers: $SPOKE_ZONES"
+  elif [ -n "$SERVERS_JSON" ]; then
+    echo "  Forwarding [$SPOKE_ZONES] (adding:$MISSING)"
+    # Replaces spec.servers: other forwarding entries on this cluster must be listed in SPOKE_DNS_ZONES too.
+    oc patch dns.operator/default --type=merge -p "{\"spec\":{\"servers\":[$SERVERS_JSON]}}" 2>/dev/null \
+      && echo "  ✓ DNS Operator forwarding configured" || echo "  ⚠  DNS Operator patch skipped (needs cluster-admin) — the platform still falls back to SPOKE_DNS_SERVER itself"
   fi
 else
   echo "  Skipped (not OpenShift or no SPOKE_DNS_SERVER configured)"

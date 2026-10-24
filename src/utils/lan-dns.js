@@ -16,10 +16,14 @@ import { Resolver, lookup as systemLookup } from "node:dns";
 import { Agent, fetch as undiciFetch } from "undici";
 
 const servers = (process.env.SPOKE_DNS_SERVER || "").split(",").map((s) => s.trim()).filter(Boolean);
-let _resolver = null;
-if (servers.length) {
-  _resolver = new Resolver({ timeout: 4000, tries: 2 });
-  _resolver.setServers(servers);
+// One resolver per server, asked in turn: each lab DNS may know only its own
+// domain, and a resolver given several servers stops at the first "no such name".
+const _resolvers = servers.map((srv) => { const r = new Resolver({ timeout: 4000, tries: 2 }); r.setServers([srv]); return r; });
+const _resolver = _resolvers.length ? true : null;
+
+function resolveViaLab(hostname, i, cb) {
+  if (i >= _resolvers.length) return cb(null, []);
+  _resolvers[i].resolve4(hostname, (err, addrs) => (!err && addrs?.length ? cb(null, addrs) : resolveViaLab(hostname, i + 1, cb)));
 }
 
 // "name=ip" pairs; "*.zone" matches any name under zone (not zone itself).
@@ -56,7 +60,7 @@ export function lanLookup(hostname, opts, cb) {
       if (hosts.length) err.message = `${err.message} (not in LAN_HOSTS either)`;
       return cb(err);
     }
-    _resolver.resolve4(hostname, (e2, addrs) => {
+    resolveViaLab(hostname, 0, (e2, addrs) => {
       if (e2 || !addrs?.length) {
         // Name where else it looked, so "not found" says what to change.
         err.message = `${err.message} (also not found via SPOKE_DNS_SERVER ${servers.join(", ")}${hosts.length ? " or LAN_HOSTS" : ""})`;

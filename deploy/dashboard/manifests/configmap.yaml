@@ -28,10 +28,11 @@ data:
   # DNS server for resolving spoke cluster hostnames that are outside the hub's
   # CoreDNS zone (e.g. *.apps.ocp.caaslab.local). Set to a DNS IP reachable
   # from the hub pod that can resolve spoke Route hostnames.
-  SPOKE_DNS_SERVER: "10.131.19.154"
-  # Lab domains other clusters live in — forwarded to SPOKE_DNS_SERVER by
-  # deploy.sh. Add a domain when a cluster from a new one joins.
-  SPOKE_DNS_ZONES: "ocp.caaslab.local,aiinfra.tcs.local"
+  SPOKE_DNS_SERVER: "10.131.19.154,10.131.16.39"
+  # Lab domains other clusters live in, forwarded by deploy.sh: "zone" goes to
+  # SPOKE_DNS_SERVER, "zone=ip" to that DNS server. Add one when a cluster from
+  # a new domain joins. (The platform itself also asks every SPOKE_DNS_SERVER.)
+  SPOKE_DNS_ZONES: "ocp.caaslab.local,aiinfra.tcs.local=10.131.16.39"
   # LAN_HOSTS — when no DNS server knows a lab domain, pin names to IPs like a
   # hosts file, with wildcards (one entry covers every Route of a cluster):
   #   LAN_HOSTS: "api.aiinfra.tcs.local=<API VIP>,*.apps.aiinfra.tcs.local=<ingress VIP>"
