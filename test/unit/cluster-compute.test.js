@@ -71,13 +71,16 @@ test("CPU % from the metrics API; a CPU-only cluster never asks for GPU metrics;
     C._resetComputeCache();
     const nodes = [node({ cpu: "16" }), node({ cpu: "16" }), node({ cpu: "16" })];
     const run = () => withRemoteCluster(`http://127.0.0.1:${srv.address().port}`, "t", () => C.clusterCompute(nodes, { cacheKey: "x" }));
+    const first = await run();
+    assert.equal(first.cpuPct, null, "the summary does not wait for the measurement");
+    await withRemoteCluster(`http://127.0.0.1:${srv.address().port}`, "t", () => C._settleLive("x"));
     const c = await run();
-    assert.equal(c.cpuPct, 25, "12 of 48 cores");
+    assert.equal(c.cpuPct, 25, "12 of 48 cores, from the background measurement");
     assert.equal(c.gpuPct, null);
     assert.ok(!seen.some((u) => /prometheus|thanos|query/i.test(u)), "no GPU metrics query on a CPU-only cluster");
     const n = seen.length;
     await run();
-    assert.equal(seen.length, n, "second call within 20 s is served from the cache");
+    assert.equal(seen.length, n, "within 20 s no new measurement is started");
   } finally { srv.close(); }
 });
 
@@ -86,7 +89,9 @@ test("no metrics API: CPU % is null, not a guess", async () => {
   await new Promise((res) => srv.listen(0, "127.0.0.1", res));
   try {
     C._resetComputeCache();
-    const c = await withRemoteCluster(`http://127.0.0.1:${srv.address().port}`, "t", () => C.clusterCompute([node({ cpu: "8" })], { cacheKey: "y" }));
+    const url = `http://127.0.0.1:${srv.address().port}`;
+    await withRemoteCluster(url, "t", async () => { await C.clusterCompute([node({ cpu: "8" })], { cacheKey: "y" }); await C._settleLive("y"); });
+    const c = await withRemoteCluster(url, "t", () => C.clusterCompute([node({ cpu: "8" })], { cacheKey: "y" }));
     assert.equal(c.vcpu, 8);
     assert.equal(c.cpuPct, null);
   } finally { srv.close(); }
@@ -114,4 +119,17 @@ test("CPU family from the local CPU, only when its vendor agrees with the nodes"
   assert.equal(C.withCpuFamily(base, { vendor: "AMD", family: "EPYC" }).cpuFamily, undefined, "a different vendor is not trusted");
   const noNfd = C.withCpuFamily({ cpuVendor: null, arch: "x86-64" }, { vendor: "AMD", family: "EPYC" });
   assert.deepEqual([noNfd.cpuVendor, noNfd.cpuFamily], ["AMD", "EPYC"]);
+});
+
+test("a slow GPU cluster never slows the summary down", async () => {
+  const srv = http.createServer((q, r) => { setTimeout(() => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify({ items: [] })); }, 3000); });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    C._resetComputeCache();
+    const t0 = Date.now();
+    const c = await withRemoteCluster(`http://127.0.0.1:${srv.address().port}`, "t", () =>
+      C.clusterCompute([node({ cpu: "64", "nvidia.com/gpu": "2" }, { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3" })], { cacheKey: "slow" }));
+    assert.ok(Date.now() - t0 < 500, `returned in ${Date.now() - t0} ms`);
+    assert.deepEqual([c.gpus, c.gpuVendor, c.gpuModel, c.gpuPct], [2, "NVIDIA", "H100", null]);
+  } finally { srv.close(); }
 });

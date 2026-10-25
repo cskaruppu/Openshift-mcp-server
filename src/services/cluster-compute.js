@@ -19,7 +19,6 @@ import { readFile } from "node:fs/promises";
 import { ocpGet } from "../utils/openshift-client.js";
 
 const CACHE_MS = 20_000;
-let _cache = { at: 0, value: null };
 
 /** "250m" → 0.25, "2" → 2, "1500000n" → 0.0015 cores. */
 export function parseCores(q) {
@@ -128,23 +127,38 @@ async function gpuPercent() {
 
 const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
 
+// Live usage per cluster context, measured in the background: the summary
+// never waits for it (a GPU cluster's monitoring can take seconds, and the hub
+// gives a spoke's summary only a few). A summary returns the latest values —
+// null until the first measurement lands — and starts a refresh when they are
+// older than CACHE_MS.
+const _live = new Map(); // cacheKey → { at, cpuPct, gpuPct, running }
+
+function refreshLive(key, vcpu, gpus, now) {
+  const cur = _live.get(key) || { at: 0, cpuPct: null, gpuPct: null };
+  if (cur.running) return;
+  _live.set(key, { ...cur, running: true });
+  Promise.all([within(cpuPercent(vcpu), 8000), gpus ? within(gpuPercent(), 10000) : null])
+    .then(([cpuPct, gpuPct]) => _live.set(key, { at: now, cpuPct, gpuPct, running: false }))
+    .catch(() => _live.set(key, { ...cur, running: false }));
+}
+
 /**
  * Compute for the current cluster context. `nodes` is the node list the caller
- * already fetched. The live percentages are cached briefly and time-boxed, so
- * the cluster summary stays fast.
+ * already fetched. Never slower than reading the nodes: live usage comes from
+ * the background measurement (see refreshLive).
  */
 export async function clusterCompute(nodes, { now = Date.now(), cacheKey = "local" } = {}) {
   // /proc/cpuinfo describes the node this pod runs on: only for its own cluster.
   const base = cacheKey === "local" ? withCpuFamily(computeFromNodes(nodes), await localCpu()) : computeFromNodes(nodes);
-  if (_cache.value && _cache.key === cacheKey && now - _cache.at < CACHE_MS) {
-    return { ...base, cpuPct: _cache.value.cpuPct, gpuPct: base.gpus ? _cache.value.gpuPct : null };
-  }
-  const [cpuPct, gpuPct] = await Promise.all([
-    within(cpuPercent(base.vcpu), 4000),
-    base.gpus ? within(gpuPercent(), 5000) : null,
-  ]);
-  _cache = { at: now, key: cacheKey, value: { cpuPct, gpuPct } };
-  return { ...base, cpuPct, gpuPct };
+  const live = _live.get(cacheKey);
+  if (!live || (!live.running && now - live.at >= CACHE_MS)) refreshLive(cacheKey, base.vcpu, base.gpus, now);
+  return { ...base, cpuPct: live?.cpuPct ?? null, gpuPct: base.gpus ? live?.gpuPct ?? null : null };
 }
 
-export function _resetComputeCache() { _cache = { at: 0, value: null }; }
+/** Wait for the background measurement of `cacheKey` (tests). */
+export async function _settleLive(cacheKey = "local") {
+  for (let i = 0; i < 200 && _live.get(cacheKey)?.running; i++) await new Promise((r) => setTimeout(r, 10));
+}
+
+export function _resetComputeCache() { _live.clear(); }

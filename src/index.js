@@ -576,8 +576,9 @@ async function restoreHubAgentSpoke() {
  */
 async function fetchSpokeSummary(clusterName, spokeUrl) {
   try {
+    // A large cluster (thousands of pods, e.g. with OpenShift AI) can take a while to summarise.
     const resp = await fedFetch(`${spokeUrl}/api/cluster/summary`, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(20000),
     });
     if (!resp.ok) return;
     const data = await resp.json();
