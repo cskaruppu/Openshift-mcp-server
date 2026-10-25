@@ -153,7 +153,14 @@ export async function clusterCompute(nodes, { now = Date.now(), cacheKey = "loca
   const base = cacheKey === "local" ? withCpuFamily(computeFromNodes(nodes), await localCpu()) : computeFromNodes(nodes);
   const live = _live.get(cacheKey);
   if (!live || (!live.running && now - live.at >= CACHE_MS)) refreshLive(cacheKey, base.vcpu, base.gpus, now);
-  return { ...base, infra: infraFor(nodes, cacheKey, now), cpuPct: live?.cpuPct ?? null, gpuPct: base.gpus ? live?.gpuPct ?? null : null };
+  let infra = infraFor(nodes, cacheKey, now);
+  // On the agent's own cluster the lookup is local and quick: give the first
+  // summary a moment for it, so the card does not start on the CPU fallback.
+  if (infra === null && cacheKey === "local" && _infra.get(cacheKey)?.running) {
+    await within(_infraDone(cacheKey), 1500);
+    infra = _infra.get(cacheKey)?.value ?? null;
+  }
+  return { ...base, infra, cpuPct: live?.cpuPct ?? null, gpuPct: base.gpus ? live?.gpuPct ?? null : null };
 }
 
 // What the cluster runs on (cluster-infra.js) changes rarely: resolved in the
@@ -169,6 +176,9 @@ function infraFor(nodes, cacheKey, now) {
       .catch(() => _infra.set(cacheKey, { at: now, value: cur?.value ?? null, running: false }));
   }
   return cur?.value ?? null;
+}
+async function _infraDone(cacheKey) {
+  while (_infra.get(cacheKey)?.running) await new Promise((r) => setTimeout(r, 25));
 }
 
 /** Wait for the background measurement of `cacheKey` (tests). */
