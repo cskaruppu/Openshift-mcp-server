@@ -1,0 +1,24 @@
+# Serving runtime for the embedding model (bge-m3): Hugging Face Text Embeddings Inference,
+# added to OpenShift AI as a custom runtime. OpenShift AI's own vLLM runtime is used for the
+# three chat/vision models (deploy-rhoai.sh creates it from the template OpenShift AI ships).
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: tei-runtime
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true" }
+  annotations:
+    openshift.io/display-name: Text Embeddings Inference (TEI)
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+spec:
+  multiModel: false
+  supportedModelFormats:
+    - { name: tei, autoSelect: true }
+  containers:
+    - name: kserve-container
+      image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
+      args: ["--model-id", "/mnt/models", "--port", "8080", "--served-model-name", "{{.Name}}"]
+      env:
+        - { name: HOME, value: /tmp }
+        - { name: HF_HOME, value: /tmp/hf }
+      ports: [{ containerPort: 8080, protocol: TCP }]

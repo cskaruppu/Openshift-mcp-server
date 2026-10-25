@@ -1,0 +1,27 @@
+# Embeddings for incident memory (OpenAI-compatible /v1/embeddings). 6 GB HAMi slice.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: bge-m3
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    # The platform calls the model directly; turn on and set PRIVATE_AI_API_KEY to require a token.
+    security.opendatahub.io/enable-auth: "false"
+    openshift.io/display-name: bge-m3 embeddings
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    model:
+      modelFormat: { name: tei }
+      runtime: tei-runtime
+      # Weights downloaded once into this claim by deploy-rhoai.sh (download-bge-m3 Job).
+      storageUri: pvc://bge-m3-cache/model
+      # HAMi GPU memory slice in MiB, enforced inside the container (the engine sees a card this size).
+      resources:
+        requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }
+        limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }

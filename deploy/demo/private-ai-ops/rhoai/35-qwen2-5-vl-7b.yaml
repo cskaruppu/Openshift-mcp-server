@@ -1,0 +1,28 @@
+# Vision: screenshots, whiteboards, diagrams. bf16 weights about 16.6 GB, 24 GB HAMi slice.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen2-5-vl-7b
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    # The platform calls the model directly; turn on and set PRIVATE_AI_API_KEY to require a token.
+    security.opendatahub.io/enable-auth: "false"
+    openshift.io/display-name: Qwen2.5-VL 7B Instruct
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    model:
+      modelFormat: { name: vLLM }
+      runtime: __VLLM_RUNTIME__
+      # Weights downloaded once into this claim by deploy-rhoai.sh (download-qwen2-5-vl-7b Job).
+      storageUri: pvc://qwen2-5-vl-7b-cache/model
+      args: ['--gpu-memory-utilization=0.90', '--max-model-len=8192', '--max-num-seqs=8', '--limit-mm-per-prompt={"image":2}']
+      # HAMi GPU memory slice in MiB, enforced inside the container (the engine sees a card this size).
+      resources:
+        requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
+        limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }

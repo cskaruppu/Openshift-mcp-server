@@ -26,7 +26,8 @@ oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<your
 # Models (weights download once from Hugging Face into PVCs)
 oc apply -f models-plain-openshift-mcp.yaml     # plain Deployments: needs only the GPU Operator (+ HAMi)
 oc -n openshift-mcp get pods -l tcs.com/demo=private-ai-ops -w   # wait for 1/1 Running on all four
-# Alternative when OpenShift AI's KServe is healthy: oc apply -k models/ (InferenceServices)
+# Or through OpenShift AI (KServe healthy): its own vLLM runtime, models in its dashboard:
+#   rhoai/deploy-rhoai.sh --dashboard        (one model at a time: --only llama-3-1-8b)
 
 # Connect the platform to the models. Run with the PLATFORM (hub) cluster as the
 # current context; --models-context names the GPU cluster when it is a different one

@@ -1,0 +1,38 @@
+# Reasoning and agents. MXFP4 weights about 61 GB: a 76000 MiB HAMi slice of one H100.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: gpt-oss-120b
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    # The platform calls the model directly; turn on and set PRIVATE_AI_API_KEY to require a token.
+    security.opendatahub.io/enable-auth: "false"
+    openshift.io/display-name: gpt-oss-120b
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    model:
+      modelFormat: { name: vLLM }
+      runtime: __VLLM_RUNTIME__
+      # Weights downloaded once into this claim by deploy-rhoai.sh (download-gpt-oss-120b Job).
+      storageUri: pvc://gpt-oss-120b-cache/model
+      args: ["--gpu-memory-utilization=0.92", "--max-model-len=32768", "--tool-call-parser=openai", "--enable-auto-tool-choice"]
+      # HAMi GPU memory slice in MiB, enforced inside the container (the engine sees a card this size).
+      resources:
+        requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
+        limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
+    # Prefer a node away from the other demo models; not required, so they can still share.
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchExpressions:
+                  - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
