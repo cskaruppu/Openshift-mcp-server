@@ -1,0 +1,245 @@
+# All four Private AI models in ONE file, in the existing openshift-mcp namespace.
+# Same content as models/ (kept in step). Apply on the GPU cluster:
+#   oc apply -f models-openshift-mcp.yaml
+# Needs the Secret first: oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<token>
+---
+# ── from models/20-gpt-oss-120b.yaml
+# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it needs most of an
+# H100, so it gets a GPU node to itself (the other demo models are kept off that node below). It asks
+# for nvidia.com/gpu: 1 — a whole card, or one share of a card where GPU time-slicing is on.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: gpt-oss-120b-cache, namespace: openshift-mcp }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 200Gi } }
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: gpt-oss-120b
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    openshift.io/display-name: gpt-oss-120b
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+            - "--model"
+            - "openai/gpt-oss-120b"
+            - "--served-model-name"
+            - "gpt-oss-120b"
+            - "--port"
+            - "8080"
+            - "--gpu-memory-utilization"
+            - "0.85"
+            - "--max-model-len"
+            - "32768"
+            - "--tool-call-parser"
+            - "openai"
+            - "--enable-auto-tool-choice"
+        env:
+          - name: HF_TOKEN
+            valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
+          - { name: HF_HOME, value: /models-cache }
+          - { name: HOME, value: /tmp }
+          # After the first start has cached the weights, set "1" to run with no internet at all.
+          - { name: HF_HUB_OFFLINE, value: "0" }
+        ports: [{ containerPort: 8080, protocol: TCP }]
+        readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
+        startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        resources:
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+        volumeMounts:
+          - { name: cache, mountPath: /models-cache }
+          - { name: shm, mountPath: /dev/shm }
+    volumes:
+      - { name: cache, persistentVolumeClaim: { claimName: gpt-oss-120b-cache } }
+      - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    # Never on the same node as the other demo models (the rule binds both ways).
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
+---
+# ── from models/30-llama-3-1-8b.yaml
+# Fast answers and summaries. One GPU (or one time-sliced share), capped at 30% of an 80 GB H100
+# (bf16 weights about 16 GB, context 8K), so it can share a card with the vision and embedding models.
+# Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: llama-3-1-8b-cache, namespace: openshift-mcp }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 60Gi } }
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-3-1-8b
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    openshift.io/display-name: llama-3-1-8b
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+            - "--model"
+            - "meta-llama/Llama-3.1-8B-Instruct"
+            - "--served-model-name"
+            - "llama-3-1-8b"
+            - "--port"
+            - "8080"
+            - "--gpu-memory-utilization"
+            - "0.30"
+            - "--max-model-len"
+            - "8192"
+            - "--max-num-seqs"
+            - "128"
+        env:
+          - name: HF_TOKEN
+            valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
+          - { name: HF_HOME, value: /models-cache }
+          - { name: HOME, value: /tmp }
+          # After the first start has cached the weights, set "1" to run with no internet at all.
+          - { name: HF_HUB_OFFLINE, value: "0" }
+        ports: [{ containerPort: 8080, protocol: TCP }]
+        readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
+        startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        resources:
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+        volumeMounts:
+          - { name: cache, mountPath: /models-cache }
+          - { name: shm, mountPath: /dev/shm }
+    volumes:
+      - { name: cache, persistentVolumeClaim: { claimName: llama-3-1-8b-cache } }
+      - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+---
+# ── from models/40-qwen2-5-vl-7b.yaml
+# Vision: screenshots, whiteboards, diagrams. One GPU (or one time-sliced share), capped at 30% of an
+# 80 GB H100 (bf16 weights about 16.6 GB, context 8K), so it can share a card with the other small models.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: qwen2-5-vl-7b-cache, namespace: openshift-mcp }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 60Gi } }
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen2-5-vl-7b
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    openshift.io/display-name: qwen2-5-vl-7b
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+            - "--model"
+            - "Qwen/Qwen2.5-VL-7B-Instruct"
+            - "--served-model-name"
+            - "qwen2-5-vl-7b"
+            - "--port"
+            - "8080"
+            - "--gpu-memory-utilization"
+            - "0.30"
+            - "--max-model-len"
+            - "8192"
+            - "--max-num-seqs"
+            - "8"
+            - "--limit-mm-per-prompt"
+            - "{\"image\":2}"
+        env:
+          - name: HF_TOKEN
+            valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
+          - { name: HF_HOME, value: /models-cache }
+          - { name: HOME, value: /tmp }
+          # After the first start has cached the weights, set "1" to run with no internet at all.
+          - { name: HF_HUB_OFFLINE, value: "0" }
+        ports: [{ containerPort: 8080, protocol: TCP }]
+        readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
+        startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        resources:
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+        volumeMounts:
+          - { name: cache, mountPath: /models-cache }
+          - { name: shm, mountPath: /dev/shm }
+    volumes:
+      - { name: cache, persistentVolumeClaim: { claimName: qwen2-5-vl-7b-cache } }
+      - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+---
+# ── from models/50-bge-m3.yaml
+# Embeddings for incident memory: Hugging Face Text Embeddings Inference
+# (Hopper build) serving BAAI/bge-m3, about 3 GB on one GPU share. OpenAI-compatible
+# /v1/embeddings; health at /health.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: bge-m3-cache, namespace: openshift-mcp }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 20Gi } }
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: bge-m3
+  namespace: openshift-mcp
+  labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+    openshift.io/display-name: bge-m3
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
+        args: ["--model-id", "BAAI/bge-m3", "--port", "8080", "--served-model-name", "bge-m3", "--huggingface-hub-cache", "/models-cache"]
+        env:
+          - name: HF_TOKEN
+            valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
+          - { name: HOME, value: /tmp }
+        ports: [{ containerPort: 8080, protocol: TCP }]
+        readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
+        startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }
+        resources:
+          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1" }
+        volumeMounts:
+          - { name: cache, mountPath: /models-cache }
+    volumes:
+      - { name: cache, persistentVolumeClaim: { claimName: bge-m3-cache } }
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
