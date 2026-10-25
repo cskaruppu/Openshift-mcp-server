@@ -153,12 +153,27 @@ export async function clusterCompute(nodes, { now = Date.now(), cacheKey = "loca
   const base = cacheKey === "local" ? withCpuFamily(computeFromNodes(nodes), await localCpu()) : computeFromNodes(nodes);
   const live = _live.get(cacheKey);
   if (!live || (!live.running && now - live.at >= CACHE_MS)) refreshLive(cacheKey, base.vcpu, base.gpus, now);
-  return { ...base, cpuPct: live?.cpuPct ?? null, gpuPct: base.gpus ? live?.gpuPct ?? null : null };
+  return { ...base, infra: infraFor(nodes, cacheKey, now), cpuPct: live?.cpuPct ?? null, gpuPct: base.gpus ? live?.gpuPct ?? null : null };
+}
+
+// What the cluster runs on (cluster-infra.js) changes rarely: resolved in the
+// background like the live usage, kept for 10 minutes, never waited for.
+const _infra = new Map(); // cacheKey → { at, value, running }
+function infraFor(nodes, cacheKey, now) {
+  const cur = _infra.get(cacheKey);
+  if (!cur || (!cur.running && now - cur.at >= 10 * 60_000)) {
+    _infra.set(cacheKey, { at: cur?.at || 0, value: cur?.value ?? null, running: true });
+    import("./cluster-infra.js")
+      .then(({ clusterInfra }) => within(clusterInfra(nodes, { cacheKey, now }), 15000))
+      .then((value) => _infra.set(cacheKey, { at: now, value: value ?? cur?.value ?? null, running: false }))
+      .catch(() => _infra.set(cacheKey, { at: now, value: cur?.value ?? null, running: false }));
+  }
+  return cur?.value ?? null;
 }
 
 /** Wait for the background measurement of `cacheKey` (tests). */
 export async function _settleLive(cacheKey = "local") {
-  for (let i = 0; i < 200 && _live.get(cacheKey)?.running; i++) await new Promise((r) => setTimeout(r, 10));
+  for (let i = 0; i < 200 && (_live.get(cacheKey)?.running || _infra.get(cacheKey)?.running); i++) await new Promise((r) => setTimeout(r, 10));
 }
 
-export function _resetComputeCache() { _live.clear(); }
+export function _resetComputeCache() { _live.clear(); _infra.clear(); }

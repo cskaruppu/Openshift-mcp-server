@@ -133,3 +133,20 @@ test("a slow GPU cluster never slows the summary down", async () => {
     assert.deepEqual([c.gpus, c.gpuVendor, c.gpuModel, c.gpuPct], [2, "NVIDIA", "H100", null]);
   } finally { srv.close(); }
 });
+
+test("what the cluster runs on is looked up in the background and appears on the next summary", async () => {
+  const srv = http.createServer((q, r) => {
+    r.setHeader("content-type", "application/json");
+    if (q.url === "/apis/config.openshift.io/v1/infrastructures/cluster") return r.end(JSON.stringify({ status: { platformStatus: { type: "VSphere" } } }));
+    r.statusCode = 404; r.end("{}");
+  });
+  await new Promise((res) => srv.listen(0, "127.0.0.1", res));
+  try {
+    C._resetComputeCache();
+    const url = `http://127.0.0.1:${srv.address().port}`;
+    const run = () => withRemoteCluster(url, "t", () => C.clusterCompute([node({ cpu: "8" })], { cacheKey: "vs" }));
+    assert.equal((await run()).infra, null, "not waited for");
+    await withRemoteCluster(url, "t", () => C._settleLive("vs"));
+    assert.equal((await run()).infra?.name, "VMware vSphere");
+  } finally { srv.close(); }
+});

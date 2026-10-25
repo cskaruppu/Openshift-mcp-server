@@ -9889,6 +9889,13 @@ code.new { color: #22a06b; }
 .light-theme .cp-hw-c.gpu .cp-hw-ic { color: #5f9600; }
 .light-theme .cp-hw-c.gpu.v-amd .cp-hw-ic { color: #e01e26; }
 .light-theme .cp-hw-c.gpu.v-intel .cp-hw-ic { color: #0071c5; }
+.cp-hw-c.v-dell .cp-hw-ic { background: rgba(0,125,184,.15); color: #2ea7e0; } .cp-hw-c.v-dell b { color: #2ea7e0; }
+.cp-hw-c.v-metal .cp-hw-ic { background: color-mix(in srgb, var(--text2) 16%, transparent); color: var(--text); } .cp-hw-c.v-metal b { color: var(--text); }
+.cp-hw-c.v-vmware .cp-hw-ic { background: rgba(105,111,123,.18); color: #9aa6b8; } .cp-hw-c.v-vmware b { color: #b7c2d3; }
+.cp-hw-c.v-cloud .cp-hw-ic, .cp-hw-c.v-virtual .cp-hw-ic { background: rgba(124,58,237,.14); color: #a78bfa; } .cp-hw-c.v-cloud b, .cp-hw-c.v-virtual b { color: #a78bfa; }
+.light-theme .cp-hw-c.v-dell b, .light-theme .cp-hw-c.v-dell .cp-hw-ic { color: #007db8; }
+.light-theme .cp-hw-c.v-vmware b, .light-theme .cp-hw-c.v-vmware .cp-hw-ic { color: #555e6c; }
+.light-theme .cp-hw-c.v-cloud b, .light-theme .cp-hw-c.v-cloud .cp-hw-ic, .light-theme .cp-hw-c.v-virtual b, .light-theme .cp-hw-c.v-virtual .cp-hw-ic { color: #6d28d9; }
 @container (max-width: 360px) {
   .cp-hw { gap: 6px; }
   .cp-hw-k { display: none; }
