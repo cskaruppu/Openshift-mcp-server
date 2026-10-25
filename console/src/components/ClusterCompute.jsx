@@ -1,4 +1,4 @@
-// CPU or GPU tag on a cluster card, detected from the cluster itself
+// CPU / GPU hardware on a cluster card, detected from the cluster itself
 // (/api/cluster/summary → compute). A value that was not measured is left
 // out of the tooltip, never guessed.
 
@@ -23,27 +23,39 @@ function gpuLabel(c) {
   return parts.join(" · ");
 }
 
+const VENDOR_CLASS = { Intel: "intel", AMD: "amd", NVIDIA: "nvidia", Arm: "arm", Ampere: "arm" };
+
+function Chip({ kind, vendor, model, title }) {
+  return (
+    <span className={`cp-hw-c ${kind} v-${VENDOR_CLASS[vendor] || "none"}`} title={title}>
+      <span className="cp-hw-ic">{kind === "gpu" ? <GpuIcon size={13} /> : <CpuIcon size={13} />}</span>
+      <span className="cp-hw-k">{kind}</span>
+      {vendor && <b>{vendor}</b>}
+      {model && <em>{model}</em>}
+    </span>
+  );
+}
+
 /**
- * One small tag beside the connection badge saying what the cluster computes
- * with: GPU when its nodes advertise GPUs, otherwise CPU. Capacity, model and
- * live usage are in the tooltip, so the card stays clean.
+ * The hardware row inside a cluster card: the CPU vendor and family, and on
+ * clusters with GPUs the GPU vendor, count and model. Vendor names are shown
+ * as text in the vendor's colour (no logo files). Capacity and live usage are
+ * in the tooltips.
  */
-export function ComputeTags({ compute: c }) {
+export function HardwareRow({ compute: c }) {
   if (!c || !c.vcpu) return null;
   const cpuUse = pct(c.cpuPct);
   const gpuUse = pct(c.gpuPct);
-  const cpuText = `${c.vcpu} vCPU${cpuUse !== null ? ` (${cpuUse}% in use)` : ""}`;
-  if (c.gpus > 0) {
-    const models = c.gpuModels ? Object.entries(c.gpuModels).map(([m, n]) => `${n}× ${m}`).join(", ") : gpuLabel(c);
-    return (
-      <span className="cp-cx-tag gpu" title={`GPU cluster · ${models}${gpuUse !== null ? ` (${gpuUse}% in use)` : ""} · ${cpuText}`} aria-label={`GPU cluster, ${gpuLabel(c)}`}>
-        <GpuIcon size={11} />GPU
-      </span>
-    );
-  }
+  const cpuName = [c.cpuVendor, c.cpuFamily].filter(Boolean).join(" ") || c.arch || "CPU";
+  const cpuTitle = `CPU · ${cpuName}${c.arch && c.cpuVendor ? ` (${c.arch})` : ""} · ${c.vcpu} vCPU${cpuUse !== null ? ` · ${cpuUse}% in use` : ""}${c.partial ? " · this cluster's agent does not report hardware details yet" : ""}`;
+  const models = c.gpuModels ? Object.entries(c.gpuModels).map(([m, n]) => `${n}× ${m}`).join(", ") : null;
   return (
-    <span className="cp-cx-tag cpu" title={`CPU cluster · ${cpuText}${c.partial ? " · GPUs not reported by this cluster's agent yet" : ""}`} aria-label={`CPU cluster, ${c.vcpu} vCPU`}>
-      <CpuIcon size={11} />CPU
-    </span>
+    <div className="cp-hw" onClick={(e) => e.stopPropagation()}>
+      <Chip kind="cpu" vendor={c.cpuVendor} model={c.cpuVendor ? c.cpuFamily : c.arch || `${c.vcpu} vCPU`} title={cpuTitle} />
+      {c.gpus > 0 && (
+        <Chip kind="gpu" vendor={c.gpuVendor} model={models ? `${c.gpus}× GPU` : `${c.gpus}× ${c.gpuModel || "GPU"}`}
+          title={`GPU · ${c.gpuVendor ? c.gpuVendor + " " : ""}${models || gpuLabel(c)}${gpuUse !== null ? ` · ${gpuUse}% in use` : ""}`} />
+      )}
+    </div>
   );
 }

@@ -7,7 +7,7 @@ import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { PLATFORM_MAP, getPlatformInfo } from "../lib/platforms";
 import { useCommandCenterEnabled } from "../components/commandcenter/CommandCenter";
-import { ComputeTags } from "../components/ClusterCompute";
+import { HardwareRow } from "../components/ClusterCompute";
 import { renderMarkdown } from "../utils/markdown";
 
 class ModalErrorBoundary extends Component {
@@ -1058,7 +1058,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               <HealthRing score={hubHealthData.score} icon={hubPInfo.icon} color={hubPInfo.color} />
               <div className="cp-card-info">
                 <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
-                <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /><ComputeTags compute={hubData?.compute} /></div>
+                <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /></div>
               </div>
               <KebabMenu items={[
                 { icon: "📊", label: "Status Check", action: async () => {
@@ -1093,6 +1093,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
               <span className="cp-card-status-dot" style={{ background: "var(--ok)", animation: "pulse 2s infinite" }} />
               <span className="cp-card-status-label" style={{ color: "var(--ok)" }}>Active</span>
             </div>
+            <HardwareRow compute={hubData?.compute} />
             <div className="cp-card-stats">
               <div className="cp-card-stat">
                 <div className="cp-card-stat-val">{hubVersion}</div>
@@ -1132,7 +1133,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                   <HealthRing score={remoteHealthData.score} icon={pInfo.icon} color={pInfo.color} />
                   <div className="cp-card-info">
                     <div className="cp-card-name">{clusterName}</div>
-                    <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /><ComputeTags compute={summary.compute} /></div>
+                    <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /></div>
                   </div>
                   <KebabMenu items={[
                     { icon: "📊", label: "Status Check", action: async () => {
@@ -1176,6 +1177,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                     <span className="cp-card-last-seen">Last seen: {new Date(agent.lastHeartbeat).toLocaleString()}</span>
                   )}
                 </div>
+                <HardwareRow compute={summary.compute} />
                 <div className="cp-card-stats">
                   <div className="cp-card-stat">
                     <div className="cp-card-stat-val">{summary.version || agent.version || "--"}</div>

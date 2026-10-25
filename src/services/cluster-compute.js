@@ -9,7 +9,13 @@
 //   model      node label nvidia.com/gpu.product, e.g. NVIDIA-H100-80GB-HBM3
 //   CPU %      metrics.k8s.io node usage ÷ capacity
 //   GPU %      DCGM through the cluster's monitoring (tools/gpu-metrics.js)
+//   vendors    GPU: the resource name (nvidia.com / amd.com / gpu.intel.com).
+//              CPU: Node Feature Discovery's cpu-model.vendor_id label, else
+//              the architecture (x86-64 / Arm64). The family (Xeon, EPYC) is
+//              not in any label: it comes from /proc/cpuinfo of the node this
+//              pod runs on, and only when its vendor matches the nodes'.
 
+import { readFile } from "node:fs/promises";
 import { ocpGet } from "../utils/openshift-client.js";
 
 const CACHE_MS = 20_000;
@@ -32,19 +38,38 @@ export function shortGpuModel(product) {
   return m ? m[1].toUpperCase() : null;
 }
 
-/** Capacity from the node list: vCPU, GPUs, MIG slices and the model(s). */
+const GPU_VENDOR = [[/^nvidia\.com\/gpu$/, "NVIDIA"], [/^amd\.com\/gpu$/, "AMD"], [/^gpu\.intel\.com\/(i915|xe)$/, "Intel"]];
+const CPU_VENDOR = { intel: "Intel", genuineintel: "Intel", amd: "AMD", authenticamd: "AMD", arm: "Arm", ampere: "Ampere" };
+const ARCH = { amd64: "x86-64", x86_64: "x86-64", arm64: "Arm64", aarch64: "Arm64", ppc64le: "POWER", s390x: "IBM Z" };
+const FAMILY = { xeon: "Xeon", epyc: "EPYC", core: "Core", ryzen: "Ryzen", threadripper: "Threadripper", opteron: "Opteron", atom: "Atom", celeron: "Celeron", pentium: "Pentium" };
+const most = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+const bump = (m, k, n = 1) => k && m.set(k, (m.get(k) || 0) + n);
+
+/** "Intel(R) Xeon(R) Gold 6430" → { vendor: "Intel", family: "Xeon" }. */
+export function parseCpuModel(modelName) {
+  const s = String(modelName || "");
+  const vendor = /intel/i.test(s) ? "Intel" : /\bamd\b/i.test(s) ? "AMD" : null;
+  const fam = s.match(/\b(Xeon|EPYC|Core|Ryzen|Threadripper|Opteron|Atom|Celeron|Pentium)\b/i);
+  return { vendor, family: fam ? FAMILY[fam[1].toLowerCase()] : null };
+}
+
+/** Capacity from the node list: vCPU, GPUs, MIG slices, the model(s) and the vendors. */
 export function computeFromNodes(nodes) {
   let vcpu = 0, gpus = 0, migSlices = 0, shared = false;
-  const models = new Map();
+  const models = new Map(), gpuVendors = new Map(), cpuVendors = new Map(), arches = new Map();
   for (const n of nodes || []) {
     const cap = n.status?.capacity || {};
     vcpu += parseCores(cap.cpu);
     let nodeGpus = 0;
     for (const [k, v] of Object.entries(cap)) {
       const q = parseInt(v, 10) || 0;
-      if (k === "nvidia.com/gpu" || k === "amd.com/gpu") nodeGpus += q;
-      else if (k.startsWith("nvidia.com/mig-")) migSlices += q;
+      const gv = GPU_VENDOR.find(([re]) => re.test(k));
+      if (gv && q > 0) { nodeGpus += q; bump(gpuVendors, gv[1], q); }
+      else if (k.startsWith("nvidia.com/mig-") && q > 0) { migSlices += q; bump(gpuVendors, "NVIDIA", q); }
     }
+    const lab = n.metadata?.labels || {};
+    bump(cpuVendors, CPU_VENDOR[String(lab["feature.node.kubernetes.io/cpu-model.vendor_id"] || "").toLowerCase()]);
+    bump(arches, ARCH[n.status?.nodeInfo?.architecture || lab["kubernetes.io/arch"]]);
     // Count physical cards. The GPU Operator's nvidia.com/gpu.count label is
     // the physical count; the advertised nvidia.com/gpu is not — time-slicing
     // multiplies it by the replicas (2 cards × 20 replicas = 40) and MIG
@@ -59,7 +84,28 @@ export function computeFromNodes(nodes) {
     if (counted && model) models.set(model, (models.get(model) || 0) + counted);
   }
   const top = [...models.entries()].sort((a, b) => b[1] - a[1])[0];
-  return { vcpu: Math.round(vcpu), gpus, migSlices, shared, gpuModel: top ? top[0] : null, gpuModels: models.size > 1 ? Object.fromEntries(models) : null };
+  return {
+    vcpu: Math.round(vcpu), gpus, migSlices, shared, gpuModel: top ? top[0] : null, gpuModels: models.size > 1 ? Object.fromEntries(models) : null,
+    gpuVendor: gpus ? most(gpuVendors) : null, cpuVendor: most(cpuVendors), cpuFamily: null, arch: most(arches),
+  };
+}
+
+// The family of the CPU this pod runs on (read once). Linux only; null elsewhere.
+let _localCpu;
+async function localCpu() {
+  if (_localCpu !== undefined) return _localCpu;
+  try {
+    const t = await readFile("/proc/cpuinfo", "utf8");
+    _localCpu = parseCpuModel((t.match(/^model name\s*:\s*(.+)$/m) || [])[1]);
+  } catch { _localCpu = { vendor: null, family: null }; }
+  return _localCpu;
+}
+
+/** Add the CPU family when the local CPU's vendor agrees with the nodes' (or the nodes say nothing). */
+export function withCpuFamily(base, local) {
+  if (!local?.vendor || base.arch === "Arm64") return base;
+  if (base.cpuVendor && base.cpuVendor !== local.vendor) return base;
+  return { ...base, cpuVendor: base.cpuVendor || local.vendor, cpuFamily: local.family || null };
 }
 
 async function cpuPercent(capacityCores) {
@@ -88,7 +134,8 @@ const within = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r
  * the cluster summary stays fast.
  */
 export async function clusterCompute(nodes, { now = Date.now(), cacheKey = "local" } = {}) {
-  const base = computeFromNodes(nodes);
+  // /proc/cpuinfo describes the node this pod runs on: only for its own cluster.
+  const base = cacheKey === "local" ? withCpuFamily(computeFromNodes(nodes), await localCpu()) : computeFromNodes(nodes);
   if (_cache.value && _cache.key === cacheKey && now - _cache.at < CACHE_MS) {
     return { ...base, cpuPct: _cache.value.cpuPct, gpuPct: base.gpus ? _cache.value.gpuPct : null };
   }

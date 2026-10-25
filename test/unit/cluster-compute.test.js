@@ -29,7 +29,7 @@ test("GPU model names come out short and readable", () => {
 
 test("a CPU-only cluster: vCPU summed, no GPUs", () => {
   const c = C.computeFromNodes([node({ cpu: "16" }), node({ cpu: "16" }), node({ cpu: "16" })]);
-  assert.deepEqual(c, { vcpu: 48, gpus: 0, migSlices: 0, shared: false, gpuModel: null, gpuModels: null });
+  assert.deepEqual(c, { vcpu: 48, gpus: 0, migSlices: 0, shared: false, gpuModel: null, gpuModels: null, gpuVendor: null, cpuVendor: null, cpuFamily: null, arch: null });
 });
 
 test("2× H100 with GPU 1 split by MIG still counts two physical GPUs, plus the slices", () => {
@@ -38,7 +38,7 @@ test("2× H100 with GPU 1 split by MIG still counts two physical GPUs, plus the 
       { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3", "nvidia.com/gpu.count": "2" }),
     node({ cpu: "32" }), node({ cpu: "32" }),
   ]);
-  assert.deepEqual(c, { vcpu: 192, gpus: 2, migSlices: 4, shared: false, gpuModel: "H100", gpuModels: null });
+  assert.deepEqual(c, { vcpu: 192, gpus: 2, migSlices: 4, shared: false, gpuModel: "H100", gpuModels: null, gpuVendor: "NVIDIA", cpuVendor: null, cpuFamily: null, arch: null });
 });
 
 test("time-slicing: 2 cards shared 20 ways are advertised as 40 GPUs, but are 2× H100", () => {
@@ -90,4 +90,28 @@ test("no metrics API: CPU % is null, not a guess", async () => {
     assert.equal(c.vcpu, 8);
     assert.equal(c.cpuPct, null);
   } finally { srv.close(); }
+});
+
+test("vendors: GPU from the resource name, CPU from NFD, else the architecture", () => {
+  const nvidia = C.computeFromNodes([node({ cpu: "64", "nvidia.com/gpu": "2" }, { "feature.node.kubernetes.io/cpu-model.vendor_id": "Intel", "kubernetes.io/arch": "amd64" })]);
+  assert.deepEqual([nvidia.gpuVendor, nvidia.cpuVendor, nvidia.arch], ["NVIDIA", "Intel", "x86-64"]);
+  const amd = C.computeFromNodes([node({ cpu: "64", "amd.com/gpu": "8" }, { "feature.node.kubernetes.io/cpu-model.vendor_id": "AMD" })]);
+  assert.deepEqual([amd.gpuVendor, amd.cpuVendor], ["AMD", "AMD"]);
+  const intelGpu = C.computeFromNodes([node({ cpu: "32", "gpu.intel.com/i915": "1" })]);
+  assert.equal(intelGpu.gpuVendor, "Intel");
+  const migOnly = C.computeFromNodes([node({ cpu: "32", "nvidia.com/mig-1g.10gb": "7" }, { "nvidia.com/gpu.count": "1" })]);
+  assert.equal(migOnly.gpuVendor, "NVIDIA", "a fully MIG-split card is still NVIDIA");
+  const noNfd = C.computeFromNodes([{ metadata: { labels: {} }, status: { capacity: { cpu: "16" }, nodeInfo: { architecture: "arm64" } } }]);
+  assert.deepEqual([noNfd.cpuVendor, noNfd.arch, noNfd.gpuVendor], [null, "Arm64", null]);
+});
+
+test("CPU family from the local CPU, only when its vendor agrees with the nodes", () => {
+  assert.deepEqual(C.parseCpuModel("Intel(R) Xeon(R) Gold 6430"), { vendor: "Intel", family: "Xeon" });
+  assert.deepEqual(C.parseCpuModel("AMD EPYC 9654 96-Core Processor"), { vendor: "AMD", family: "EPYC" });
+  assert.deepEqual(C.parseCpuModel("QEMU Virtual CPU version 2.5+"), { vendor: null, family: null });
+  const base = { cpuVendor: "Intel", arch: "x86-64" };
+  assert.equal(C.withCpuFamily(base, { vendor: "Intel", family: "Xeon" }).cpuFamily, "Xeon");
+  assert.equal(C.withCpuFamily(base, { vendor: "AMD", family: "EPYC" }).cpuFamily, undefined, "a different vendor is not trusted");
+  const noNfd = C.withCpuFamily({ cpuVendor: null, arch: "x86-64" }, { vendor: "AMD", family: "EPYC" });
+  assert.deepEqual([noNfd.cpuVendor, noNfd.cpuFamily], ["AMD", "EPYC"]);
 });
