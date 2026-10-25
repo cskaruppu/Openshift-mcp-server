@@ -5,6 +5,8 @@
 #   ./enable.sh --models-context <ctx>            models on another cluster (e.g. the GPU spoke):
 #                                                 exposes each model with a Route and points the
 #                                                 platform (current context) at the Route URLs
+#   ./enable.sh --models-kubeconfig <file>        same, with the GPU cluster in its own kubeconfig file
+#                                                 (the platform side uses $KUBECONFIG / the default one)
 #   ./enable.sh --route-chat                      also make AI Chat default to the on-prem models
 #
 # The switches themselves (Command Center, banner, AI Chat routing, GPU cluster)
@@ -13,17 +15,25 @@ set -euo pipefail
 NS="${PLATFORM_NS:-openshift-mcp}"
 DEPLOY="${PLATFORM_DEPLOY:-agentic-ai-control-plane}"
 MODELS_NS="${MODELS_NS:-openshift-mcp}"   # existing namespace; never created or deleted here
-HARDWARE="${PRIVATE_AI_HARDWARE:-Dell PowerEdge · 2× NVIDIA H100 · OpenShift AI}"
-MCTX=""; ROUTE_CHAT=false
+HARDWARE="${PRIVATE_AI_HARDWARE:-Dell PowerEdge · 4× NVIDIA H100 · OpenShift AI}"
+MCTX=""; MKCFG=""; ROUTE_CHAT=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --models-context) MCTX="$2"; shift 2 ;;
+    --models-kubeconfig) MKCFG="$2"; shift 2 ;;
     --route-chat) ROUTE_CHAT=true; shift ;;
     --keep-llm) shift ;;   # kept for compatibility: AI Chat routing is now a switch in Settings
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
-moc() { if [[ -n "$MCTX" ]]; then oc --context "$MCTX" "$@"; else oc "$@"; fi; }
+if [[ -n "$MKCFG" ]]; then
+  [[ -r "$MKCFG" ]] || { echo "Cannot read kubeconfig: $MKCFG" >&2; exit 2; }
+  MCTX="${MCTX:-$(oc --kubeconfig "$MKCFG" config current-context)}"
+fi
+moc() {
+  local a=(); [[ -n "$MKCFG" ]] && a+=(--kubeconfig "$MKCFG"); [[ -n "$MCTX" ]] && a+=(--context "$MCTX")
+  oc ${a[@]+"${a[@]}"} "$@"
+}
 
 url() { # where the platform reaches a KServe RawDeployment predictor
   local svc="$1-predictor" port host

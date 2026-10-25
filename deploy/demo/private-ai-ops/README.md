@@ -31,6 +31,8 @@ oc -n openshift-mcp get inferenceservice -w     # wait for READY=True on all fou
 # current context; --models-context names the GPU cluster when it is a different one
 # (each model is then exposed with a Route the hub can reach).
 ./enable.sh --models-context <gpu-cluster-context>
+# or, with the GPU cluster in its own kubeconfig file:
+./enable.sh --models-kubeconfig /path/to/gpu.kubeconfig
 ```
 
 If the GPU cluster is a different cluster from the platform and is connected

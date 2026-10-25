@@ -3,15 +3,16 @@
 # that was set before ./enable.sh. PRIVATE_AI_OPS=false overrides anything saved
 # in Settings → Private AI, so every launcher disappears. The models and the
 # demo workload are left running:
-#   ./disable.sh --remove-demo [--models-context <ctx>]   also deletes the demo namespace
+#   ./disable.sh --remove-demo [--models-context <ctx> | --models-kubeconfig <file>]   also deletes the demo namespace
 set -euo pipefail
 NS="${PLATFORM_NS:-openshift-mcp}"
 DEPLOY="${PLATFORM_DEPLOY:-agentic-ai-control-plane}"
-REMOVE_DEMO=false; MCTX=""
+REMOVE_DEMO=false; MCTX=""; MKCFG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --remove-demo) REMOVE_DEMO=true; shift ;;
     --models-context) MCTX="$2"; shift 2 ;;
+    --models-kubeconfig) MKCFG="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,8 +37,8 @@ fi
 
 if $REMOVE_DEMO; then
   echo "▶ Deleting the demo workload"
-  if [[ -n "$MCTX" ]]; then oc --context "$MCTX" delete namespace tcs-demo-payments --ignore-not-found
-  else oc delete namespace tcs-demo-payments --ignore-not-found; fi
+  a=(); [[ -n "$MKCFG" ]] && a+=(--kubeconfig "$MKCFG"); [[ -n "$MCTX" ]] && a+=(--context "$MCTX")
+  oc ${a[@]+"${a[@]}"} delete namespace tcs-demo-payments --ignore-not-found
 fi
 oc -n "$NS" rollout status deploy/"$DEPLOY" --timeout=300s
 echo "✓ Private AI off. The launchers are gone; AI Chat uses the previous provider."
