@@ -1,6 +1,6 @@
-// CPU / GPU at a glance on a cluster card: what the cluster has and how busy
-// it is, detected from the cluster (/api/cluster/summary → compute). A value
-// that was not measured shows "—", never a guess.
+// CPU or GPU tag on a cluster card, detected from the cluster itself
+// (/api/cluster/summary → compute). A value that was not measured is left
+// out of the tooltip, never guessed.
 
 const CpuIcon = ({ size = 14 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -14,46 +14,36 @@ const GpuIcon = ({ size = 14 }) => (
   </svg>
 );
 
-const pct = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null);
-
-function Meter({ kind, icon, label, value, sub, title }) {
-  const v = pct(value);
-  return (
-    <div className={"cp-cx-m " + kind} title={title}>
-      <div className="cp-cx-top">{icon}{label}<b>{v === null ? "—" : `${v}%`}</b></div>
-      <div className="cp-cx-bar" role="meter" aria-label={`${label} in use`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={v ?? undefined}><i style={{ width: `${v ?? 0}%` }} /></div>
-      <div className="cp-cx-sub">{sub}</div>
-    </div>
-  );
-}
+const pct = (v) => (Number.isFinite(v) ? Math.round(v) : null);
 
 function gpuLabel(c) {
   const parts = [`${c.gpus}× ${c.gpuModel || "GPU"}`];
   if (c.migSlices) parts.push(`${c.migSlices} MIG slice${c.migSlices > 1 ? "s" : ""}`);
+  if (c.shared) parts.push("time-sliced");
   return parts.join(" · ");
 }
 
-/** The CPU and GPU meters, placed between the status line and the stats. */
-export function ClusterCompute({ compute: c }) {
+/**
+ * One small tag beside the connection badge saying what the cluster computes
+ * with: GPU when its nodes advertise GPUs, otherwise CPU. Capacity, model and
+ * live usage are in the tooltip, so the card stays clean.
+ */
+export function ComputeTags({ compute: c }) {
   if (!c || !c.vcpu) return null;
-  const models = c.gpuModels ? Object.entries(c.gpuModels).map(([m, n]) => `${n}× ${m}`).join(", ") : null;
+  const cpuUse = pct(c.cpuPct);
+  const gpuUse = pct(c.gpuPct);
+  const cpuText = `${c.vcpu} vCPU${cpuUse !== null ? ` (${cpuUse}% in use)` : ""}`;
+  if (c.gpus > 0) {
+    const models = c.gpuModels ? Object.entries(c.gpuModels).map(([m, n]) => `${n}× ${m}`).join(", ") : gpuLabel(c);
+    return (
+      <span className="cp-cx-tag gpu" title={`GPU cluster · ${models}${gpuUse !== null ? ` (${gpuUse}% in use)` : ""} · ${cpuText}`} aria-label={`GPU cluster, ${gpuLabel(c)}`}>
+        <GpuIcon size={11} />GPU
+      </span>
+    );
+  }
   return (
-    <div className="cp-cx" onClick={(e) => e.stopPropagation()}>
-      <Meter kind="cpu" icon={<CpuIcon />} label="CPU" value={c.cpuPct} sub={`${c.vcpu} vCPU${Number.isFinite(c.cpuPct) ? " · in use" : ""}`}
-        title={Number.isFinite(c.cpuPct) ? `${c.cpuPct}% of ${c.vcpu} vCPU in use across the cluster` : "CPU usage not available (cluster metrics API not reachable)"} />
-      {c.gpus > 0 ? (
-        <Meter kind="gpu" icon={<GpuIcon />} label="GPU" value={c.gpuPct} sub={gpuLabel(c)}
-          title={`${models || gpuLabel(c)}${Number.isFinite(c.gpuPct) ? ` · ${c.gpuPct}% average utilisation (DCGM)` : " · utilisation not available (DCGM metrics not scraped)"}`} />
-      ) : (
-        <Meter kind="none" icon={<GpuIcon />} label="GPU" value={null} sub={c.partial ? "Not reported yet" : "No accelerators"}
-          title={c.partial ? "This cluster's agent runs an older version that does not report GPUs — update it to see them" : "No GPU is advertised by any node"} />
-      )}
-    </div>
+    <span className="cp-cx-tag cpu" title={`CPU cluster · ${cpuText}${c.partial ? " · GPUs not reported by this cluster's agent yet" : ""}`} aria-label={`CPU cluster, ${c.vcpu} vCPU`}>
+      <CpuIcon size={11} />CPU
+    </span>
   );
-}
-
-/** The small "GPU" tag next to the connection badge, on clusters with GPUs. */
-export function GpuTag({ compute: c }) {
-  if (!c || !(c.gpus > 0)) return null;
-  return <span className="cp-cx-tag" title={gpuLabel(c)}><GpuIcon size={11} />GPU</span>;
 }

@@ -29,7 +29,7 @@ test("GPU model names come out short and readable", () => {
 
 test("a CPU-only cluster: vCPU summed, no GPUs", () => {
   const c = C.computeFromNodes([node({ cpu: "16" }), node({ cpu: "16" }), node({ cpu: "16" })]);
-  assert.deepEqual(c, { vcpu: 48, gpus: 0, migSlices: 0, gpuModel: null, gpuModels: null });
+  assert.deepEqual(c, { vcpu: 48, gpus: 0, migSlices: 0, shared: false, gpuModel: null, gpuModels: null });
 });
 
 test("2× H100 with GPU 1 split by MIG still counts two physical GPUs, plus the slices", () => {
@@ -38,7 +38,15 @@ test("2× H100 with GPU 1 split by MIG still counts two physical GPUs, plus the 
       { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3", "nvidia.com/gpu.count": "2" }),
     node({ cpu: "32" }), node({ cpu: "32" }),
   ]);
-  assert.deepEqual(c, { vcpu: 192, gpus: 2, migSlices: 4, gpuModel: "H100", gpuModels: null });
+  assert.deepEqual(c, { vcpu: 192, gpus: 2, migSlices: 4, shared: false, gpuModel: "H100", gpuModels: null });
+});
+
+test("time-slicing: 2 cards shared 20 ways are advertised as 40 GPUs, but are 2× H100", () => {
+  const withLabel = C.computeFromNodes([node({ cpu: "128", "nvidia.com/gpu": "40" },
+    { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3-SHARED", "nvidia.com/gpu.count": "2", "nvidia.com/gpu.replicas": "20" })]);
+  assert.deepEqual([withLabel.gpus, withLabel.gpuModel, withLabel.shared], [2, "H100", true]);
+  const noCountLabel = C.computeFromNodes([node({ cpu: "128", "nvidia.com/gpu": "40" }, { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3", "nvidia.com/gpu.replicas": "20" })]);
+  assert.equal(noCountLabel.gpus, 2);
 });
 
 test("mixed GPU models are listed per model, the most common first", () => {

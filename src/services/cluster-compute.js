@@ -3,7 +3,9 @@
 // slices and utilisation. Detected from the cluster itself; a number that
 // cannot be measured is null, never estimated.
 //
-//   capacity   node .status.capacity (cpu, nvidia.com/gpu, nvidia.com/mig-*)
+//   capacity   node .status.capacity (cpu, nvidia.com/gpu, nvidia.com/mig-*);
+//              physical GPUs from the nvidia.com/gpu.count label (time-slicing
+//              and MIG change what nvidia.com/gpu advertises)
 //   model      node label nvidia.com/gpu.product, e.g. NVIDIA-H100-80GB-HBM3
 //   CPU %      metrics.k8s.io node usage ÷ capacity
 //   GPU %      DCGM through the cluster's monitoring (tools/gpu-metrics.js)
@@ -32,7 +34,7 @@ export function shortGpuModel(product) {
 
 /** Capacity from the node list: vCPU, GPUs, MIG slices and the model(s). */
 export function computeFromNodes(nodes) {
-  let vcpu = 0, gpus = 0, migSlices = 0;
+  let vcpu = 0, gpus = 0, migSlices = 0, shared = false;
   const models = new Map();
   for (const n of nodes || []) {
     const cap = n.status?.capacity || {};
@@ -43,17 +45,21 @@ export function computeFromNodes(nodes) {
       if (k === "nvidia.com/gpu" || k === "amd.com/gpu") nodeGpus += q;
       else if (k.startsWith("nvidia.com/mig-")) migSlices += q;
     }
-    // A MIG-partitioned card shows as slices, not as nvidia.com/gpu: count the
-    // physical card from its label so "2× H100" stays true after partitioning.
+    // Count physical cards. The GPU Operator's nvidia.com/gpu.count label is
+    // the physical count; the advertised nvidia.com/gpu is not — time-slicing
+    // multiplies it by the replicas (2 cards × 20 replicas = 40) and MIG
+    // replaces cards with slices.
     const L = n.metadata?.labels || {};
     const physical = parseInt(L["nvidia.com/gpu.count"], 10) || 0;
-    const counted = Math.max(nodeGpus, physical);
+    const replicas = parseInt(L["nvidia.com/gpu.replicas"], 10) || 1;
+    if (replicas > 1) shared = true;
+    const counted = physical || (replicas > 1 ? Math.round(nodeGpus / replicas) : nodeGpus);
     gpus += counted;
     const model = shortGpuModel(L["nvidia.com/gpu.product"] || L["amd.com/gpu.product"]);
     if (counted && model) models.set(model, (models.get(model) || 0) + counted);
   }
   const top = [...models.entries()].sort((a, b) => b[1] - a[1])[0];
-  return { vcpu: Math.round(vcpu), gpus, migSlices, gpuModel: top ? top[0] : null, gpuModels: models.size > 1 ? Object.fromEntries(models) : null };
+  return { vcpu: Math.round(vcpu), gpus, migSlices, shared, gpuModel: top ? top[0] : null, gpuModels: models.size > 1 ? Object.fromEntries(models) : null };
 }
 
 async function cpuPercent(capacityCores) {
