@@ -14,6 +14,9 @@ test("the machine: Dell bare metal, VMware, KVM, Hyper-V, and a maker we do not 
   assert.deepEqual(I.fromDmi("Dell Inc.", "PowerEdge R760xa"), { kind: "baremetal", name: "Bare metal", maker: "Dell", family: "PowerEdge", model: "PowerEdge R760xa", source: "machine" });
   assert.equal(I.fromDmi("HPE", "ProLiant DL380 Gen11").maker, "HPE");
   assert.equal(I.fromDmi("Dell Inc.", "Dell PowerEdge R650").family, "PowerEdge", "the series anywhere in the name");
+  const pf = I.fromDmi("Dell Inc.", "PowerFlex appliance R660 C");
+  assert.deepEqual([pf.family, pf.model], ["PowerFlex", "PowerFlex appliance R660 C"], "the chip says Dell PowerFlex, the tooltip the full model");
+  assert.equal(I.fromDmi("Dell Inc.", "VxRail P670F").family, "VxRail");
   assert.deepEqual([I.fromDmi("Dell Inc.", "XE9680").family, I.fromDmi("Dell Inc.", "R650").family, I.fromDmi("Dell Inc.", "R650").model], ["XE9680", null, "R650"]);
   assert.equal(I.fromDmi("VMware, Inc.", "VMware7,1").kind, "vsphere");
   assert.equal(I.fromDmi("QEMU", "Standard PC (Q35 + ICH9, 2009)").name, "KVM");
