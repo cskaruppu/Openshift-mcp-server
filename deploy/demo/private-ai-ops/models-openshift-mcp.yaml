@@ -4,9 +4,8 @@
 # Needs the Secret first: oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<token>
 ---
 # ── from models/20-gpt-oss-120b.yaml
-# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it needs most of an
-# H100, so it gets a GPU node to itself (the other demo models are kept off that node below). It asks
-# for nvidia.com/gpu: 1 — a whole card, or one share of a card where GPU time-slicing is on.
+# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it takes a 76000 MiB
+# HAMi slice of one H100 (nvidia.com/gpumem below) and prefers a node away from the other demo models.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: gpt-oss-120b-cache, namespace: openshift-mcp }
@@ -38,7 +37,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.85"
+            - "0.92"   # of the HAMi slice below, not of the whole card
             - "--max-model-len"
             - "32768"
             - "--tool-call-parser"
@@ -54,9 +53,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }
@@ -65,18 +67,21 @@ spec:
       - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
     tolerations:
       - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
-    # Never on the same node as the other demo models (the rule binds both ways).
+    # Prefer a node without the other demo models, but do not insist: with HAMi memory slices they can
+    # safely use the free card next to it when the other node is busy.
     affinity:
       podAntiAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          - topologyKey: kubernetes.io/hostname
-            labelSelector:
-              matchExpressions:
-                - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchExpressions:
+                  - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
 ---
 # ── from models/30-llama-3-1-8b.yaml
-# Fast answers and summaries. One GPU (or one time-sliced share), capped at 30% of an 80 GB H100
-# (bf16 weights about 16 GB, context 8K), so it can share a card with the vision and embedding models.
+# Fast answers and summaries. One GPU slice of 24 GB (HAMi nvidia.com/gpumem), bf16 weights about
+# 16 GB, context 8K, so it shares a card with the vision and embedding models.
 # Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -109,7 +114,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.30"
+            - "0.90"   # of the HAMi slice below, not of the whole card
             - "--max-model-len"
             - "8192"
             - "--max-num-seqs"
@@ -124,9 +129,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }
@@ -137,8 +145,8 @@ spec:
       - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
 ---
 # ── from models/40-qwen2-5-vl-7b.yaml
-# Vision: screenshots, whiteboards, diagrams. One GPU (or one time-sliced share), capped at 30% of an
-# 80 GB H100 (bf16 weights about 16.6 GB, context 8K), so it can share a card with the other small models.
+# Vision: screenshots, whiteboards, diagrams. One GPU slice of 24 GB (HAMi nvidia.com/gpumem), bf16
+# weights about 16.6 GB, context 8K, so it shares a card with the other small models.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: qwen2-5-vl-7b-cache, namespace: openshift-mcp }
@@ -170,7 +178,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.30"
+            - "0.90"   # of the HAMi slice below, not of the whole card
             - "--max-model-len"
             - "8192"
             - "--max-num-seqs"
@@ -187,9 +195,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }
@@ -201,7 +212,7 @@ spec:
 ---
 # ── from models/50-bge-m3.yaml
 # Embeddings for incident memory: Hugging Face Text Embeddings Inference
-# (Hopper build) serving BAAI/bge-m3, about 3 GB on one GPU share. OpenAI-compatible
+# (Hopper build) serving BAAI/bge-m3, a 6 GB HAMi slice of one GPU. OpenAI-compatible
 # /v1/embeddings; health at /health.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -234,9 +245,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }
+          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
     volumes:

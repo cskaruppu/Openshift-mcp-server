@@ -1,8 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Fits GPUs as they are, whole or time-sliced: gpt-oss-120b gets a node to itself,
-# the three small models share the other with memory caps (24 + 24 + 3 GB fit one
-# H100). 10-gpu-mig.yaml is an alternative for a cluster with exactly two whole
+# Sized for HAMi GPU sharing: each model reserves only the GPU memory it needs
+# (nvidia.com/gpumem): gpt-oss-120b ~74 GB on one card, the three small models
+# 24 + 24 + 6 GB, which fit together on another card. 10-gpu-mig.yaml is an alternative for a cluster with exactly two whole
 # GPUs and no time-slicing — it re-partitions a GPU; apply it only deliberately.
 # Everything goes into the existing openshift-mcp namespace; nothing here creates
 # or deletes a namespace. The Hugging Face token Secret is created by hand:

@@ -1,5 +1,5 @@
 # Embeddings for incident memory: Hugging Face Text Embeddings Inference
-# (Hopper build) serving BAAI/bge-m3, about 3 GB on one GPU share. OpenAI-compatible
+# (Hopper build) serving BAAI/bge-m3, a 6 GB HAMi slice of one GPU. OpenAI-compatible
 # /v1/embeddings; health at /health.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -32,9 +32,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }
+          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "6144" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
     volumes:

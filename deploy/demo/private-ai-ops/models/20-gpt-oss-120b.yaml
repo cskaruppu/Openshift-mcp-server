@@ -1,6 +1,5 @@
-# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it needs most of an
-# H100, so it gets a GPU node to itself (the other demo models are kept off that node below). It asks
-# for nvidia.com/gpu: 1 — a whole card, or one share of a card where GPU time-slicing is on.
+# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it takes a 76000 MiB
+# HAMi slice of one H100 (nvidia.com/gpumem below) and prefers a node away from the other demo models.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: gpt-oss-120b-cache, namespace: openshift-mcp }
@@ -32,7 +31,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.85"
+            - "0.92"   # of the HAMi slice below, not of the whole card
             - "--max-model-len"
             - "32768"
             - "--tool-call-parser"
@@ -48,9 +47,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }
@@ -59,11 +61,14 @@ spec:
       - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
     tolerations:
       - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
-    # Never on the same node as the other demo models (the rule binds both ways).
+    # Prefer a node without the other demo models, but do not insist: with HAMi memory slices they can
+    # safely use the free card next to it when the other node is busy.
     affinity:
       podAntiAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          - topologyKey: kubernetes.io/hostname
-            labelSelector:
-              matchExpressions:
-                - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchExpressions:
+                  - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }

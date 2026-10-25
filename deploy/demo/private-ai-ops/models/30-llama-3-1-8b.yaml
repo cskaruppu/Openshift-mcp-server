@@ -1,5 +1,5 @@
-# Fast answers and summaries. One GPU (or one time-sliced share), capped at 30% of an 80 GB H100
-# (bf16 weights about 16 GB, context 8K), so it can share a card with the vision and embedding models.
+# Fast answers and summaries. One GPU slice of 24 GB (HAMi nvidia.com/gpumem), bf16 weights about
+# 16 GB, context 8K, so it shares a card with the vision and embedding models.
 # Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -32,7 +32,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.30"
+            - "0.90"   # of the HAMi slice below, not of the whole card
             - "--max-model-len"
             - "8192"
             - "--max-num-seqs"
@@ -47,9 +47,12 @@ spec:
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
+        # HAMi (this cluster's GPU scheduler) reserves GPU memory per pod: nvidia.com/gpumem is in MiB and
+        # is enforced inside the container, so vLLM sees a card of that size. Without it HAMi reserves
+        # the whole card and the other models cannot be placed (CardInsufficientMemory).
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "24576" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }
