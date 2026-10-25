@@ -1,0 +1,539 @@
+# The four Private AI models as plain Deployments + Services in the existing openshift-mcp
+# namespace. No OpenShift AI / KServe involved: needs only the NVIDIA GPU Operator and HAMi.
+# Same models, GPU memory slices (nvidia.com/gpumem) and service names (<model>-predictor,
+# port 80) as models-openshift-mcp.yaml, so enable.sh and Settings work unchanged.
+#
+#   oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<token>   # once
+#   oc apply -f models-plain-openshift-mcp.yaml
+#   oc -n openshift-mcp get pods -l tcs.com/demo=private-ai-ops -w
+#
+# Stop the models (frees the GPUs, keeps the downloaded weights in the *-cache claims):
+#   oc -n openshift-mcp scale deploy -l tcs.com/demo=private-ai-ops --replicas=0
+# Start them again:
+#   oc -n openshift-mcp scale deploy -l tcs.com/demo=private-ai-ops --replicas=1
+---
+# ── gpt-oss-120b
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gpt-oss-120b-cache
+  namespace: openshift-mcp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpt-oss-120b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: gpt-oss-120b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: gpt-oss-120b
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      tcs.com/model: gpt-oss-120b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpt-oss-120b
+        app.kubernetes.io/part-of: tcs-private-ai
+        tcs.com/demo: private-ai-ops
+        tcs.com/model: gpt-oss-120b
+    spec:
+      volumes:
+      - name: cache
+        persistentVolumeClaim:
+          claimName: gpt-oss-120b-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: model
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+        - --model
+        - openai/gpt-oss-120b
+        - --served-model-name
+        - gpt-oss-120b
+        - --port
+        - '8080'
+        - --gpu-memory-utilization
+        - '0.92'
+        - --max-model-len
+        - '32768'
+        - --tool-call-parser
+        - openai
+        - --enable-auto-tool-choice
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: HF_HOME
+          value: /models-cache
+        - name: HOME
+          value: /tmp
+        - name: HF_HUB_OFFLINE
+          value: '0'
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 15
+          failureThreshold: 120
+        resources:
+          requests:
+            cpu: '4'
+            memory: 24Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '76000'
+          limits:
+            cpu: '16'
+            memory: 96Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '76000'
+        volumeMounts:
+        - name: cache
+          mountPath: /models-cache
+        - name: shm
+          mountPath: /dev/shm
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchExpressions:
+                - key: tcs.com/model
+                  operator: In
+                  values:
+                  - llama-3-1-8b
+                  - qwen2-5-vl-7b
+                  - bge-m3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpt-oss-120b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: gpt-oss-120b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: gpt-oss-120b
+spec:
+  selector:
+    tcs.com/model: gpt-oss-120b
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+---
+# ── llama-3-1-8b
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llama-3-1-8b-cache
+  namespace: openshift-mcp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 60Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-3-1-8b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: llama-3-1-8b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: llama-3-1-8b
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      tcs.com/model: llama-3-1-8b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama-3-1-8b
+        app.kubernetes.io/part-of: tcs-private-ai
+        tcs.com/demo: private-ai-ops
+        tcs.com/model: llama-3-1-8b
+    spec:
+      volumes:
+      - name: cache
+        persistentVolumeClaim:
+          claimName: llama-3-1-8b-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: model
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+        - --model
+        - meta-llama/Llama-3.1-8B-Instruct
+        - --served-model-name
+        - llama-3-1-8b
+        - --port
+        - '8080'
+        - --gpu-memory-utilization
+        - '0.90'
+        - --max-model-len
+        - '8192'
+        - --max-num-seqs
+        - '128'
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: HF_HOME
+          value: /models-cache
+        - name: HOME
+          value: /tmp
+        - name: HF_HUB_OFFLINE
+          value: '0'
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 15
+          failureThreshold: 120
+        resources:
+          requests:
+            cpu: '4'
+            memory: 24Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '24576'
+          limits:
+            cpu: '16'
+            memory: 96Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '24576'
+        volumeMounts:
+        - name: cache
+          mountPath: /models-cache
+        - name: shm
+          mountPath: /dev/shm
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-3-1-8b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: llama-3-1-8b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: llama-3-1-8b
+spec:
+  selector:
+    tcs.com/model: llama-3-1-8b
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+---
+# ── qwen2-5-vl-7b
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qwen2-5-vl-7b-cache
+  namespace: openshift-mcp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 60Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen2-5-vl-7b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: qwen2-5-vl-7b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: qwen2-5-vl-7b
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      tcs.com/model: qwen2-5-vl-7b
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qwen2-5-vl-7b
+        app.kubernetes.io/part-of: tcs-private-ai
+        tcs.com/demo: private-ai-ops
+        tcs.com/model: qwen2-5-vl-7b
+    spec:
+      volumes:
+      - name: cache
+        persistentVolumeClaim:
+          claimName: qwen2-5-vl-7b-cache
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: model
+        image: docker.io/vllm/vllm-openai:v0.11.0
+        args:
+        - --model
+        - Qwen/Qwen2.5-VL-7B-Instruct
+        - --served-model-name
+        - qwen2-5-vl-7b
+        - --port
+        - '8080'
+        - --gpu-memory-utilization
+        - '0.90'
+        - --max-model-len
+        - '8192'
+        - --max-num-seqs
+        - '8'
+        - --limit-mm-per-prompt
+        - '{"image":2}'
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: HF_HOME
+          value: /models-cache
+        - name: HOME
+          value: /tmp
+        - name: HF_HUB_OFFLINE
+          value: '0'
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 15
+          failureThreshold: 120
+        resources:
+          requests:
+            cpu: '4'
+            memory: 24Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '24576'
+          limits:
+            cpu: '16'
+            memory: 96Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '24576'
+        volumeMounts:
+        - name: cache
+          mountPath: /models-cache
+        - name: shm
+          mountPath: /dev/shm
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen2-5-vl-7b-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: qwen2-5-vl-7b
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: qwen2-5-vl-7b
+spec:
+  selector:
+    tcs.com/model: qwen2-5-vl-7b
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+---
+# ── bge-m3
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bge-m3-cache
+  namespace: openshift-mcp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bge-m3-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: bge-m3
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: bge-m3
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      tcs.com/model: bge-m3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bge-m3
+        app.kubernetes.io/part-of: tcs-private-ai
+        tcs.com/demo: private-ai-ops
+        tcs.com/model: bge-m3
+    spec:
+      volumes:
+      - name: cache
+        persistentVolumeClaim:
+          claimName: bge-m3-cache
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: model
+        image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
+        args:
+        - --model-id
+        - BAAI/bge-m3
+        - --port
+        - '8080'
+        - --served-model-name
+        - bge-m3
+        - --huggingface-hub-cache
+        - /models-cache
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: HOME
+          value: /tmp
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 60
+        resources:
+          requests:
+            cpu: '2'
+            memory: 8Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '6144'
+          limits:
+            cpu: '8'
+            memory: 16Gi
+            nvidia.com/gpu: '1'
+            nvidia.com/gpumem: '6144'
+        volumeMounts:
+        - name: cache
+          mountPath: /models-cache
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bge-m3-predictor
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/name: bge-m3
+    app.kubernetes.io/part-of: tcs-private-ai
+    tcs.com/demo: private-ai-ops
+    tcs.com/model: bge-m3
+spec:
+  selector:
+    tcs.com/model: bge-m3
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP

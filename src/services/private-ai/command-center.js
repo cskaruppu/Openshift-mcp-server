@@ -223,8 +223,8 @@ export async function prerequisites({ cluster = "local" } = {}) {
     return {
       ok: ms.length > 0 && ready.length === ms.length, chatReady, ready: ready.length, total: ms.length, models: ms,
       detail: ms.length ? `${ready.length}/${ms.length} ready · ${ms.map((m) => `${m.model}${m.health?.ok ? "" : " (not answering)"}`).join(", ")}` : "No models connected to the platform",
-      fix: !ms.length ? `Deploy the models (oc apply -k deploy/demo/private-ai-ops/models) and connect them: ./enable.sh${cluster === "local" ? "" : " --models-context <" + cluster + " context>"}`
-        : ready.length < ms.length ? "Check the InferenceServices (oc -n openshift-mcp get inferenceservice) and that the platform can reach their URLs" : null,
+      fix: !ms.length ? `Deploy the models (oc apply -f deploy/demo/private-ai-ops/models-plain-openshift-mcp.yaml) and connect them: ./enable.sh${cluster === "local" ? "" : " --models-context <" + cluster + " context>"}`
+        : ready.length < ms.length ? "Check the model pods (oc -n openshift-mcp get pods -l tcs.com/demo=private-ai-ops) and that the platform can reach their URLs" : null,
     };
   });
 
