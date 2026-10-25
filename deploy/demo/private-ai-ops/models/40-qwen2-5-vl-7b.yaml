@@ -1,4 +1,5 @@
-# Vision: screenshots, whiteboards, diagrams. GPU 1, MIG 2g.20gb (bf16 weights about 16.6 GB, so context is kept to 8K).
+# Vision: screenshots, whiteboards, diagrams. One GPU (or one time-sliced share), capped at 30% of an
+# 80 GB H100 (bf16 weights about 16.6 GB, context 8K), so it can share a card with the other small models.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: qwen2-5-vl-7b-cache, namespace: tcs-private-ai }
@@ -30,7 +31,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.92"
+            - "0.30"
             - "--max-model-len"
             - "8192"
             - "--max-num-seqs"
@@ -48,8 +49,8 @@ spec:
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/mig-2g.20gb: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/mig-2g.20gb: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }

@@ -1,4 +1,6 @@
-# Fast answers and summaries. GPU 1, MIG 3g.40gb. Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
+# Fast answers and summaries. One GPU (or one time-sliced share), capped at 30% of an 80 GB H100
+# (bf16 weights about 16 GB, context 8K), so it can share a card with the vision and embedding models.
+# Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: llama-3-1-8b-cache, namespace: tcs-private-ai }
@@ -30,9 +32,9 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.90"
+            - "0.30"
             - "--max-model-len"
-            - "16384"
+            - "8192"
             - "--max-num-seqs"
             - "128"
         env:
@@ -46,8 +48,8 @@ spec:
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 3 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 15, failureThreshold: 120 }
         resources:
-          requests: { cpu: "4", memory: 24Gi, nvidia.com/mig-3g.40gb: "1" }
-          limits: { cpu: "16", memory: 96Gi, nvidia.com/mig-3g.40gb: "1" }
+          requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "16", memory: 96Gi, nvidia.com/gpu: "1" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
           - { name: shm, mountPath: /dev/shm }

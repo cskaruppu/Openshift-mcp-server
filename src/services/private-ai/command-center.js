@@ -194,11 +194,18 @@ export async function prerequisites({ cluster = "local" } = {}) {
   const blocked = { ok: false, detail: "Needs cluster access first", fix: null };
 
   const gpu = !access.ok ? blocked : run(async () => {
-    const inv = gpuInventory((await O().fetch("/api/v1/nodes")).items);
+    const items = (await O().fetch("/api/v1/nodes")).items;
+    const inv = gpuInventory(items);
+    // Physical cards, the way the cluster card counts them: time-slicing advertises
+    // each card many times over (4 cards shared 10 ways = 40 "GPUs").
+    const { computeFromNodes } = await import("../cluster-compute.js");
+    const hw = computeFromNodes(items);
+    const replicas = Math.max(1, ...items.map((n) => parseInt(n.metadata?.labels?.["nvidia.com/gpu.replicas"], 10) || 1));
     const mig = Object.entries(inv.mig).map(([p, n]) => `${n}× ${p}`).join(" · ");
-    const ok = inv.gpus + Object.values(inv.mig).reduce((s, n) => s + n, 0) > 0;
-    return { ok, detail: ok ? [inv.gpus ? `${inv.gpus} whole GPU${inv.gpus > 1 ? "s" : ""}` : null, mig ? `MIG ${mig}` : null].filter(Boolean).join(" · ") + ` on ${inv.nodes} node${inv.nodes > 1 ? "s" : ""}` : "No NVIDIA GPUs offered by any node",
-      fix: ok ? null : "Install the NVIDIA GPU Operator; for four models on two GPUs apply models/10-gpu-mig.yaml", inventory: inv };
+    const ok = hw.gpus + Object.values(inv.mig).reduce((s, n) => s + n, 0) > 0;
+    const parts = [hw.gpus ? `${hw.gpus}× ${hw.gpuModel || "GPU"}` : null, replicas > 1 ? `time-sliced ×${replicas} (${inv.gpus} shares)` : null, mig ? `MIG ${mig}` : null].filter(Boolean);
+    return { ok, detail: ok ? `${parts.join(" · ")} on ${inv.nodes} node${inv.nodes > 1 ? "s" : ""}` : "No NVIDIA GPUs offered by any node",
+      fix: ok ? null : "Install the NVIDIA GPU Operator", inventory: { ...inv, physical: hw.gpus, replicas } };
   }).catch((e) => ({ ok: false, detail: `Could not read nodes: ${why(e)}`, fix: null }));
 
   // Models are called by the platform itself, so this check runs from here whatever the cluster.

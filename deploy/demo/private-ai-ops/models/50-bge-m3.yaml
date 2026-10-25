@@ -1,5 +1,5 @@
 # Embeddings for incident memory: Hugging Face Text Embeddings Inference
-# (Hopper build) serving BAAI/bge-m3. GPU 1, MIG 1g.10gb. OpenAI-compatible
+# (Hopper build) serving BAAI/bge-m3, about 3 GB on one GPU share. OpenAI-compatible
 # /v1/embeddings; health at /health.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -33,8 +33,8 @@ spec:
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }
         resources:
-          requests: { cpu: "2", memory: 8Gi, nvidia.com/mig-1g.10gb: "1" }
-          limits: { cpu: "8", memory: 16Gi, nvidia.com/mig-1g.10gb: "1" }
+          requests: { cpu: "2", memory: 8Gi, nvidia.com/gpu: "1" }
+          limits: { cpu: "8", memory: 16Gi, nvidia.com/gpu: "1" }
         volumeMounts:
           - { name: cache, mountPath: /models-cache }
     volumes:

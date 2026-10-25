@@ -1,7 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# 10-gpu-mig.yaml lives in nvidia-gpu-operator and re-partitions a GPU:
-# apply it separately and deliberately (see its header).
+# Fits GPUs as they are, whole or time-sliced: gpt-oss-120b gets a node to itself,
+# the three small models share the other with memory caps (24 + 24 + 3 GB fit one
+# H100). 10-gpu-mig.yaml is an alternative for a cluster with exactly two whole
+# GPUs and no time-slicing — it re-partitions a GPU; apply it only deliberately.
 resources:
   - 00-namespace.yaml
   - 20-gpt-oss-120b.yaml

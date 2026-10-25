@@ -43,10 +43,10 @@ echo "▶ Pointing the platform at the models in $MODELS_NS${MCTX:+ on $MCTX}"
 ENV=(
   PRIVATE_AI_OPS=true
   "PRIVATE_AI_HARDWARE=$HARDWARE"
-  "PRIVATE_AI_LARGE_URL=$(url gpt-oss-120b)"   PRIVATE_AI_LARGE_MODEL=gpt-oss-120b   "PRIVATE_AI_LARGE_GPU=GPU 0 · H100"
-  "PRIVATE_AI_SMALL_URL=$(url llama-3-1-8b)"   PRIVATE_AI_SMALL_MODEL=llama-3-1-8b   "PRIVATE_AI_SMALL_GPU=GPU 1 · MIG 3g.40gb"
-  "PRIVATE_AI_VISION_URL=$(url qwen2-5-vl-7b)" PRIVATE_AI_VISION_MODEL=qwen2-5-vl-7b "PRIVATE_AI_VISION_GPU=GPU 1 · MIG 2g.20gb"
-  "PRIVATE_AI_EMBED_URL=$(url bge-m3)"         PRIVATE_AI_EMBED_MODEL=bge-m3         "PRIVATE_AI_EMBED_GPU=GPU 1 · MIG 1g.10gb"
+  "PRIVATE_AI_LARGE_URL=$(url gpt-oss-120b)"   PRIVATE_AI_LARGE_MODEL=gpt-oss-120b   "PRIVATE_AI_LARGE_GPU=H100 · own node"
+  "PRIVATE_AI_SMALL_URL=$(url llama-3-1-8b)"   PRIVATE_AI_SMALL_MODEL=llama-3-1-8b   "PRIVATE_AI_SMALL_GPU=H100 · shared"
+  "PRIVATE_AI_VISION_URL=$(url qwen2-5-vl-7b)" PRIVATE_AI_VISION_MODEL=qwen2-5-vl-7b "PRIVATE_AI_VISION_GPU=H100 · shared"
+  "PRIVATE_AI_EMBED_URL=$(url bge-m3)"         PRIVATE_AI_EMBED_MODEL=bge-m3         "PRIVATE_AI_EMBED_GPU=H100 · shared"
 )
 $ROUTE_CHAT && ENV+=(LLM_PROVIDER=private)
 oc -n "$NS" set env deploy/"$DEPLOY" "${ENV[@]}"

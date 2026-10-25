@@ -279,7 +279,12 @@ describe("prerequisites", () => {
       runForCluster: (c, fn) => { seen.push(c); return fn(); },
       ocp: {
         fetch: async (path) => {
-          if (path === "/api/v1/nodes") return { items: [{ status: { allocatable: { "nvidia.com/gpu": "2" } } }] };
+          if (path === "/api/v1/nodes") {
+            // Two nodes with 2× H100 each, time-sliced 10 ways: 40 advertised, 4 real.
+            const n = { metadata: { labels: { "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3", "nvidia.com/gpu.count": "2", "nvidia.com/gpu.replicas": "10" } },
+              status: { capacity: { cpu: "64", "nvidia.com/gpu": "20" }, allocatable: { "nvidia.com/gpu": "20" } } };
+            return { items: [n, n] };
+          }
           throw new Error("OCP API 404: not found");
         },
         post: async (_p, body) => ({ status: { allowed: body.spec.resourceAttributes.resource !== "networkpolicies" } }),
@@ -291,7 +296,7 @@ describe("prerequisites", () => {
     const pre = await CC.prerequisites({ cluster: "cluster02-gpu" });
     assert.ok(seen.every((c) => c === "cluster02-gpu") && seen.length >= 2);
     assert.equal(pre.gpu.ok, true);
-    assert.match(pre.gpu.detail, /2 whole GPUs/);
+    assert.equal(pre.gpu.detail, "4× H100 · time-sliced ×10 (40 shares) on 2 nodes");
     assert.equal(pre.demo.ok, false);
     assert.match(pre.demo.fix, /scenario-payments\.yaml/);
     assert.equal(pre.permissions.ok, false);

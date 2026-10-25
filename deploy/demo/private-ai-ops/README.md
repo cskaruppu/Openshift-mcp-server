@@ -1,6 +1,6 @@
 # Private AI Operations Center — runbook
 
-Four live acts on 2× H100 under OpenShift AI, plus a scorecard. Everything is
+Four live acts on NVIDIA H100s under OpenShift AI, plus a scorecard. Everything is
 off until an admin turns it on in **Settings → Private AI**; `disable.sh` turns
 it off for good.
 
@@ -15,15 +15,13 @@ it off for good.
 
 ```bash
 cd deploy/demo/private-ai-ops
-# Run the GPU, MIG and model steps against the GPU cluster (e.g. oc config use-context <gpu-cluster-context>)
+# Run the model steps against the GPU cluster (e.g. oc config use-context <gpu-cluster-context>)
 oc apply -f models/00-namespace.yaml
 oc -n tcs-private-ai create secret generic hf-token --from-literal=HF_TOKEN=<your token>
 
-# Split GPU 1 with MIG (see the comments in models/10-gpu-mig.yaml)
-oc apply -f models/10-gpu-mig.yaml
-oc patch clusterpolicy gpu-cluster-policy --type merge \
-  -p '{"spec":{"mig":{"strategy":"mixed"},"migManager":{"config":{"name":"tcs-mig-config","default":"all-disabled"}}}}'
-oc label node <h100-node> nvidia.com/mig.config=tcs-demo --overwrite
+# GPUs: nothing to change. gpt-oss-120b gets a GPU node to itself; the three small models
+# share another with memory caps. Works with whole GPUs and with GPU time-slicing.
+# (models/10-gpu-mig.yaml is only for a cluster with exactly two whole GPUs.)
 
 # Models (weights download once from Hugging Face into PVCs)
 oc apply -k models/
@@ -96,5 +94,6 @@ oc --context <gpu-cluster-context> delete -f gpu-cluster-access.yaml   # removes
 ## Check on your cluster before the event
 
 - vLLM flags (`--tool-call-parser openai`, `--limit-mm-per-prompt`) against the vLLM image your OpenShift AI version ships, if you swap the image.
-- `oc get node <h100-node> -o json | jq .status.allocatable` shows `nvidia.com/mig-3g.40gb`, `mig-2g.20gb`, `mig-1g.10gb`.
+- Two GPU nodes (`oc get nodes -L nvidia.com/gpu.count`): gpt-oss-120b needs one to itself. On one GPU node, use gpt-oss-20b instead (edit `20-gpt-oss-120b.yaml`: model `openai/gpt-oss-20b`, `--gpu-memory-utilization 0.30`, drop the `affinity` block).
+- Nothing else heavy on the GPU node gpt-oss-120b lands on: with time-slicing, other pods' GPU memory counts against its 80 GB.
 - The platform's service account can patch Deployments in `tcs-demo-payments` (inject, reset, rollback) and manage NetworkPolicies in its own namespace.

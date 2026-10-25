@@ -1,4 +1,6 @@
-# Reasoning and agents: investigations, fixes, plans. GPU 0, whole H100 (MXFP4 weights, about 61 GB).
+# Reasoning and agents: investigations, fixes, plans. MXFP4 weights, about 61 GB: it needs most of an
+# H100, so it gets a GPU node to itself (the other demo models are kept off that node below). It asks
+# for nvidia.com/gpu: 1 — a whole card, or one share of a card where GPU time-slicing is on.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: gpt-oss-120b-cache, namespace: tcs-private-ai }
@@ -30,7 +32,7 @@ spec:
             - "--port"
             - "8080"
             - "--gpu-memory-utilization"
-            - "0.90"
+            - "0.85"
             - "--max-model-len"
             - "32768"
             - "--tool-call-parser"
@@ -57,3 +59,11 @@ spec:
       - { name: shm, emptyDir: { medium: Memory, sizeLimit: 16Gi } }
     tolerations:
       - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    # Never on the same node as the other demo models (the rule binds both ways).
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchExpressions:
+                - { key: serving.kserve.io/inferenceservice, operator: In, values: [llama-3-1-8b, qwen2-5-vl-7b, bge-m3] }
