@@ -167,12 +167,13 @@ function Act1({ d, busy, act$ }) {
         <Kpi label="Calls to cloud AI" value={fmtNum(a.traffic.cloudCalls)} sub={a.traffic.cloudCalls ? "non-sensitive, by policy" : "none this session"} tone={a.traffic.cloudCalls ? "warn" : "ok"} />
         <Kpi label="Median answer time" value={median ? `${(median / 1000).toFixed(1)} s` : "—"} sub="last 40 answers" />
         {gpus.slice(0, 2).map((g, i) => <Kpi key={g.id || i} label={`GPU ${g.index ?? i} · ${String(g.model || "GPU").replace(/NVIDIA\s*/i, "")}`} value={g.utilPct != null ? `${g.utilPct}%` : "—"} sub={g.tempC != null ? `${g.tempC} °C · ${g.memPct ?? "—"}% memory` : g.node} tone="blue" />)}
-        {!gpus.length && <Kpi label="GPUs" value={a.gpu?.summary?.totalGpus ?? "—"} sub={a.gpu?.available === false ? "telemetry not available" : "on this cluster"} />}
+        {!gpus.length && <Kpi label="GPUs" value={a.gpu?.physical?.gpus ?? a.gpu?.summary?.totalGpus ?? "—"}
+          sub={a.gpu?.physical?.gpus ? `${a.gpu.physical.model ? `NVIDIA ${a.gpu.physical.model}` : "on this cluster"}${a.gpu.physical.shared ? " · time-sliced" : ""}` : a.gpu?.available === false ? "telemetry not available" : "on this cluster"} />}
       </div>
       <div className="cc-grid3">
         <section className="cc-card">
           <header><h3>Models on OpenShift AI</h3><span>KServe · vLLM</span></header>
-          {!models.length && <p className="cc-note">No model endpoints configured. Set PRIVATE_AI_LARGE_URL and friends (see deploy/demo/private-ai-ops).</p>}
+          {!models.length && <p className="cc-note">No models connected yet. Deploy them and run enable.sh (Settings → Private AI shows each step).</p>}
           {models.map((m) => (
             <div key={m.role} className="cc-model">
               <div className="cc-model-h"><b>{m.model}</b>{m.gpu && <span className="cc-gpu">{m.gpu}</span>}</div>
@@ -182,7 +183,7 @@ function Act1({ d, busy, act$ }) {
           ))}
         </section>
         <section className="cc-card cc-wide">
-          <header><h3>AI traffic control</h3><span>{a.routerOn ? "every question routed to the right model" : "router off — set LLM_PROVIDER=private"}</span></header>
+          <header><h3>AI traffic control</h3><span>{a.routerOn ? "every question routed to the right model" : "router off — turn on in Settings → Private AI"}</span></header>
           <div className="cc-table">
             <div className="cc-tr cc-th"><span>Time</span><span>Question</span><span>Answered by</span><span>Why</span><span className="r">Time</span></div>
             {(a.log || []).slice(0, 9).map((r) => (

@@ -84,7 +84,15 @@ export async function commandCenterState({ cluster = "local" } = {}) {
   const [models, embedModel, gpu, egress, scenario, scan, recs] = await Promise.all([
     Promise.all(list.map(healthOf)),
     embed ? healthOf(embed) : null,
-    _deps.gpu ? _deps.runForCluster(cluster, () => _deps.gpu()).catch((e) => ({ available: false, reason: e.message })) : null,
+    _deps.gpu ? _deps.runForCluster(cluster, async () => {
+      const g = await _deps.gpu();
+      // Physical cards for the GPUs tile: time-slicing advertises each card many times over.
+      try {
+        const { computeFromNodes } = await import("../cluster-compute.js");
+        const hw = computeFromNodes((await O().fetch("/api/v1/nodes")).items);
+        return { ...g, physical: { gpus: hw.gpus, model: hw.gpuModel, shared: hw.shared } };
+      } catch { return g; }
+    }).catch((e) => ({ available: false, reason: e.message })) : null,
     egressStatus(),
     scenarioStatus({ cluster }),
     _deps.scanSummary ? _deps.scanSummary(cluster).catch(() => null) : null,
