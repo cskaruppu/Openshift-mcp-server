@@ -666,6 +666,11 @@ export async function handleDashboardAPI(pathname, req, res) {
           else totalMemBytes += parseInt(mem) || 0;
         }
         const totalMemGi = Math.round(totalMemBytes / (1024 * 1024 * 1024));
+        // CPU / GPU at a glance for the cluster cards (cached, time-boxed).
+        const { clusterCompute } = await import("./cluster-compute.js");
+        const { activeClusterContext } = await import("../utils/openshift-client.js");
+        const _ctx = activeClusterContext();
+        const compute = await clusterCompute(nodeList, { cacheKey: _ctx ? (_ctx.apiUrl || _ctx.bridge || "remote") : "local" }).catch(() => null);
 
         const opItems = operators?.items || [];
         const degradedOps = opItems.filter((op) =>
@@ -705,6 +710,7 @@ export async function handleDashboardAPI(pathname, req, res) {
             totalCPU,
             totalMemGi,
           },
+          compute,
           namespaces: {
             total: nsList.length,
             user: userNS.length,

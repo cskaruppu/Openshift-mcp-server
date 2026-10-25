@@ -598,6 +598,8 @@ async function fetchSpokeSummary(clusterName, spokeUrl) {
         totalCPU: data.nodes?.totalCPU || 0,
         totalMemoryGi: data.nodes?.totalMemGi || 0,
       },
+      // CPU / GPU for the cluster card — absent from spokes on an older image.
+      compute: data.compute || null,
     };
     agent.platform = data.platform || agent.platform;
     _connectedAgents.set(clusterName, agent);
@@ -5583,6 +5585,8 @@ spec:
               alerts: { critical: _critAlerts, warning: _warnAlerts },
               cpu: _rpt.resourceSummary?.cpuPercent || null,
               memory: _rpt.resourceSummary?.memoryPercent || null,
+              // Older spokes send no compute block: their card still shows the vCPU capacity.
+              compute: _rpt.compute || (_rpt.resourceSummary?.totalCPU ? { vcpu: _rpt.resourceSummary.totalCPU, cpuPct: null, gpus: 0, migSlices: 0, gpuModel: null, gpuPct: null, partial: true } : null),
               connectionType: _connType,
             };
           })() : null,

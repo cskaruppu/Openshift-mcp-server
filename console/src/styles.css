@@ -9865,3 +9865,22 @@ code.new { color: #22a06b; }
 .ac-route-tag b { color: var(--text); }
 .ac-route-dot { width: 7px; height: 7px; border-radius: 50%; }
 .ac-route-sens { padding: 1px 7px; border-radius: 99px; font-weight: 700; color: #1f9d6b; background: rgba(43,182,115,.14); }
+
+/* ── Cluster card: CPU / GPU at a glance (components/ClusterCompute.jsx) ── */
+.cp-cx { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 2px 0 12px; }
+.cp-cx-m { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: color-mix(in srgb, var(--card) 85%, transparent); min-width: 0; }
+.cp-cx-top { display: flex; align-items: center; gap: 6px; font: 700 10.5px var(--tcs-font); letter-spacing: .06em; text-transform: uppercase; color: var(--text2); }
+.cp-cx-top svg { flex: none; }
+.cp-cx-top b { margin-left: auto; font: 800 13px var(--tcs-font); letter-spacing: 0; color: var(--text); }
+.cp-cx-bar { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text2) 18%, transparent); overflow: hidden; }
+.cp-cx-bar i { display: block; height: 100%; border-radius: 3px; background: var(--cp-cx-c); transition: width .6s ease; }
+.cp-cx-sub { font: 500 11px var(--tcs-font); color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-cx-m.cpu { --cp-cx-c: #3b82f6; }
+.cp-cx-m.cpu svg { color: #3b82f6; }
+.cp-cx-m.gpu { --cp-cx-c: #76b900; border-color: rgba(118,185,0,.45); background: rgba(118,185,0,.07); }
+.cp-cx-m.gpu svg { color: #8fcf2a; }
+.cp-cx-m.none { border-style: dashed; background: transparent; }
+.cp-cx-m.none .cp-cx-top, .cp-cx-m.none .cp-cx-sub { color: color-mix(in srgb, var(--text2) 70%, transparent); }
+.cp-cx-tag { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 7px; border-radius: 6px; font: 800 9.5px var(--tcs-font); letter-spacing: .06em; color: #9fd84a; background: rgba(118,185,0,.14); border: 1px solid rgba(118,185,0,.5); vertical-align: middle; }
+.light-theme .cp-cx-tag { color: #3f6600; }
+.light-theme .cp-cx-m.gpu svg { color: #5f9600; }
