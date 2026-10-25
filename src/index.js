@@ -577,6 +577,8 @@ async function restoreHubAgentSpoke() {
 async function fetchSpokeSummary(clusterName, spokeUrl) {
   try {
     // A large cluster (thousands of pods, e.g. with OpenShift AI) can take a while to summarise.
+    const pending = _connectedAgents.get(clusterName);
+    if (pending) pending._summaryFetchedAt = Date.now();
     const resp = await fedFetch(`${spokeUrl}/api/cluster/summary`, {
       signal: AbortSignal.timeout(20000),
     });
@@ -5551,6 +5553,12 @@ spec:
     if (url.pathname === "/api/agent/status" && req.method === "GET") {
       const agents = [];
       for (const [key, agent] of _connectedAgents) {
+        // A report without what the cluster runs on is from before its agent
+        // was updated (or its first, too early): fetch a fresh one in the
+        // background, at most once a minute, whatever registered the spoke.
+        if (agent.spokeUrl && !agent.lastReport?.compute?.infra && Date.now() - (agent._summaryFetchedAt || 0) > 60_000) {
+          fetchSpokeSummary(key, agent.spokeUrl).catch(() => {});
+        }
         const elapsed = agent.lastReportTime
           ? (Date.now() - new Date(agent.lastReportTime).getTime()) / 1000
           : null;

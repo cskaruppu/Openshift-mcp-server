@@ -33,6 +33,8 @@ const HYPERVISOR = [[/vmware/i, { kind: "vsphere", name: "VMware vSphere" }], [/
 const MAKER = [[/^dell/i, "Dell"], [/^(hpe|hewlett)/i, "HPE"], [/lenovo/i, "Lenovo"], [/supermicro/i, "Supermicro"], [/cisco/i, "Cisco"],
   [/fujitsu/i, "Fujitsu"], [/inspur/i, "Inspur"], [/huawei|xfusion/i, "Huawei"], [/quanta/i, "Quanta"], [/gigabyte/i, "Gigabyte"], [/nvidia/i, "NVIDIA"]];
 
+const FAMILY_NAME = { poweredge: "PowerEdge", proliant: "ProLiant", thinksystem: "ThinkSystem", thinkagile: "ThinkAgile", ucs: "UCS", primergy: "PRIMERGY", dgx: "DGX", hgx: "HGX", superserver: "SuperServer", synergy: "Synergy", apollo: "Apollo", edgeline: "Edgeline" };
+
 /** Turn sys_vendor + product_name into what the machine is. */
 export function fromDmi(vendor, product) {
   const v = String(vendor || "").trim(), p = String(product || "").trim();
@@ -42,7 +44,8 @@ export function fromDmi(vendor, product) {
   const maker = MAKER.find(([re]) => re.test(v));
   if (!maker) return null;
   // "PowerEdge R760xa" → family "PowerEdge", model "R760xa"
-  const family = (p.match(/^(PowerEdge|ProLiant|ThinkSystem|ThinkAgile|UCS|PRIMERGY|DGX|SuperServer|Synergy|Apollo|Edgeline)/i) || [])[1] || null;
+  const fam = p.match(/\b(PowerEdge|ProLiant|ThinkSystem|ThinkAgile|UCS|PRIMERGY|DGX|HGX|SuperServer|Synergy|Apollo|Edgeline|XE\d{4})\b/i);
+  const family = fam ? FAMILY_NAME[fam[1].toLowerCase()] || fam[1] : null;
   return { kind: "baremetal", name: "Bare metal", maker: maker[1], family, model: p || null, source: "machine" };
 }
 

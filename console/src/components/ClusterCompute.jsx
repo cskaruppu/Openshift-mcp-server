@@ -56,7 +56,8 @@ function Chip({ kind, cls, icon, label, vendor, model, title }) {
 function infraChip(i) {
   if (i.kind === "baremetal") {
     return { cls: i.maker === "Dell" ? "v-dell" : "v-metal", icon: <ServerIcon size={13} />, label: "Bare metal",
-      vendor: i.maker || "Bare metal", model: i.maker ? i.family : null,
+      // The series when known (PowerEdge), otherwise the model as the machine names it.
+      vendor: i.maker || "Bare metal", model: i.maker ? i.family || i.model : null,
       title: `Bare metal${i.maker ? ` · ${i.maker} ${i.model || i.family || ""}`.trimEnd() : ""}` };
   }
   if (i.kind === "vsphere") return { cls: "v-vmware", icon: <VmIcon size={13} />, label: "VM", vendor: "VMware", model: "vSphere", title: "Virtual machines on VMware vSphere" };
