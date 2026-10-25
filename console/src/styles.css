@@ -9867,11 +9867,12 @@ code.new { color: #22a06b; }
 .ac-route-sens { padding: 1px 7px; border-radius: 99px; font-weight: 700; color: #1f9d6b; background: rgba(43,182,115,.14); }
 
 /* ── Cluster card: hardware row (components/ClusterCompute.jsx) ── */
-.cp-hw { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
-.cp-hw-c { display: inline-flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 10px 5px 6px; border-radius: 9px; border: 1px solid var(--border); background: color-mix(in srgb, var(--card) 85%, transparent); font: 600 11.5px var(--tcs-font); color: var(--text2); cursor: default; }
+/* Always one row: the chips get more compact as the card narrows (container queries below). */
+.cp-hw { display: flex; gap: 8px; flex-wrap: nowrap; margin: 0 0 12px; container-type: inline-size; min-width: 0; }
+.cp-hw-c { display: inline-flex; align-items: center; gap: 7px; flex: 0 1 auto; min-width: 0; padding: 5px 10px 5px 6px; border-radius: 9px; border: 1px solid var(--border); background: color-mix(in srgb, var(--card) 85%, transparent); font: 600 11.5px var(--tcs-font); color: var(--text2); cursor: default; }
 .cp-hw-ic { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; flex: none; background: color-mix(in srgb, var(--text2) 14%, transparent); color: var(--text2); }
 .cp-hw-k { font: 800 9px var(--tcs-font); letter-spacing: .08em; text-transform: uppercase; color: var(--text2); opacity: .8; }
-.cp-hw-c b { font: 900 11.5px/1 var(--tcs-font); letter-spacing: .02em; }
+.cp-hw-c b { font: 900 11.5px/1 var(--tcs-font); letter-spacing: .02em; white-space: nowrap; }
 .cp-hw-c em { font-style: normal; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cp-hw-c.v-intel .cp-hw-ic { background: rgba(0,113,197,.14); color: #3fa3f0; } .cp-hw-c.v-intel b { color: #3fa3f0; }
 .cp-hw-c.v-amd .cp-hw-ic { background: rgba(237,28,36,.12); color: #ff4d55; } .cp-hw-c.v-amd b { color: #ff4d55; }
@@ -9888,3 +9889,11 @@ code.new { color: #22a06b; }
 .light-theme .cp-hw-c.gpu .cp-hw-ic { color: #5f9600; }
 .light-theme .cp-hw-c.gpu.v-amd .cp-hw-ic { color: #e01e26; }
 .light-theme .cp-hw-c.gpu.v-intel .cp-hw-ic { color: #0071c5; }
+@container (max-width: 360px) {
+  .cp-hw { gap: 6px; }
+  .cp-hw-k { display: none; }
+  .cp-hw-c { gap: 6px; padding: 4px 8px 4px 5px; }
+}
+@container (max-width: 270px) {
+  .cp-hw-c.cpu em { display: none; }
+}
