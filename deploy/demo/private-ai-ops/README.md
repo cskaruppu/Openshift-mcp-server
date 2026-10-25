@@ -16,8 +16,8 @@ it off for good.
 ```bash
 cd deploy/demo/private-ai-ops
 # Run the model steps against the GPU cluster (e.g. oc config use-context <gpu-cluster-context>)
-oc apply -f models/00-namespace.yaml
-oc -n tcs-private-ai create secret generic hf-token --from-literal=HF_TOKEN=<your token>
+# Everything goes into the existing openshift-mcp namespace (no new namespace is created)
+oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<your token>
 
 # GPUs: nothing to change. gpt-oss-120b gets a GPU node to itself; the three small models
 # share another with memory caps. Works with whole GPUs and with GPU time-slicing.
@@ -25,7 +25,7 @@ oc -n tcs-private-ai create secret generic hf-token --from-literal=HF_TOKEN=<you
 
 # Models (weights download once from Hugging Face into PVCs)
 oc apply -k models/
-oc -n tcs-private-ai get inferenceservice -w     # wait for READY=True on all four
+oc -n openshift-mcp get inferenceservice -w     # wait for READY=True on all four
 
 # Connect the platform to the models. Run with the PLATFORM (hub) cluster as the
 # current context; --models-context names the GPU cluster when it is a different one

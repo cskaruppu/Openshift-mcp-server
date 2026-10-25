@@ -3,7 +3,7 @@
 # Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
 apiVersion: v1
 kind: PersistentVolumeClaim
-metadata: { name: llama-3-1-8b-cache, namespace: tcs-private-ai }
+metadata: { name: llama-3-1-8b-cache, namespace: openshift-mcp }
 spec:
   accessModes: [ReadWriteOnce]
   resources: { requests: { storage: 60Gi } }
@@ -12,7 +12,7 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: llama-3-1-8b
-  namespace: tcs-private-ai
+  namespace: openshift-mcp
   labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
   annotations:
     serving.kserve.io/deploymentMode: RawDeployment

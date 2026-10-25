@@ -44,7 +44,7 @@ test("a lab name the system resolver cannot find is answered by the lab DNS", as
   const r = await look("api.aiinfra.tcs.local");
   assert.equal(r.err, null);
   assert.deepEqual([r.address, r.family], ["10.131.20.15", 4]);
-  const all = await look("gpt-oss-120b-tcs-private-ai.apps.aiinfra.tcs.local", { all: true });
+  const all = await look("gpt-oss-120b-openshift-mcp.apps.aiinfra.tcs.local", { all: true });
   assert.deepEqual(all.address, [{ address: "10.131.20.15", family: 4 }]);
 });
 
@@ -81,7 +81,7 @@ test("a cluster API call and a model health check by lab name both get through",
 
 test("LAN_HOSTS pins names like a hosts file, with wildcards for a cluster's Routes", async () => {
   assert.equal((await look("api.pinned.lab.local")).address, "10.131.74.6");
-  assert.equal((await look("gpt-oss-120b-tcs-private-ai.apps.pinned.lab.local")).address, "10.131.74.7");
+  assert.equal((await look("gpt-oss-120b-openshift-mcp.apps.pinned.lab.local")).address, "10.131.74.7");
   assert.ok((await look("apps.pinned.lab.local")).err, "a wildcard does not match the zone itself");
   const list = L.parseLanHosts("a.x.local=1.1.1.1\n*.x.local=2.2.2.2, junk, *.y.x.local=3.3.3.3");
   assert.equal(list.length, 3);

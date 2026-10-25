@@ -217,7 +217,7 @@ test("on-prem model URLs bypass the egress proxy; cloud AI does not", async () =
   const np = process.env.NO_PROXY, np2 = process.env.no_proxy;
   process.env.NO_PROXY = ""; process.env.no_proxy = "";
   after(() => { process.env.NO_PROXY = np; process.env.no_proxy = np2; });
-  assert.equal(bypassesProxy("http://gpt-oss-120b-predictor.tcs-private-ai.svc.cluster.local:80"), true);
+  assert.equal(bypassesProxy("http://gpt-oss-120b-predictor.openshift-mcp.svc.cluster.local:80"), true);
   assert.equal(bypassesProxy("http://10.128.4.7:8080"), true);
   assert.equal(bypassesProxy("https://myco.openai.azure.com"), false);
   assert.equal(bypassesProxy("https://api.anthropic.com"), false);

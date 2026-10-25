@@ -12,7 +12,7 @@
 set -euo pipefail
 NS="${PLATFORM_NS:-openshift-mcp}"
 DEPLOY="${PLATFORM_DEPLOY:-agentic-ai-control-plane}"
-MODELS_NS="${MODELS_NS:-tcs-private-ai}"
+MODELS_NS="${MODELS_NS:-openshift-mcp}"   # existing namespace; never created or deleted here
 HARDWARE="${PRIVATE_AI_HARDWARE:-Dell PowerEdge · 2× NVIDIA H100 · OpenShift AI}"
 MCTX=""; ROUTE_CHAT=false
 while [[ $# -gt 0 ]]; do

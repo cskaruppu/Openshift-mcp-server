@@ -4,8 +4,11 @@ kind: Kustomization
 # the three small models share the other with memory caps (24 + 24 + 3 GB fit one
 # H100). 10-gpu-mig.yaml is an alternative for a cluster with exactly two whole
 # GPUs and no time-slicing — it re-partitions a GPU; apply it only deliberately.
+# Everything goes into the existing openshift-mcp namespace; nothing here creates
+# or deletes a namespace. The Hugging Face token Secret is created by hand:
+#   oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<your token>
+namespace: openshift-mcp
 resources:
-  - 00-namespace.yaml
   - 20-gpt-oss-120b.yaml
   - 30-llama-3-1-8b.yaml
   - 40-qwen2-5-vl-7b.yaml

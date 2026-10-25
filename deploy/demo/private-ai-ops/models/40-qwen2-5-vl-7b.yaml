@@ -2,7 +2,7 @@
 # 80 GB H100 (bf16 weights about 16.6 GB, context 8K), so it can share a card with the other small models.
 apiVersion: v1
 kind: PersistentVolumeClaim
-metadata: { name: qwen2-5-vl-7b-cache, namespace: tcs-private-ai }
+metadata: { name: qwen2-5-vl-7b-cache, namespace: openshift-mcp }
 spec:
   accessModes: [ReadWriteOnce]
   resources: { requests: { storage: 60Gi } }
@@ -11,7 +11,7 @@ apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
   name: qwen2-5-vl-7b
-  namespace: tcs-private-ai
+  namespace: openshift-mcp
   labels: { opendatahub.io/dashboard: "true", tcs.com/demo: private-ai-ops }
   annotations:
     serving.kserve.io/deploymentMode: RawDeployment
