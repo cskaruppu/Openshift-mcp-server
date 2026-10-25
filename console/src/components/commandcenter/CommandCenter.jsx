@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { DockChip } from "../MinimizedDock";
 import { showToast } from "../../store/toastStore";
+import { useThemeStore } from "../../store/themeStore";
 
 // Private AI Operations Center — the stage and booth view.
 //
@@ -55,8 +56,17 @@ export function useCommandCenterEnabled() {
   return st;
 }
 
+// Look: follows the console's light/dark theme ("auto"), or is forced from the
+// header switch — dark reads best on a stage projector whatever the console uses.
+const CC_THEMES = { auto: "Theme: auto", dark: "Theme: dark", light: "Theme: light" };
+const CC_NEXT = { auto: "dark", dark: "light", light: "auto" };
+
 export function CommandCenter({ open, onClose }) {
   const [act, setAct] = useState("act1");
+  const consoleTheme = useThemeStore((s) => s.theme);
+  const [ccTheme, setCcTheme] = useState(() => { try { return localStorage.getItem("cc-theme") || "auto"; } catch { return "auto"; } });
+  const look = ccTheme === "auto" ? (consoleTheme === "light" ? "light" : "dark") : ccTheme;
+  const cycleTheme = () => setCcTheme((t) => { const n = CC_NEXT[t] || "auto"; try { localStorage.setItem("cc-theme", n); } catch { /* private window */ } return n; });
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState("");
@@ -96,7 +106,7 @@ export function CommandCenter({ open, onClose }) {
     <>
       {minimized && <DockChip label="Command Center" onRestore={() => setMinimized(false)} />}
       <div className="vc-overlay cc-overlay" style={{ display: minimized ? "none" : "flex" }} onClick={onClose}>
-        <div className={"vc-shell cc-shell" + (maximized ? " max" : "")} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Operations Center">
+        <div className={"vc-shell cc-shell" + (maximized ? " max" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Operations Center">
           <div className="ah-head vc-head" onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
             <div className="ah-lockup" style={{ flex: 1, minWidth: 0 }}>
               <span className="tcs-lock">
@@ -132,6 +142,7 @@ export function CommandCenter({ open, onClose }) {
             {ACTS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
             <div style={{ flex: 1 }} />
             {d?.enabled && <span className="cc-since">Session since {fmtTime(d.session.since)}</span>}
+            <button className="vc-btn ghost sm" onClick={cycleTheme} title={ccTheme === "auto" ? `Following the console (${look}); click to force dark, then light` : `Forced ${ccTheme}; click to change`}>{CC_THEMES[ccTheme] || CC_THEMES.auto}</button>
             <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>Start new session</button>
           </nav>
 
