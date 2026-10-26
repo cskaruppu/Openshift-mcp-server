@@ -34,7 +34,7 @@ o() { if [[ -n "$KC" ]]; then oc --kubeconfig "$KC" "$@"; else oc "$@"; fi; }
 # name | Hugging Face repo | PVC size | files to skip | manifest
 MODELS=(
   "bge-m3|BAAI/bge-m3|20Gi|onnx/*,imgs/*|20-bge-m3.yaml"
-  "llama-3-1-8b|meta-llama/Llama-3.1-8B-Instruct|60Gi|original/*|30-llama-3-1-8b.yaml"
+  "llama-3-1-8b|RedHatAI/Llama-3.1-8B-Instruct|60Gi|original/*|30-llama-3-1-8b.yaml"
   "qwen2-5-vl-7b|Qwen/Qwen2.5-VL-7B-Instruct|60Gi||35-qwen2-5-vl-7b.yaml"
   "gpt-oss-120b|openai/gpt-oss-120b|200Gi|original/*,metal/*|40-gpt-oss-120b.yaml"
 )

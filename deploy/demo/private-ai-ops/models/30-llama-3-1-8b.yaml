@@ -1,6 +1,6 @@
 # Fast answers and summaries. One GPU slice of 24 GB (HAMi nvidia.com/gpumem), bf16 weights about
 # 16 GB, context 8K, so it shares a card with the vision and embedding models.
-# Gated on Hugging Face: accept the Llama licence with the account whose token is in hf-token.
+# Red Hat's ungated copy of Meta's Llama 3.1 8B Instruct (same weights, Llama 3.1 licence applies).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: { name: llama-3-1-8b-cache, namespace: openshift-mcp }
@@ -26,7 +26,7 @@ spec:
         image: docker.io/vllm/vllm-openai:v0.11.0
         args:
             - "--model"
-            - "meta-llama/Llama-3.1-8B-Instruct"
+            - "RedHatAI/Llama-3.1-8B-Instruct"
             - "--served-model-name"
             - "llama-3-1-8b"
             - "--port"
