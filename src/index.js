@@ -9187,7 +9187,7 @@ spec:
         const before = PS.effectiveSettings();
         const cluster = typeof body.cluster === "string" ? body.cluster : before.cluster;
         const want = { ...before, ...Object.fromEntries(["commandCenter", "banner", "routeChat"].filter((k) => typeof body[k] === "boolean").map((k) => [k, body[k]])) };
-        if (want.banner && !want.commandCenter) return sendJson(res, 409, { error: "Turn the Command Center on before the banner" });
+        if (want.banner && !want.commandCenter) return sendJson(res, 409, { error: "Turn the Private AI Factory on before the banner" });
         if (want.routeChat && !before.routeChat) {
           const pre = await CC.prerequisites({ cluster });
           if (!pre.models.chatReady) return sendJson(res, 409, { error: "No on-prem chat model is answering yet — AI Chat would stop working", prerequisites: pre });
@@ -9200,7 +9200,7 @@ spec:
         const saved = await PS.savePrivateAiSettings({ commandCenter: want.commandCenter, banner: want.commandCenter && want.banner, routeChat: want.routeChat, ...(cluster !== before.cluster ? { cluster } : {}) }, { actor });
         const changed = ["commandCenter", "banner", "routeChat", "cluster"].filter((k) => before[k] !== saved[k]);
         if (changed.length) logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
-          title: `Private AI settings: ${changed.map((k) => `${{ commandCenter: "Command Center", banner: "dashboard banner", routeChat: "AI Chat on-prem routing", cluster: "GPU cluster" }[k]} ${k === "cluster" ? saved[k] : saved[k] ? "on" : "off"}`).join(", ")}`,
+          title: `Private AI settings: ${changed.map((k) => `${{ commandCenter: "Private AI Factory", banner: "dashboard banner", routeChat: "AI Chat on-prem routing", cluster: "GPU cluster" }[k]} ${k === "cluster" ? saved[k] : saved[k] ? "on" : "off"}`).join(", ")}`,
           details: { before: Object.fromEntries(changed.map((k) => [k, before[k]])), after: Object.fromEntries(changed.map((k) => [k, saved[k]])), storage: saved.storage } }).catch(() => {});
         return sendJson(res, 200, { settings: saved });
       } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
@@ -9225,15 +9225,15 @@ spec:
           return sendJson(res, 200, await CC.commandCenterState({ cluster }));
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
-        if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Command Center is switched off (Settings → Private AI)" });
-        if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Command Center actions need the Operator or Admin role" });
+        if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
+        if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Private AI Factory actions need the Operator or Admin role" });
         if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
         const body = await readJsonBody(req).catch(() => ({}));
         const SC = await import("./services/private-ai/scenario.js");
         const VB = await import("./services/private-ai/vm-batch.js");
         const audit = (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: actor, source: "command-center" }).catch(() => {});
         switch (url.pathname) {
-          case "/api/command-center/session/start": audit("Command Center session started", {}); return sendJson(res, 200, CC.startSession());
+          case "/api/command-center/session/start": audit("Private AI Factory session started", {}); return sendJson(res, 200, CC.startSession());
           case "/api/command-center/egress": {
             const out = await CC.setEgress(body.block === true);
             audit(`Internet egress ${out.blocked ? "blocked" : "restored"} for the platform`, { policy: out.policy, namespace: out.namespace });

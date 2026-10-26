@@ -1289,7 +1289,7 @@ function ClusterAccessForm({ cluster, saved, onSaved }) {
       {result?.clusterAdmin && !offer && (
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12, marginBottom: 10 }}>
           <input type="checkbox" checked={ackAdmin} onChange={(e) => setAckAdmin(e.target.checked)} />
-          <span>I understand the Command Center will act on {cluster} with cluster-admin rights, recorded as {result.identity || "this login"}.</span>
+          <span>I understand the Private AI Factory will act on {cluster} with cluster-admin rights, recorded as {result.identity || "this login"}.</span>
         </label>
       )}
       <div style={S.gap8}>
@@ -1347,10 +1347,10 @@ function PrivateAITab() {
   const canEdit = you?.canManage && !st.lockedOff;
   const chatReady = !!pre.models?.chatReady;
   const switches = [
-    { key: "commandCenter", label: "Command Center", desc: "The Private AI Operations Center and its launchers (workspace button, Ctrl+K)",
+    { key: "commandCenter", label: "Private AI Factory", desc: "The Private AI Factory view and its launchers (workspace button, Ctrl+K)",
       needs: "Nothing. Acts whose prerequisites are missing show “not ready”.", disabled: false },
     { key: "banner", label: "Dashboard banner", desc: "The launch banner at the top of every cluster dashboard",
-      needs: st.commandCenter ? "Command Center on ✓" : "Turn the Command Center on first", disabled: !st.commandCenter },
+      needs: st.commandCenter ? "Private AI Factory on ✓" : "Turn the Private AI Factory on first", disabled: !st.commandCenter },
     { key: "routeChat", label: "Route AI Chat to the on-prem models", desc: "AI Chat defaults to Private AI: each question answered by the right model on your GPUs",
       needs: chatReady ? "A chat model is answering ✓" : "A reasoning or fast-answer model must be answering", disabled: !st.routeChat && !chatReady },
   ];
@@ -1359,7 +1359,7 @@ function PrivateAITab() {
   return (
     <div>
       <div style={{ ...S.muted, ...S.mb12 }}>
-        Turn the Private AI Operations Center on and off. Each switch unlocks when what it needs is in place. Changes apply immediately for every user and are recorded in the Audit trail.
+        Turn the Private AI Factory on and off. Each switch unlocks when what it needs is in place. Changes apply immediately for every user and are recorded in the Audit trail.
       </div>
 
       {st.lockedOff && (

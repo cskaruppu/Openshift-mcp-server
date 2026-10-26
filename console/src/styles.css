@@ -9050,6 +9050,9 @@ body.light-theme .lg-error {
 .ah-head .ah-lockup-rule { background: rgba(172,216,252,.45); }
 .ah-head .ah-lockup-qual   { color: #9fb6cd; }
 .ah-head .ah-lockup-module { color: #fff; }
+/* Private AI Factory: the product name, set as a title (full size, tight Inter caps-and-lower,
+   tabular-free, slightly opened tracking so it reads clean on the dark bar). */
+.ah-head .cc-title { font-size: 1.04em; font-weight: 700; letter-spacing: .012em; font-feature-settings: "cv11", "ss01"; }
 
 /* ============================================================================
    Agent Registry header — the same bar as the other three

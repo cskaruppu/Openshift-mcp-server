@@ -4,7 +4,7 @@ import { DockChip } from "../MinimizedDock";
 import { showToast } from "../../store/toastStore";
 import { useThemeStore } from "../../store/themeStore";
 
-// Private AI Operations Center — the stage and booth view.
+// Private AI Factory — the stage and booth view.
 //
 // Every number here is read from /api/command-center, which reads the modules
 // that do the work (the model router, the incident orchestrator, the
@@ -79,7 +79,7 @@ export function CommandCenter({ open, onClose }) {
     try {
       const r = await fetch("/api/command-center");
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Command Center unavailable");
+      if (!r.ok) throw new Error(j.error || "Private AI Factory unavailable");
       setData(j); setErr(null);
     } catch (e) { setErr(e.message); }
   }, []);
@@ -104,9 +104,9 @@ export function CommandCenter({ open, onClose }) {
   const d = data;
   const node = (
     <>
-      {minimized && <DockChip label="Command Center" onRestore={() => setMinimized(false)} />}
+      {minimized && <DockChip label="Private AI Factory" onRestore={() => setMinimized(false)} />}
       <div className="vc-overlay cc-overlay" style={{ display: minimized ? "none" : "flex" }} onClick={onClose}>
-        <div className={"vc-shell cc-shell" + (maximized ? " max" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Operations Center">
+        <div className={"vc-shell cc-shell" + (maximized ? " max" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Factory">
           <div className="ah-head vc-head" onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
             <div className="ah-lockup" style={{ flex: 1, minWidth: 0 }}>
               <span className="tcs-lock">
@@ -115,7 +115,7 @@ export function CommandCenter({ open, onClose }) {
                 <span className="tcs-lock-name">TCS Agentic AI for Hybrid Infrastructure</span>
               </span>
               <span className="ah-lockup-rule" aria-hidden="true" />
-              <span className="ah-lockup-mod"><span className="ah-lockup-qual">Command Center</span><span className="ah-lockup-module">Private AI Operations Center</span></span>
+              <span className="ah-lockup-mod"><span className="ah-lockup-module cc-title">Private AI Factory</span></span>
             </div>
             {d?.hardware && <span className="cc-hw">{d.hardware}</span>}
             {(d?.access?.expired || d?.access?.expiringSoon) && (
@@ -149,7 +149,7 @@ export function CommandCenter({ open, onClose }) {
           <div className="cc-body">
             {err && <div className="vc-alert">{err}</div>}
             {!d && !err && <div className="cc-empty">Loading…</div>}
-            {d && !d.enabled && <div className="cc-empty">The Command Center is switched off. An admin can turn it on in Settings → Private AI.</div>}
+            {d && !d.enabled && <div className="cc-empty">The Private AI Factory is switched off. An admin can turn it on in Settings → Private AI.</div>}
             {d?.enabled && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act2" && <Act2 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act3" && <Act3 d={d} />}
@@ -437,10 +437,10 @@ export function CommandCenterBanner() {
     <div className="cc-banner">
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2" /><path d="M8 21h8M12 17v4" /><path d="M6 13l3-3 2.5 2.5L16 8l2 2" /></svg>
       <div className="cc-banner-text">
-        <b>Private AI Operations Center</b>
+        <b>Private AI Factory</b>
         <span>Live: AI on {hardware || "your own GPUs"} · incidents healed · CVEs fixed · VMware exit plan. Every number opens the real screen.</span>
       </div>
-      <button className="vc-btn primary" onClick={() => window.dispatchEvent(new Event("open-command-center"))}>Open Command Center →</button>
+      <button className="vc-btn primary" onClick={() => window.dispatchEvent(new Event("open-command-center"))}>Open Private AI Factory →</button>
       <button className="cc-banner-x" aria-label="Hide this banner" title="Hide this banner" onClick={() => { setHidden(true); try { localStorage.setItem("cc-banner-hidden", "1"); } catch { /* private window */ } }}>
         <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" strokeWidth="1.3" /></svg>
       </button>

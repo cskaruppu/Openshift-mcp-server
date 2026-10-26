@@ -987,9 +987,9 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
           <div className="cp-header-actions">
             {ccEnabled && (
               <button className="cc-launch" onClick={() => window.dispatchEvent(new Event("open-command-center"))}
-                title="Private AI Operations Center — AI on your GPUs, incidents, security and modernisation, live">
+                title="Private AI Factory — AI on your own GPUs: incidents, security and modernisation, live">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2" /><path d="M8 21h8M12 17v4" /><path d="M6 13l3-3 2.5 2.5L16 8l2 2" /></svg>
-                Command Center<span className="cc-launch-dot" aria-hidden="true" />
+                Private AI Factory<span className="cc-launch-dot" aria-hidden="true" />
               </button>
             )}
             {onOpenAutomation && (
