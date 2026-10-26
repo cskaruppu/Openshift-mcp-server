@@ -8,6 +8,7 @@
 # What the hub can do with it:
 #   read the cluster (view + nodes + GPU telemetry) — Dashboard, GPU check, incident detection
 #   change workloads in tcs-demo-payments only  — inject / reset the fault, roll back
+#   stop / start the demo models in openshift-mcp — Private AI Factory model controls
 # Remove with: oc delete -f gpu-cluster-access.yaml
 apiVersion: v1
 kind: Namespace
@@ -65,4 +66,24 @@ metadata:
   name: tcs-agentic-ai-hub-demo
   namespace: tcs-demo-payments
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
+subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
+---
+# Private AI Factory: stop / start the demo models (OpenShift AI InferenceServices) from the console.
+# Only the stop annotation is changed; nothing else in openshift-mcp.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tcs-agentic-ai-hub-models
+  namespace: openshift-mcp
+rules:
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tcs-agentic-ai-hub-models
+  namespace: openshift-mcp
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: tcs-agentic-ai-hub-models }
 subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]

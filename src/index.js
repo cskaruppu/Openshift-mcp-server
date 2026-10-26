@@ -2137,6 +2137,12 @@ async function startSSE() {
       const IO = await import("./services/incident-orchestrator.js");
       const PS = await import("./services/private-ai/settings.js");
       SC.configureScenario({ runForCluster: privateAiRun, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
+      const FY = await import("./services/private-ai/factory.js");
+      FY.configureFactory({
+        runForCluster: privateAiRun, gpu: getGpuOverview,
+        prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
+        ocp: { fetch: ocpFetch, patch: ocpPatch },
+      });
       CC.configureCommandCenter({
         runForCluster: privateAiRun,
         gpu: getGpuOverview,
@@ -9247,6 +9253,16 @@ spec:
           if (!CC.commandCenterEnabled()) return sendJson(res, 200, { enabled: false });
           return sendJson(res, 200, await CC.commandCenterState({ cluster }));
         }
+        if (req.method === "GET" && (url.pathname === "/api/command-center/factory" || url.pathname === "/api/command-center/evidence")) {
+          if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
+          const FY = await import("./services/private-ai/factory.js");
+          const since = CC.sessionSince();
+          if (url.pathname === "/api/command-center/factory") return sendJson(res, 200, await FY.factoryState({ cluster, since }));
+          const [state, factory] = await Promise.all([CC.commandCenterState({ cluster }), FY.factoryState({ cluster, since })]);
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: "Private AI Factory evidence pack exported", details: { cluster }, username: actor, source: "command-center" }).catch(() => {});
+          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+          return res.end(FY.evidenceHtml({ state, factory, actor, cluster }));
+        }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
         if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
         if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Private AI Factory actions need the Operator or Admin role" });
@@ -9256,7 +9272,20 @@ spec:
         const VB = await import("./services/private-ai/vm-batch.js");
         const audit = (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: actor, source: "command-center" }).catch(() => {});
         switch (url.pathname) {
-          case "/api/command-center/session/start": audit("Private AI Factory session started", {}); return sendJson(res, 200, CC.startSession());
+          case "/api/command-center/session/start": audit("Private AI Factory session started", {}); (await import("./services/private-ai/factory.js")).resetFactory(); return sendJson(res, 200, CC.startSession());
+          case "/api/command-center/compare": {
+            const FY = await import("./services/private-ai/factory.js");
+            const out = await FY.compare(body.question);
+            audit("Side-by-side model comparison", { models: out.answers.map((a) => a.model) });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/model": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Starting or stopping a model needs the Admin role" });
+            const FY = await import("./services/private-ai/factory.js");
+            const out = await FY.setModelRunning({ cluster, name: body.name, run: body.run === true });
+            audit(`Model ${out.name} ${out.running ? "started" : "stopped"} on ${cluster}`, { model: out.name });
+            return sendJson(res, 200, out);
+          }
           case "/api/command-center/egress": {
             const out = await CC.setEgress(body.block === true);
             audit(`Internet egress ${out.blocked ? "blocked" : "restored"} for the platform`, { policy: out.policy, namespace: out.namespace });

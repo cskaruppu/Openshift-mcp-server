@@ -24,6 +24,7 @@ const KINDS = {
   Deployment: { base: "/apis/apps/v1", plural: "deployments", namespaced: true },
   ClusterRole: { base: "/apis/rbac.authorization.k8s.io/v1", plural: "clusterroles", namespaced: false },
   ClusterRoleBinding: { base: "/apis/rbac.authorization.k8s.io/v1", plural: "clusterrolebindings", namespaced: false },
+  Role: { base: "/apis/rbac.authorization.k8s.io/v1", plural: "roles", namespaced: true },
   RoleBinding: { base: "/apis/rbac.authorization.k8s.io/v1", plural: "rolebindings", namespaced: true },
 };
 

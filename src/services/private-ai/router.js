@@ -84,6 +84,37 @@ function luhn(s) {
   return sum % 10 === 0;
 }
 
+/* ─────────────────────────── guardrails ─────────────────────────── */
+
+// Prompt-injection and jailbreak attempts are refused before any model sees them.
+// Narrow on purpose: an operator asking "why did the pod ignore its limits" must pass.
+// PRIVATE_AI_GUARDRAILS=false turns the check off.
+const INJECTION = [
+  ["override instructions", /\b(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+)*(previous|prior|above|earlier|system|original)\s+(instructions?|rules|prompts?|guidelines)\b/i],
+  ["reveal system prompt", /\b(reveal|print|show|repeat|leak|output|dump)\s+(me\s+)?(your|the)\s+(system\s+prompt|hidden\s+(instructions|prompt)|initial\s+instructions)\b/i],
+  ["jailbreak persona", /\b(you\s+are\s+now|act\s+as|pretend\s+(to\s+be|you\s+are))\s+(an?\s+)?(DAN|unfiltered|unrestricted|jailbroken|developer\s+mode)\b/i],
+  ["policy bypass", /\b(bypass|disable|turn\s+off)\s+(your\s+|the\s+|all\s+)*(safety|guardrails?|content\s+filter|restrictions)\b/i],
+];
+
+/** Which injection pattern, if any, the text matches. */
+export function injection(text) {
+  if (process.env.PRIVATE_AI_GUARDRAILS === "false") return null;
+  for (const [name, re] of INJECTION) if (re.test(String(text || ""))) return name;
+  return null;
+}
+
+const MAX_EVENTS = 50;
+const _guard = { injectionsBlocked: 0, events: [] };
+function guardEvent(kind, what, question) {
+  _guard.events.push({ at: new Date().toISOString(), kind, what, question: preview(question) });
+  if (_guard.events.length > MAX_EVENTS) _guard.events.shift();
+}
+/** Counters and the latest events for the guardrails panel (questions masked). */
+export function guardrails() {
+  return { on: process.env.PRIVATE_AI_GUARDRAILS !== "false", injectionsBlocked: _guard.injectionsBlocked,
+    sensitiveKeptOnPrem: _counts.sensitiveKeptOnPrem, masked: _counts.masked, events: _guard.events.slice(-10).reverse() };
+}
+
 /* ─────────────────────────── decision ─────────────────────────── */
 
 const textOf = (m) => (typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((p) => p?.text || "").join(" ") : "");
@@ -143,7 +174,7 @@ export async function checkHealth(m, { force = false } = {}) {
 
 const MAX_LOG = 300;
 const _log = [];
-const _counts = { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0 };
+const _counts = { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0, masked: 0 };
 let _since = new Date().toISOString();
 
 function preview(q) {
@@ -159,7 +190,10 @@ export function trafficLog(limit = 50, { conversationId = null } = {}) {
   return src.slice(-limit).reverse().map(({ conversationId: _c, ...d }) => d);
 }
 export function trafficCounts() { return { ..._counts, byRole: { ..._counts.byRole }, since: _since }; }
-export function resetTraffic() { _log.length = 0; Object.assign(_counts, { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0 }); _since = new Date().toISOString(); }
+export function resetTraffic() {
+  _log.length = 0; Object.assign(_counts, { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0, masked: 0 });
+  _guard.injectionsBlocked = 0; _guard.events.length = 0; _since = new Date().toISOString();
+}
 
 /* ─────────────────────────── routing ─────────────────────────── */
 
@@ -172,7 +206,16 @@ export async function route(o, messages, { useCase = null, conversationId = null
   const list = models();
   const available = list.map((m) => m.role);
   if (!list.length) throw Object.assign(new Error("Private AI is selected but no model endpoints are configured (PRIVATE_AI_LARGE_URL …)"), { llmConfigError: true });
+  const lastQ = textOf([...messages].reverse().find((m) => m.role === "user"));
+  const inj = injection(lastQ);
+  if (inj) {
+    _guard.injectionsBlocked++; guardEvent("blocked", inj, lastQ);
+    record({ id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview(lastQ), role: null, wanted: null, model: null, gpu: null,
+      reason: `guardrail: ${inj}`, sensitive: [], onPrem: true, blocked: true, useCase, conversationId, ms: 0, ok: false, tokens: null });
+    throw Object.assign(new Error(`Blocked by the Private AI guardrails (${inj}). Rephrase the request without asking the assistant to override its instructions.`), { status: 400, guardrail: inj });
+  }
   const d = decide({ messages, system: o.system, images: o.images, tools: o.tools, available });
+  if (d.sensitive.length) guardEvent("on-prem", d.sensitive.join(", "), lastQ);
 
   // Prefer the chosen role; if it is down, the nearest healthy on-prem model.
   const order = [d.role, ...(d.role === "small" ? ["large"] : d.role === "vision" ? [] : ["small"]), ...available].filter((r, i, a) => a.indexOf(r) === i);
@@ -215,9 +258,12 @@ function record(decision) {
   if (_log.length > MAX_LOG) _log.shift();
   _counts.total++;
   _counts.byRole[decision.role || "none"] = (_counts.byRole[decision.role || "none"] || 0) + 1;
-  if (decision.sensitive.length && decision.onPrem) _counts.sensitiveKeptOnPrem++;
+  if (decision.sensitive.length && decision.onPrem) { _counts.sensitiveKeptOnPrem++; _counts.masked += decision.sensitive.length; }
   if (!decision.onPrem) _counts.cloudCalls++;
 }
+
+/** Log a call made outside llm.js (e.g. the side-by-side comparison) like any routed answer. */
+export function logDirect(decision) { record(decision); return decision; }
 
 /** Called by llm.js when the call finishes. */
 export function complete(decision, { ms, ok, usage }) {

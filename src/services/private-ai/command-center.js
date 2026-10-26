@@ -26,6 +26,8 @@ export function configureCommandCenter(deps) { _deps = { ..._deps, ...deps }; }
 
 export function commandCenterEnabled() { return effectiveSettings().commandCenter; }
 
+export function sessionSince() { return _session.since; }
+
 export function startSession() {
   router.resetTraffic();
   _session = { since: new Date().toISOString(), egressBlockedAt: _session.egressBlockedAt };
