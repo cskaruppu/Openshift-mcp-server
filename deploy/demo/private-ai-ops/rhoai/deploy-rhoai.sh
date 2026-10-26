@@ -60,6 +60,16 @@ o apply -f "$HERE/10-tei-runtime.yaml" >/dev/null && echo "  ✓ tei-runtime"
 
 restarts() { o -n redhat-ods-applications get pods -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}' | awk '{s+=$1} END {print s+0}'; }
 
+# The cluster-wide proxy (if any) is not passed to pods automatically; the download needs it
+# to reach huggingface.co. The models themselves never need it.
+HP=$(o get proxy cluster -o jsonpath='{.status.httpsProxy}' 2>/dev/null || true)
+HPP=$(o get proxy cluster -o jsonpath='{.status.httpProxy}' 2>/dev/null || true)
+NP=$(o get proxy cluster -o jsonpath='{.status.noProxy}' 2>/dev/null || true)
+PROXY_ENV=""
+[[ -n "$HP$HPP" ]] && PROXY_ENV="            - { name: HTTPS_PROXY, value: \"${HP:-$HPP}\" }
+            - { name: HTTP_PROXY, value: \"${HPP:-$HP}\" }
+            - { name: NO_PROXY, value: \"$NP\" }" && echo "  ✓ downloads go through the cluster proxy ${HP:-$HPP}"
+
 download() { # name repo size skip
   local n="$1" repo="$2" size="$3" skip="$4"
   o -n "$NS" get pvc "$n-cache" >/dev/null 2>&1 || cat <<YAML | o apply -f - >/dev/null
@@ -99,6 +109,7 @@ spec:
             - { name: SKIP, value: "$skip" }
             - { name: HOME, value: /tmp }
             - { name: HF_HOME, value: /tmp/hf }
+$PROXY_ENV
             - name: HF_TOKEN
               valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
           resources: { requests: { cpu: "1", memory: 2Gi }, limits: { cpu: "4", memory: 8Gi } }
@@ -109,10 +120,15 @@ YAML
   local st=""
   for _ in $(seq 1 540); do   # up to 3 h
     st=$(o -n "$NS" get job "download-$n" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{" "}{end}' 2>/dev/null || true)
-    [[ "$st" == *Complete* || "$st" == *Failed* ]] && break
+    [[ "$st" == *Complete* || "$st" == *Fail* ]] && break
     sleep 20
   done
-  [[ "$st" == *Complete* ]] || { echo "✗ Download of $repo did not finish: oc -n $NS logs job/download-$n" >&2; exit 1; }
+  if [[ "$st" != *Complete* ]]; then
+    echo "✗ Download of $repo did not finish (job: ${st:-no status}). Last log lines:" >&2
+    o -n "$NS" get pods -l job-name="download-$n" -o wide >&2 || true
+    o -n "$NS" logs "job/download-$n" --tail=25 >&2 2>&1 || o -n "$NS" describe job "download-$n" | tail -15 >&2 || true
+    exit 1
+  fi
   echo "  ✓ weights in $n-cache"
 }
 
