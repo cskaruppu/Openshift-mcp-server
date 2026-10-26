@@ -28,6 +28,7 @@ oc apply -f models-plain-openshift-mcp.yaml     # plain Deployments: needs only 
 oc -n openshift-mcp get pods -l tcs.com/demo=private-ai-ops -w   # wait for 1/1 Running on all four
 # Or through OpenShift AI (KServe healthy): its own vLLM runtime, models in its dashboard:
 #   rhoai/deploy-rhoai.sh --dashboard        (one model at a time: --only llama-3-1-8b)
+#   rhoai/models.sh status|stop|start        free the GPUs when not demoing (weights kept)
 
 # Connect the platform to the models. Run with the PLATFORM (hub) cluster as the
 # current context; --models-context names the GPU cluster when it is a different one
