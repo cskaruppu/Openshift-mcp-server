@@ -42,6 +42,7 @@ spec:
             valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
           - { name: HF_HOME, value: /models-cache }
           - { name: HOME, value: /tmp }
+          - { name: CUDA_DEVICE_MEMORY_SHARED_CACHE, value: /tmp/hami-vgpu.cache }   # HAMi on OpenShift: writable place for its GPU accounting file
           # After the first start has cached the weights, set "1" to run with no internet at all.
           - { name: HF_HUB_OFFLINE, value: "0" }
         ports: [{ containerPort: 8080, protocol: TCP }]

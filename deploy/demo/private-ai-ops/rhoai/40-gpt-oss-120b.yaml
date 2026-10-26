@@ -22,6 +22,11 @@ spec:
       # Weights downloaded once into this claim by deploy-rhoai.sh (download-gpt-oss-120b Job).
       storageUri: pvc://gpt-oss-120b-cache/model
       args: ["--gpu-memory-utilization=0.92", "--max-model-len=32768", "--tool-call-parser=openai", "--enable-auto-tool-choice"]
+      # HAMi keeps its per-container GPU-memory accounting file under /usr/local/vgpu, which OpenShift's
+      # non-root, SELinux-confined pods cannot write (HAMI-core "Fail to open shrreg … errno=13").
+      # Point it at the container's own /tmp instead; the memory limit is still enforced.
+      env:
+        - { name: CUDA_DEVICE_MEMORY_SHARED_CACHE, value: /tmp/hami-vgpu.cache }
       # HAMi GPU memory slice in MiB, enforced inside the container (the engine sees a card this size).
       resources:
         requests: { cpu: "4", memory: 24Gi, nvidia.com/gpu: "1", nvidia.com/gpumem: "76000" }

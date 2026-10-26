@@ -29,6 +29,7 @@ spec:
           - name: HF_TOKEN
             valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
           - { name: HOME, value: /tmp }
+          - { name: CUDA_DEVICE_MEMORY_SHARED_CACHE, value: /tmp/hami-vgpu.cache }   # HAMi on OpenShift: writable place for its GPU accounting file
         ports: [{ containerPort: 8080, protocol: TCP }]
         readinessProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10 }
         startupProbe: { httpGet: { path: /health, port: 8080 }, periodSeconds: 10, failureThreshold: 60 }

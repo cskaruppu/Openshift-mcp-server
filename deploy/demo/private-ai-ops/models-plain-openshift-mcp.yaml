@@ -92,6 +92,8 @@ spec:
           value: /tmp
         - name: HF_HUB_OFFLINE
           value: '0'
+        - name: CUDA_DEVICE_MEMORY_SHARED_CACHE
+          value: /tmp/hami-vgpu.cache
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -237,6 +239,8 @@ spec:
           value: /tmp
         - name: HF_HUB_OFFLINE
           value: '0'
+        - name: CUDA_DEVICE_MEMORY_SHARED_CACHE
+          value: /tmp/hami-vgpu.cache
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -370,6 +374,8 @@ spec:
           value: /tmp
         - name: HF_HUB_OFFLINE
           value: '0'
+        - name: CUDA_DEVICE_MEMORY_SHARED_CACHE
+          value: /tmp/hami-vgpu.cache
         ports:
         - containerPort: 8080
           protocol: TCP
@@ -489,6 +495,8 @@ spec:
               optional: true
         - name: HOME
           value: /tmp
+        - name: CUDA_DEVICE_MEMORY_SHARED_CACHE
+          value: /tmp/hami-vgpu.cache
         ports:
         - containerPort: 8080
           protocol: TCP
