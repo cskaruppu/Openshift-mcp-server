@@ -2539,6 +2539,10 @@ async function startSSE() {
         p.startsWith("/api/agent") ||
         p.startsWith("/api/spoke") ||
         p.startsWith("/api/hub") ||
+        // Hub records: cluster display names, Private AI settings and the Factory.
+        p === "/api/cluster-labels" ||
+        p.startsWith("/api/private-ai") ||
+        p.startsWith("/api/command-center") ||
         p.startsWith("/api/auth");
 
       // Spoke proxy: forward live-data API requests to the spoke's MCP server.

@@ -140,8 +140,22 @@ async function floorNow() {
     return { node: c.node, index: c.index, uuid: c.uuid, model: c.model, utilPct: c.utilPct, memUsedMiB: c.memUsedMiB, memTotalMiB: total,
       tempC: c.tempC, powerW: c.powerW, powerLimitW: c.powerLimitW, status: c.status, slices: owners, freeMiB: total != null ? Math.max(0, total - reserved) : null };
   });
+  // No DCGM telemetry: still draw the cards the API server knows about, with
+  // the GPU pods on each node, so the floor is never empty when GPUs exist.
+  if (!cards.length) {
+    for (const n of g.nodes || g.inventory?.nodes || []) {
+      const count = Number(n.gpuCount ?? n.capacity) || 0;
+      const onNode = unplaced.filter((u) => u.node === n.name);
+      for (let i = 0; i < count; i++) {
+        cards.push({ node: n.name, index: i, uuid: null, model: n.model || n.product || "GPU", utilPct: null, memUsedMiB: null,
+          memTotalMiB: n.memoryMiBPerGpu || null, tempC: null, powerW: null, powerLimitW: null, status: null,
+          slices: i === 0 ? onNode : [], freeMiB: null });
+      }
+      unplaced.splice(0, unplaced.length, ...unplaced.filter((u) => u.node !== n.name));
+    }
+  }
   const nodes = [...new Set(cards.map((c) => c.node))].map((n) => ({ name: n, cards: cards.filter((c) => c.node === n).sort((a, b) => Number(a.index) - Number(b.index)) }));
-  return { available: g.available !== false && cards.length > 0, telemetry: g.telemetry || (cards.length ? "ok" : "unavailable"),
+  return { available: g.available !== false && cards.length > 0 && g.telemetry !== "unavailable", telemetry: g.telemetry || (cards.length ? "ok" : "unavailable"),
     reason: g.reason || g.telemetryReason || null, nodes, unplaced, inventory: g.summary || null };
 }
 

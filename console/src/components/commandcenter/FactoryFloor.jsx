@@ -87,7 +87,7 @@ export default function FactoryFloor({ busy, act$, hardware }) {
         <section className="cc-card">
           <header><h3>GPU factory floor</h3><span>which model owns which slice of which card</span>
             <span className="ff-live">{f.floor.available ? "● LIVE · DCGM · HAMi" : "telemetry not available"}</span></header>
-          {!f.floor.available && <p className="cc-note">{f.floor.reason || "No GPU telemetry from the GPU cluster."}</p>}
+          {!f.floor.available && <p className="cc-note">{f.floor.nodes?.length ? "Live GPU figures unavailable — showing the cards from the cluster inventory. " : ""}{f.floor.reason || "No GPU telemetry from the GPU cluster."}</p>}
           <div className="ff-floor">
             <div className="ff-router">
               <b>AI router</b>

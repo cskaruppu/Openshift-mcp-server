@@ -22,6 +22,7 @@
 import { readFile } from "node:fs/promises";
 import { Agent, fetch as undiciFetch } from "undici";
 import { activeClusterContext, ocpGet } from "../utils/openshift-client.js";
+import { withLanDns } from "../utils/lan-dns.js";
 
 const DEFAULT_URL =
   process.env.PROMETHEUS_URL ||
@@ -59,6 +60,29 @@ async function candidateTargets() {
   const token = remote?.token || (await getLocalToken());
   const out = [];
 
+  // A remote cluster: only its own Route. The in-cluster names and ClusterIP
+  // below belong to the cluster THIS server runs on (the hub); asking them with
+  // the remote cluster's token is answered 401 by the wrong Prometheus.
+  if (remote?.apiUrl) {
+    let host = null, ca = null;
+    try {
+      const r = await ocpGet("/apis/route.openshift.io/v1/namespaces/openshift-monitoring/routes/thanos-querier");
+      host = r?.spec?.host || null;
+    } catch { /* fall through to the derived form */ }
+    if (!host) {
+      const m = /^https?:\/\/api\.([^:/]+)/i.exec(remote.apiUrl);
+      if (m) host = `thanos-querier-openshift-monitoring.apps.${m[1]}`;
+    }
+    // The Route is served by that cluster's ingress: trust its ingress CA
+    // (readable with the view role), so an internal domain verifies.
+    try {
+      const cm = await ocpGet("/api/v1/namespaces/openshift-config-managed/configmaps/default-ingress-cert");
+      ca = cm?.data?.["ca-bundle.crt"] || null;
+    } catch { /* PROMETHEUS_CA_FILE / PROMETHEUS_INSECURE still apply */ }
+    if (host) out.push({ url: `https://${host}`, token, why: "cluster route", ca });
+    return out;
+  }
+
   // 1. Fully-qualified in-cluster name. Absolute, so the resolver does not walk
   //    the search list — which is where the short form times out.
   out.push({ url: `https://${SVC_NAME}.cluster.local:9091`, token, why: "in-cluster service (FQDN)" });
@@ -77,19 +101,6 @@ async function candidateTargets() {
     }
   } catch { /* API unreachable — the caller reports that separately */ }
 
-  // 4. The cluster's external Route, for a genuinely remote cluster.
-  if (remote?.apiUrl) {
-    let host = null;
-    try {
-      const r = await ocpGet("/apis/route.openshift.io/v1/namespaces/openshift-monitoring/routes/thanos-querier");
-      host = r?.spec?.host || null;
-    } catch { /* fall through to the derived form */ }
-    if (!host) {
-      const m = /^https?:\/\/api\.([^:/]+)/i.exec(remote.apiUrl);
-      if (m) host = `thanos-querier-openshift-monitoring.apps.${m[1]}`;
-    }
-    if (host) out.push({ url: `https://${host}`, token, why: "cluster route" });
-  }
   return out;
 }
 
@@ -143,23 +154,23 @@ async function getCa() {
 // but must still present — and verify against — the service name, otherwise the
 // certificate legitimately fails hostname verification.
 const _agents = new Map();
-async function getAgent(servername = null) {
-  const key = servername || "__default__";
+async function getAgent(servername = null, extraCa = null) {
+  const key = `${servername || "__default__"}|${extraCa ? extraCa.length + ":" + extraCa.slice(-64) : ""}`;
   if (_agents.has(key)) return _agents.get(key);
-  const ca = await getCa();
+  const ca = extraCa ? [...(await getCa()), extraCa] : await getCa();
   const insecure = process.env.PROMETHEUS_INSECURE === "true";
   // Probing several candidates means a slow one must fail fast, not hang the
   // whole widget behind a 15-second DNS timeout.
   const timeout = parseInt(process.env.PROMETHEUS_CONNECT_TIMEOUT_MS || "5000", 10);
   const agent = new Agent({
-    connect: {
+    connect: withLanDns({
       timeout,
       ...(servername ? { servername } : {}),
       ...(insecure ? { rejectUnauthorized: false } : {}),
       ...(ca.length && !insecure ? { ca } : {}),
-    },
+    }),
   });
-  if (insecure && key === "__default__") {
+  if (insecure && key === "__default__|") {
     console.error("[prometheus] PROMETHEUS_INSECURE=true — TLS verification disabled for metrics queries");
   }
   _agents.set(key, agent);
@@ -224,7 +235,7 @@ export async function promQuery(query, { url = null } = {}) {
     try {
       resp = await undiciFetch(ep, {
         headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
-        dispatcher: await getAgent(cand.servername),
+        dispatcher: await getAgent(cand.servername, cand.ca),
       });
       base = cand.url; tk = cand.token;
       rememberWorking(cand);
@@ -285,7 +296,7 @@ export async function promRange(query, startTs, endTs, step = "60s") {
     try {
       resp = await undiciFetch(endpoint, {
         headers: cand.token ? { Authorization: `Bearer ${cand.token}` } : {},
-        dispatcher: await getAgent(cand.servername),
+        dispatcher: await getAgent(cand.servername, cand.ca),
       });
       rememberWorking(cand);
       break;
