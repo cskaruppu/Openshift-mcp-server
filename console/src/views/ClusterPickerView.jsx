@@ -936,6 +936,25 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
     queryClient.invalidateQueries({ queryKey: ["/api/agent/status"] });
   }, [queryClient]);
 
+  // Display names for the cards ("Dell AI Factory - Private AI"); the cluster ID stays the key.
+  const { data: labelData } = useQuery({
+    queryKey: ["/api/cluster-labels"],
+    queryFn: ({ signal }) => apiGet("/api/cluster-labels", { signal }),
+    staleTime: 60_000,
+  });
+  const labels = labelData?.labels || {};
+  const renameCluster = useCallback(async (id, shown) => {
+    const v = window.prompt(`Display name for ${shown || id} (cluster ID ${id} does not change).\nLeave empty to show the default name.`, labels[id] || "");
+    if (v === null) return;
+    try {
+      const r = await fetch("/api/cluster-labels", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cluster: id, label: v }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast(j.error || "Could not rename the cluster", "err"); return; }
+      showToast(j.label ? `Shown as "${j.label}"` : "Display name cleared", "ok");
+      queryClient.invalidateQueries({ queryKey: ["/api/cluster-labels"] });
+    } catch (e) { showToast("Error: " + e.message, "err"); }
+  }, [labels, queryClient]);
+
   const { data: agentData } = useQuery({
     queryKey: ["/api/agent/status"],
     queryFn: ({ signal }) => apiGet("/api/agent/status", { signal }),
@@ -1057,7 +1076,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
             <div className="cp-card-header">
               <HealthRing score={hubHealthData.score} icon={hubPInfo.icon} color={hubPInfo.color} />
               <div className="cp-card-info">
-                <div className="cp-card-name">Hub Cluster <span className="cp-card-primary-badge">PRIMARY</span></div>
+                <div className="cp-card-name" title={labels["hub-cluster"] ? `${labels["hub-cluster"]} (Hub Cluster)` : "Hub Cluster"}>{labels["hub-cluster"] || "Hub Cluster"} <span className="cp-card-primary-badge">PRIMARY</span></div>
                 <div className="cp-card-platform">{hubPInfo.name}<ConnBadge type="direct" /></div>
               </div>
               <KebabMenu items={[
@@ -1085,6 +1104,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                   const r = await clusterAction("/api/cluster/rbac-sync", "POST");
                   setActionResult(prev => ({ ...prev, loading: false, data: r.ok ? r.data : null, error: r.ok ? null : (r.data?.error || r.error || "Failed") }));
                 }},
+                { icon: "🏷", label: "Rename (display name)", action: () => renameCluster("hub-cluster", "Hub Cluster") },
                 { sep: true },
                 { icon: "🗑", label: "Remove Cluster", danger: true, action: () => setConfirmDelete("hub-cluster") },
               ]} />
@@ -1132,7 +1152,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                 <div className="cp-card-header">
                   <HealthRing score={remoteHealthData.score} icon={pInfo.icon} color={pInfo.color} />
                   <div className="cp-card-info">
-                    <div className="cp-card-name">{clusterName}</div>
+                    <div className="cp-card-name" title={labels[clusterName] ? `${labels[clusterName]} (${clusterName})` : clusterName}>{labels[clusterName] || clusterName}</div>
                     <div className="cp-card-platform">{pInfo.name}<ConnBadge type={summary.connectionType || "spoke"} /></div>
                   </div>
                   <KebabMenu items={[
@@ -1154,6 +1174,7 @@ export function ClusterPickerView({ onSelectCluster, onLogout, onOpenSettings, o
                       if (r.ok) refetchAgents();
                     }},
                     { icon: "✏️", label: "Edit Cluster", action: () => { setEditCluster({ name: clusterName, platform: agent.platform, apiUrl: agent.apiUrl || "" }); setConnectOpen(true); } },
+                    { icon: "🏷", label: "Rename (display name)", action: () => renameCluster(clusterName) },
                     { icon: "↻", label: "Reconnect", action: async () => {
                       setActionResult({ title: "Reconnect", cluster: clusterName, loading: true });
                       const r = await clusterAction(`/api/agent/${encodeURIComponent(clusterName)}/reconnect`, "POST");

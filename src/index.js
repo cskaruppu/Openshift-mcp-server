@@ -2236,6 +2236,10 @@ async function startSSE() {
     await restoreClusterAccess();
   } catch (e) { console.warn("[startup] private AI settings restore:", e.message); }
 
+  // Display names shown on the cluster cards (IDs unchanged).
+  try { await (await import("./services/cluster-labels.js")).restoreClusterLabels(); }
+  catch (e) { console.warn("[startup] cluster labels restore:", e.message); }
+
   // Hydrate LLM runtime defaults from the settings store so background LLM
   // calls (upgrade analysis, proactive insights) use the same provider config
   // as chat — not stale env defaults (azure + localhost = ECONNREFUSED).
@@ -9166,6 +9170,25 @@ spec:
           title: `Private AI: direct access to ${cluster} saved (${info.kind}${info.identity ? " " + info.identity : ""}${info.clusterAdmin ? ", cluster-admin" : ""})`,
           details: { apiUrl: out.apiUrl, customCa: out.customCa, from: kube ? "kubeconfig" : "token", expiresAt: info.expiresAt, permanent: info.permanent, storage: out.storage } }).catch(() => {});
         return sendJson(res, 200, { ok: true, message: `Connected to ${cluster} (OpenShift ${info.version}) and saved`, ...facts, ...out });
+      } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
+    }
+
+    // ── Cluster display names (cluster cards). The ID stays the key everywhere else. ──
+    if (url.pathname === "/api/cluster-labels") {
+      const CL = await import("./services/cluster-labels.js");
+      if (req.method === "GET") return sendJson(res, 200, { labels: CL.clusterLabels() });
+      if (req.method !== "PUT") return sendJson(res, 405, { error: "Method not allowed" });
+      if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Renaming a cluster needs the Admin role" });
+      if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      try {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const before = CL.clusterLabels()[body.cluster] || null;
+        const out = await CL.setClusterLabel(body.cluster, body.label ?? "");
+        if (before !== out.label) logAuditTrailEvent({ type: "config_change", severity: "info", source: "cluster-labels", username: actor,
+          title: out.label ? `Cluster ${out.cluster} shown as "${out.label}"` : `Cluster ${out.cluster} display name cleared`,
+          details: { before, after: out.label, storage: out.storage } }).catch(() => {});
+        return sendJson(res, 200, { ok: true, ...out, labels: CL.clusterLabels() });
       } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }
     }
 
