@@ -101,6 +101,7 @@ spec:
           args:
             - |
               import os, sys, socket, pathlib
+              os.environ["HF_HUB_OFFLINE"] = "0"
               d = pathlib.Path("/cache/model"); done = d / ".tcs-complete"
               if done.exists(): print("already downloaded"); sys.exit(0)
               try:
@@ -126,6 +127,9 @@ spec:
             - { name: SKIP, value: "$skip" }
             - { name: HOME, value: /tmp }
             - { name: HF_HOME, value: /tmp/hf }
+            # Red Hat's vLLM image sets HF_HUB_OFFLINE=1 (serving never downloads); the download must not be offline.
+            - { name: HF_HUB_OFFLINE, value: "0" }
+            - { name: TRANSFORMERS_OFFLINE, value: "0" }
 $PROXY_ENV
             - name: HF_TOKEN
               valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }
@@ -175,7 +179,7 @@ YAML
   local tok="${HF_TOKEN:-$(o -n "$NS" get secret hf-token -o jsonpath='{.data.HF_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || true)}"
   echo "  … downloading $repo to $dir (on this machine)"
   mkdir -p "$dir"
-  REPO="$repo" SKIP="$skip" DIR="$dir" HF_TOKEN="$tok" python3 - <<'PY' || { echo "✗ Download of $repo failed on this machine" >&2; exit 1; }
+  HF_HUB_OFFLINE=0 REPO="$repo" SKIP="$skip" DIR="$dir" HF_TOKEN="$tok" python3 - <<'PY' || { echo "✗ Download of $repo failed on this machine" >&2; exit 1; }
 import os
 from huggingface_hub import snapshot_download
 skip = [p for p in os.environ["SKIP"].split(",") if p]
