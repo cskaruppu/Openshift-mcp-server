@@ -45,9 +45,13 @@ o get ns "$NS" >/dev/null
 o -n redhat-ods-applications get deploy kserve-controller-manager >/dev/null || { echo "✗ OpenShift AI KServe controller not found" >&2; exit 1; }
 o -n redhat-ods-applications rollout status deploy/kserve-controller-manager --timeout=60s >/dev/null || { echo "✗ kserve-controller-manager is not ready" >&2; exit 1; }
 o -n "$NS" get secret hf-token >/dev/null 2>&1 || echo "  ! Secret hf-token not found: Llama (gated) will fail to download"
-if o -n "$NS" get deploy -l tcs.com/demo=private-ai-ops -o name 2>/dev/null | grep -q .; then
-  echo "✗ The plain-Deployment models are present. Remove them first (weights in the claims are kept):" >&2
-  echo "    oc -n $NS delete deploy,svc -l tcs.com/demo=private-ai-ops" >&2; exit 1
+# Leftovers of models-plain-openshift-mcp.yaml carry tcs.com/model and no KServe owner label.
+# (OpenShift AI copies tcs.com/demo onto the Deployments it creates, so that label alone is not enough.)
+PLAIN=$(o -n "$NS" get deploy -l 'tcs.com/model,!serving.kserve.io/inferenceservice' -o name 2>/dev/null || true)
+if [[ -n "$PLAIN" ]]; then
+  echo "✗ Plain-Deployment models are present (not managed by OpenShift AI). Remove them first; weights in the claims are kept:" >&2
+  for d in $PLAIN; do echo "    oc -n $NS delete $d svc/${d#deployment.apps/}" >&2; done
+  exit 1
 fi
 $DASH && o label ns "$NS" opendatahub.io/dashboard=true modelmesh-enabled=false --overwrite >/dev/null && echo "  ✓ $NS shown in the OpenShift AI dashboard"
 
