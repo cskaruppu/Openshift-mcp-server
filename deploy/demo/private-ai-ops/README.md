@@ -102,3 +102,26 @@ oc --context <gpu-cluster-context> delete -f gpu-cluster-access.yaml   # removes
 - Two GPU nodes (`oc get nodes -L nvidia.com/gpu.count`): gpt-oss-120b needs one to itself. On one GPU node, use gpt-oss-20b instead (edit `20-gpt-oss-120b.yaml`: model `openai/gpt-oss-20b`, `--gpu-memory-utilization 0.30`, drop the `affinity` block).
 - Nothing else heavy on the GPU node gpt-oss-120b lands on: with time-slicing, other pods' GPU memory counts against its 80 GB.
 - The platform's service account can patch Deployments in `tcs-demo-payments` (inject, reset, rollback) and manage NetworkPolicies in its own namespace.
+
+## Factory floor (Private AI Factory, first tab)
+
+Live view of the GPUs and models, read from what the GPU cluster already reports:
+
+| Panel | Source |
+|---|---|
+| Headline figures: answers on-prem, saved vs cloud, first-token time, tokens/s, guardrail stops, GPU energy | Router log, each model's `/metrics`, DCGM `DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION` |
+| GPU factory floor: each H100, which model owns which slice, utilisation, temperature, power | DCGM + HAMi's `hami.io/vgpu-devices-allocated` pod annotation |
+| Model performance, Stop / Start | vLLM / TEI `/metrics`; OpenShift AI `serving.kserve.io/stop` |
+| Guardrails | Router: prompt-injection attempts refused before any model; sensitive requests kept on-prem |
+| Side by side | The same question to the fast and the reasoning model |
+| Evidence pack | Printable session report (Save as PDF) |
+
+Settings (hub, `agentic-ai-control-plane` env): `PRIVATE_AI_CLOUD_PRICE_PER_MTOK` (default 5),
+`PRIVATE_AI_GRID_KG_PER_KWH` (default 0.4), `PRIVATE_AI_GUARDRAILS=false` to switch the injection check off.
+
+Stop / Start from the console needs the hub's access to patch InferenceServices in `openshift-mcp`
+on the GPU cluster. Re-apply the access manifest once (adds only that Role):
+
+```bash
+oc --kubeconfig "$GPU_KC" apply -f deploy/demo/private-ai-ops/gpu-cluster-access.yaml
+```

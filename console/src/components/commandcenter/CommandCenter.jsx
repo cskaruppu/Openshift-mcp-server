@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { DockChip } from "../MinimizedDock";
 import { showToast } from "../../store/toastStore";
 import { useThemeStore } from "../../store/themeStore";
+import FactoryFloor from "./FactoryFloor";
 
 // Private AI Factory — the stage and booth view.
 //
@@ -14,7 +15,7 @@ import { useThemeStore } from "../../store/themeStore";
 // Opened by any of: the workspace header button, the dashboard banner, Ctrl+K,
 // or `window.dispatchEvent(new Event("open-command-center"))`.
 
-const ACTS = [["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
+const ACTS = [["floor", "Factory floor"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
 
 const fmtClock = (sec) => (sec == null ? "--:--" : `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`);
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
@@ -62,7 +63,9 @@ const CC_THEMES = { auto: "Theme: auto", dark: "Theme: dark", light: "Theme: lig
 const CC_NEXT = { auto: "dark", dark: "light", light: "auto" };
 
 export function CommandCenter({ open, onClose }) {
-  const [act, setAct] = useState("act1");
+  const [act, setAct] = useState("floor");
+  const [stage, setStage] = useState(() => { try { return localStorage.getItem("cc-stage") === "1"; } catch { return false; } });
+  const toggleStage = () => setStage((v) => { try { localStorage.setItem("cc-stage", v ? "0" : "1"); } catch { /* private window */ } return !v; });
   const consoleTheme = useThemeStore((s) => s.theme);
   const [ccTheme, setCcTheme] = useState(() => { try { return localStorage.getItem("cc-theme") || "auto"; } catch { return "auto"; } });
   const look = ccTheme === "auto" ? (consoleTheme === "light" ? "light" : "dark") : ccTheme;
@@ -106,7 +109,7 @@ export function CommandCenter({ open, onClose }) {
     <>
       {minimized && <DockChip label="Private AI Factory" onRestore={() => setMinimized(false)} />}
       <div className="vc-overlay cc-overlay" style={{ display: minimized ? "none" : "flex" }} onClick={onClose}>
-        <div className={"vc-shell cc-shell" + (maximized ? " max" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Factory">
+        <div className={"vc-shell cc-shell" + (maximized ? " max" : "") + (stage ? " cc-stage" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Factory">
           <div className="ah-head vc-head" onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
             <div className="ah-lockup" style={{ flex: 1, minWidth: 0 }}>
               <span className="tcs-lock">
@@ -142,14 +145,17 @@ export function CommandCenter({ open, onClose }) {
             {ACTS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
             <div style={{ flex: 1 }} />
             {d?.enabled && <span className="cc-since">Session since {fmtTime(d.session.since)}</span>}
+            <button className={"vc-btn ghost sm" + (stage ? " on" : "")} onClick={toggleStage} title="Larger type and figures for a projector">{stage ? "Stage mode: on" : "Stage mode"}</button>
+            {d?.enabled && <button className="vc-btn ghost sm" onClick={() => window.open("/api/command-center/evidence", "_blank", "noopener")} title="Printable report of this session: models, GPUs, guardrails, AI traffic">Evidence pack</button>}
             <button className="vc-btn ghost sm" onClick={cycleTheme} title={ccTheme === "auto" ? `Following the console (${look}); click to force dark, then light` : `Forced ${ccTheme}; click to change`}>{CC_THEMES[ccTheme] || CC_THEMES.auto}</button>
-            <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>Start new session</button>
+            <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>New session</button>
           </nav>
 
           <div className="cc-body">
             {err && <div className="vc-alert">{err}</div>}
             {!d && !err && <div className="cc-empty">Loading…</div>}
             {d && !d.enabled && <div className="cc-empty">The Private AI Factory is switched off. An admin can turn it on in Settings → Private AI.</div>}
+            {d?.enabled && act === "floor" && <FactoryFloor busy={busy} act$={act$} hardware={d.hardware} />}
             {d?.enabled && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act2" && <Act2 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act3" && <Act3 d={d} />}

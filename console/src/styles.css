@@ -9923,3 +9923,75 @@ code.new { color: #22a06b; }
 @container (max-width: 270px) {
   .cp-hw-c.cpu em { display: none; }
 }
+
+/* ============================================================================
+   Private AI Factory — Factory floor tab (FactoryFloor.jsx). Every colour comes
+   from the --cc-* variables, so it follows the view's light / dark switch.
+   Model colours are fixed per role (reasoning, fast, vision, memory) so a model
+   keeps its colour on the floor, in the tables and in the legend.
+   ========================================================================== */
+.cc-stage .cc-body { zoom: 1.16; }
+.cc-shell .vc-btn.on { border-color: var(--cc-blue); color: var(--cc-blue-t); }
+.ff-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.ff-kpi { padding: 13px 15px; border-radius: 12px; background: var(--cc-card); border: 1px solid var(--cc-line); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ff-kpi.ok { border-left: 4px solid var(--cc-ok); }
+.ff-kpi > b { font: 800 1.7rem var(--tcs-font); letter-spacing: -0.01em; color: var(--cc-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ff-kpi-s { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; font-size: 0.74rem; color: var(--cc-ink2); }
+.ff-kpi-s > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-spark { width: 78px; height: 24px; flex: 0 0 auto; }
+.ff-row { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; }
+.ff-row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1300px) { .ff-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ff-row, .ff-row3 { grid-template-columns: 1fr; } }
+.ff-live { margin-left: auto; font: 700 0.72rem var(--tcs-font); color: var(--cc-ok-t) !important; white-space: nowrap; }
+.cc-card > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ff-floor { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; }
+.ff-router { border: 1.5px dashed var(--cc-btn-line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 7px; justify-content: center; background: var(--cc-sub); }
+.ff-router b { font-size: 0.84rem; color: var(--cc-fg); }
+.ff-route { font: 600 0.74rem var(--tcs-font); padding: 4px 8px; border-radius: 7px; background: var(--cc-chip); color: var(--cc-chip-fg); border-left: 3px solid; }
+.ff-nodes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.ff-node { border: 1px solid var(--cc-line); border-radius: 12px; padding: 11px; background: var(--cc-sub); display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.ff-node-h { display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem; color: var(--cc-fg); }
+.ff-node-h .cc-muted { margin-left: auto; }
+.ff-vendor { font-weight: 800; color: #0076ce; letter-spacing: .02em; }
+.cc-shell:not([data-cc-theme="light"]) .ff-vendor { color: #4fb3e8; }
+.ff-gpu { border: 1px solid var(--cc-line); border-radius: 10px; background: var(--cc-card); padding: 9px 10px; }
+.ff-gpu.warning { border-color: var(--cc-warn); } .ff-gpu.critical { border-color: var(--cc-crit); }
+.ff-gpu-h { display: flex; align-items: baseline; gap: 7px; font-size: 0.78rem; color: var(--cc-fg); }
+.ff-nv { color: #76b900; font-weight: 800; }
+.ff-gpu-st { margin-left: auto; color: var(--cc-ink2); font-size: 0.74rem; white-space: nowrap; }
+.ff-bar { display: flex; gap: 2px; height: 26px; margin-top: 7px; border-radius: 7px; overflow: hidden;
+  background: repeating-linear-gradient(135deg, var(--cc-track) 0 6px, var(--cc-sub) 6px 12px); }
+.ff-seg { display: flex; align-items: center; padding: 0 8px; min-width: 0; flex-shrink: 0; color: #fff; font: 700 0.72rem var(--tcs-font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ff-free { display: flex; align-items: center; padding: 0 8px; color: var(--cc-ink2); font: 600 0.72rem var(--tcs-font); white-space: nowrap; overflow: hidden; }
+.ff-util { height: 4px; border-radius: 3px; background: var(--cc-track); margin-top: 6px; overflow: hidden; }
+.ff-util.big { height: 10px; border-radius: 6px; }
+.ff-util i { display: block; height: 100%; background: linear-gradient(90deg, #4f9bf0, var(--cc-blue)); }
+.ff-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.74rem; color: var(--cc-ink2); }
+.ff-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ff-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.ff-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; flex: 0 0 auto; }
+.ff-table { display: flex; flex-direction: column; }
+.ff-tr { display: grid; grid-template-columns: minmax(0, 1.5fr) 0.8fr 0.8fr 0.7fr 0.5fr 64px; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--cc-line); font-size: 0.8rem; color: var(--cc-fg); }
+.ff-tr > span:first-child { display: flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-th { border-top: 0; font: 700 0.66rem var(--tcs-font); letter-spacing: .07em; text-transform: uppercase; color: var(--cc-label); }
+.ff-ok { color: var(--cc-ok-t); font-weight: 700; font-size: 0.76rem; } .ff-bad { color: var(--cc-crit-t); font-weight: 700; font-size: 0.76rem; }
+.ff-cap { display: flex; flex-direction: column; gap: 5px; padding-top: 10px; border-top: 1px solid var(--cc-line); }
+.ff-cap-v { display: flex; align-items: baseline; gap: 10px; color: var(--cc-ink2); font-size: 0.8rem; }
+.ff-cap-v b { font: 800 1.9rem var(--tcs-font); color: var(--cc-strong); }
+.ff-g { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.ff-g > div { background: var(--cc-sub); border: 1px solid var(--cc-line); border-radius: 10px; padding: 9px 10px; display: flex; flex-direction: column; gap: 2px; }
+.ff-g b { font: 800 1.35rem var(--tcs-font); color: var(--cc-strong); } .ff-g span { font-size: 0.72rem; color: var(--cc-ink2); }
+.ff-ev { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 0; border-top: 1px solid var(--cc-line); font-size: 0.76rem; color: var(--cc-fg); }
+.ff-ev > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-ev em { font-style: normal; color: var(--cc-ink3); font-size: 0.7rem; white-space: nowrap; }
+.ff-ask { display: flex; gap: 8px; }
+.ff-ask input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--cc-btn-line); background: var(--cc-sub); color: var(--cc-fg); font: 500 0.8rem var(--tcs-font); }
+.ff-cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.ff-ans { border: 1px solid var(--cc-line); border-radius: 10px; padding: 9px 10px; background: var(--cc-sub); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ff-ans h4 { margin: 0; display: flex; align-items: center; font: 700 0.78rem var(--tcs-font); color: var(--cc-fg); }
+.ff-ans h4 span { margin-left: auto; font-weight: 600; color: var(--cc-ink3); font-size: 0.7rem; }
+.ff-ans p { margin: 0; font-size: 0.76rem; line-height: 1.45; color: var(--cc-ink2); max-height: 9.5em; overflow: auto; white-space: pre-wrap; }
+.ff-meta { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--cc-ink3); }
+.ff-trow { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--cc-line); font-size: 0.78rem; color: var(--cc-fg); }
+.ff-trow .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ff-trow > span:last-child { display: flex; align-items: center; white-space: nowrap; font-size: 0.76rem; }
