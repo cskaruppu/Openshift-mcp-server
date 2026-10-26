@@ -50,14 +50,21 @@ prev=$(oc -n "$NS" set env deploy/"$DEPLOY" --list 2>/dev/null | grep -E '^(LLM_
 oc -n "$NS" create configmap tcs-private-ai-previous --from-literal=env="$prev" --dry-run=client -o yaml | oc apply -f - >/dev/null
 
 echo "▶ Pointing the platform at the models in $MODELS_NS${MCTX:+ on $MCTX}"
-ENV=(
-  PRIVATE_AI_OPS=true
-  "PRIVATE_AI_HARDWARE=$HARDWARE"
-  "PRIVATE_AI_LARGE_URL=$(url gpt-oss-120b)"   PRIVATE_AI_LARGE_MODEL=gpt-oss-120b   "PRIVATE_AI_LARGE_GPU=H100 · own node"
-  "PRIVATE_AI_SMALL_URL=$(url llama-3-1-8b)"   PRIVATE_AI_SMALL_MODEL=llama-3-1-8b   "PRIVATE_AI_SMALL_GPU=H100 · shared"
-  "PRIVATE_AI_VISION_URL=$(url qwen2-5-vl-7b)" PRIVATE_AI_VISION_MODEL=qwen2-5-vl-7b "PRIVATE_AI_VISION_GPU=H100 · shared"
-  "PRIVATE_AI_EMBED_URL=$(url bge-m3)"         PRIVATE_AI_EMBED_MODEL=bge-m3         "PRIVATE_AI_EMBED_GPU=H100 · shared"
-)
+ENV=(PRIVATE_AI_OPS=true "PRIVATE_AI_HARDWARE=$HARDWARE")
+# Connect only the models that are deployed; a model added later is picked up by running this again.
+connect() { # ROLE model gpu-label
+  if moc -n "$MODELS_NS" get svc "$2-predictor" >/dev/null 2>&1; then
+    ENV+=("PRIVATE_AI_$1_URL=$(url "$2")" "PRIVATE_AI_$1_MODEL=$2" "PRIVATE_AI_$1_GPU=$3")
+    echo "  ✓ $2"
+  else
+    ENV+=("PRIVATE_AI_$1_URL-" "PRIVATE_AI_$1_MODEL-" "PRIVATE_AI_$1_GPU-")
+    echo "  – $2 (not deployed, skipped)"
+  fi
+}
+connect LARGE  gpt-oss-120b  "H100 · own node"
+connect SMALL  llama-3-1-8b  "H100 · shared"
+connect VISION qwen2-5-vl-7b "H100 · shared"
+connect EMBED  bge-m3        "H100 · shared"
 $ROUTE_CHAT && ENV+=(LLM_PROVIDER=private)
 oc -n "$NS" set env deploy/"$DEPLOY" "${ENV[@]}"
 
