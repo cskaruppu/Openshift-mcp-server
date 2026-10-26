@@ -482,8 +482,6 @@ spec:
         - BAAI/bge-m3
         - --port
         - '8080'
-        - --served-model-name
-        - bge-m3
         - --huggingface-hub-cache
         - /models-cache
         env:

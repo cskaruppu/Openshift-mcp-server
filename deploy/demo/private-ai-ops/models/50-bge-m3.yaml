@@ -24,7 +24,7 @@ spec:
     containers:
       - name: kserve-container
         image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
-        args: ["--model-id", "BAAI/bge-m3", "--port", "8080", "--served-model-name", "bge-m3", "--huggingface-hub-cache", "/models-cache"]
+        args: ["--model-id", "BAAI/bge-m3", "--port", "8080", "--huggingface-hub-cache", "/models-cache"]
         env:
           - name: HF_TOKEN
             valueFrom: { secretKeyRef: { name: hf-token, key: HF_TOKEN, optional: true } }

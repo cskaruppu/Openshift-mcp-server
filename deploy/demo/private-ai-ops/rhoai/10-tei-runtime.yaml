@@ -17,7 +17,7 @@ spec:
   containers:
     - name: kserve-container
       image: ghcr.io/huggingface/text-embeddings-inference:hopper-1.8.3
-      args: ["--model-id", "/mnt/models", "--port", "8080", "--served-model-name", "{{.Name}}"]
+      args: ["--model-id", "/mnt/models", "--port", "8080"]   # TEI takes no --served-model-name; it ignores the "model" field in requests
       env:
         - { name: HOME, value: /tmp }
         - { name: HF_HOME, value: /tmp/hf }
