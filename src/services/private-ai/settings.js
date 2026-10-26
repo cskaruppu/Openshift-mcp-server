@@ -105,6 +105,8 @@ const ACCESS_KEY = "private_ai_cluster_access";
 const ACCESS_FILE = process.env.PRIVATE_AI_ACCESS_PATH || "/data/mcp-private-ai-access.json";
 let _access = {};
 
+/** Clusters with direct access saved (the GPU clusters the Factory can read). */
+export function accessClusters() { return Object.keys(_access); }
 export function getClusterAccess(cluster) { return (cluster && _access[cluster]) || null; }
 export function clusterAccessSummary(cluster) {
   const a = getClusterAccess(cluster);

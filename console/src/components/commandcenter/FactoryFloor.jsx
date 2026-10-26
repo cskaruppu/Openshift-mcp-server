@@ -16,8 +16,11 @@ const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-
 // "NVIDIA H100 80GB HBM3" → "H100"
 const shortGpu = (m) => (String(m || "GPU").replace(/NVIDIA\s*/i, "").match(/^\S+/) || ["GPU"])[0];
 
+let _cluster = null;
+const scoped = (path) => (_cluster ? `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(_cluster)}` : path);
+
 async function post(path, body = {}) {
-  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(scoped(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
   return j;
@@ -41,7 +44,8 @@ function Kpi({ label, value, sub, hist, color, tone, badge }) {
   );
 }
 
-export default function FactoryFloor({ busy, act$, hardware }) {
+export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
+  _cluster = cluster;
   const [f, setF] = useState(null);
   const [err, setErr] = useState(null);
   const [q, setQ] = useState("Why is payments-api restarting in tcs-demo-payments?");
@@ -50,7 +54,7 @@ export default function FactoryFloor({ busy, act$, hardware }) {
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch("/api/command-center/factory");
+      const r = await fetch(scoped("/api/command-center/factory"));
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Factory floor unavailable");
       setF(j); setErr(null);
@@ -197,7 +201,7 @@ export default function FactoryFloor({ busy, act$, hardware }) {
             <div key={r.id} className="ff-trow">
               <span className="mono cc-muted">{fmtTime(r.at)}</span>
               <span className="q">{r.question || r.useCase || "—"}{r.sensitive?.length ? <span className="cc-pill ok"> sensitive</span> : null}</span>
-              <span>{r.blocked ? <span className="cc-pill crit">blocked</span> : <><i className="ff-dot" style={{ background: ROLE_COLOR[r.role] || OTHER }} />{r.model || "—"}</>}</span>
+              <span>{r.blocked ? <span className="cc-pill crit">blocked</span> : <><i className="ff-dot" style={{ background: ROLE_COLOR[r.role] || OTHER }} />{r.model || "—"}{r.cluster ? <em className="ff-cl">{r.cluster}</em> : null}</>}</span>
             </div>
           ))}
           {!(f.log || []).length && <p className="cc-note">Ask something in AI Chat with "Private AI" selected — each answer appears here.</p>}

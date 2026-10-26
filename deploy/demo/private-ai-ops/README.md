@@ -125,3 +125,20 @@ on the GPU cluster. Re-apply the access manifest once (adds only that Role):
 ```bash
 oc --kubeconfig "$GPU_KC" apply -f deploy/demo/private-ai-ops/gpu-cluster-access.yaml
 ```
+
+## Several GPU clusters (GPU fleet tab)
+
+Each GPU cluster keeps its own models; the router uses all of them.
+
+1. For every GPU cluster: save its access in Settings → Private AI → Cluster access (or run
+   `connect-gpu-cluster.sh`), and apply `gpu-cluster-access.yaml` on it (lets the hub find the
+   models, expose each with a Route, and stop / start them).
+2. Deploy the models on it with `rhoai/deploy-rhoai.sh`.
+3. In the Private AI Factory → **GPU fleet**, press **Discover models** on that cluster's tile.
+4. Per cluster: **Answers AI requests** (on/off), **Sensitive data allowed** (data residency),
+   and a region label. Fleet-wide: **Selected cluster first** or **Least loaded**.
+
+The header switcher chooses which cluster the Factory floor and the acts show. If the
+selected cluster's model is down, the same model on another cluster answers, and AI traffic
+and the evidence pack record which cluster answered each request. The models set by
+`enable.sh` still work and count as the selected cluster's.

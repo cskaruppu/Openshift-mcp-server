@@ -85,13 +85,22 @@ export function modelStats(ms, prev, now = Date.now()) {
   };
 }
 
-async function modelsNow() {
-  const list = [...router.models(), ...(embeddingModel() ? [embeddingModel()] : [])];
+// Router models plus every embedding endpoint (environment and discovered), one per URL.
+function allModels() {
+  const out = [...router.models()];
+  const em = embeddingModel();
+  if (em && !out.some((m) => m.url === em.url)) out.push(em);
+  for (const m of _deps.fleetEmbeds ? _deps.fleetEmbeds() : []) if (!out.some((x) => x.url === m.url)) out.push({ ...m, label: "Incident memory", healthPath: "/health" });
+  return out;
+}
+
+async function modelsNow(cluster = null) {
+  const list = allModels().filter((m) => !cluster || !m.cluster || m.cluster === cluster);
   return Promise.all(list.map(async (m) => {
     const [h, s] = await Promise.all([router.checkHealth(m), scrape(m)]);
     let stats = null;
-    if (s.metrics) { const r = modelStats(s.metrics, _prev.get(m.url)); _prev.set(m.url, r.cur); stats = r.stats; }
-    return { role: m.role, label: m.label, model: m.model, gpu: m.gpu, ready: !!h.ok, healthMs: h.ms, error: h.ok ? null : h.error, metricsError: s.error || null, stats };
+    if (s.metrics) { const r = modelStats(s.metrics, _prev.get(m.url)); _prev.set(m.url, r.cur); stats = r.stats; router.noteLoad(m.url, stats.running); }
+    return { role: m.role, label: m.label, model: m.model, gpu: m.gpu, cluster: m.cluster || null, ready: !!h.ok, healthMs: h.ms, error: h.ok ? null : h.error, metricsError: s.error || null, stats };
   }));
 }
 
@@ -188,7 +197,7 @@ export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart
 
 export async function factoryState({ cluster = "local", since }) {
   const [models, floor, energy, isvcs] = await Promise.all([
-    modelsNow(),
+    modelsNow(cluster),
     _deps.runForCluster(cluster, floorNow).catch((e) => ({ available: false, reason: e.message, nodes: [] })),
     _deps.runForCluster(cluster, () => energyNow(since)).catch(() => null),
     _deps.runForCluster(cluster, () => listModels()).catch(() => []),
@@ -222,6 +231,12 @@ export async function factoryState({ cluster = "local", since }) {
     capacity: { totalMiB: totalMem, freeMiB: freeMem, usedPct: totalMem ? Math.round(((totalMem - freeMem) / totalMem) * 100) : null, freeCards },
     guardrails: g, log: log.slice(0, 8),
   };
+}
+
+/** Fleet tiles with each model's health, for the Fleet tab and the evidence pack. */
+export async function fleetWithHealth(FL) {
+  const models = await Promise.all(allModels().map(async (m) => ({ ...m, ready: !!(await router.checkHealth(m)).ok })));
+  return FL.fleetState(models);
 }
 
 /* ─────────────────────────── model controls (OpenShift AI stop / start) ─────────────────────────── */
@@ -289,7 +304,7 @@ const esc = (v) => String(v ?? "—").replace(/[&<>"']/g, (c) => ({ "&": "&amp;"
 const when = (iso) => (iso ? new Date(iso).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—");
 
 /** A printable, self-contained HTML report of the session (Save as PDF from the browser). */
-export function evidenceHtml({ state, factory, actor, cluster }) {
+export function evidenceHtml({ state, factory, fleet = null, actor, cluster }) {
   const k = factory.kpis; const g = factory.guardrails; const a1 = state.act1; const sc = state.scorecard;
   const rows = (arr, cols) => arr.map((r) => `<tr>${cols.map((c) => `<td>${esc(typeof c === "function" ? c(r) : r[c])}</td>`).join("")}</tr>`).join("");
   const cards = (factory.floor.nodes || []).flatMap((n) => n.cards.map((c) => ({ ...c, node: n.name })));
@@ -310,14 +325,16 @@ table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px
 <div class="kpi"><span class="muted">Internet egress</span><b>${a1.egress.blocked ? "Blocked" : "Open"}</b>${a1.egress.blocked ? "since " + esc(when(a1.egress.since)) : ""}</div>
 <div class="kpi"><span class="muted">GPU energy this session</span><b>${k.energy ? esc(k.energy.kwh) + " kWh" : "—"}</b>${k.energy ? esc(k.energy.co2Kg) + " kg CO₂e" : "DCGM energy not available"}</div>
 <div class="kpi"><span class="muted">Changes approved by a person</span><b>${esc(sc.approved)} / ${esc(sc.changes)}</b>incident MTTR ${sc.mttrSec != null ? esc(sc.mttrSec) + " s" : "—"}</div></div>
-<h2>Models</h2><table><tr><th>Model</th><th>Role</th><th>GPU</th><th>State</th><th>First token</th><th>Tokens/s</th></tr>
-${rows(factory.models, ["model", "label", "gpu", (m) => (m.ready ? "ready" : m.error || "not answering"), (m) => (m.stats?.ttftMs != null ? m.stats.ttftMs + " ms" : "—"), (m) => m.stats?.tokensPerSec ?? "—"])}</table>
+${fleet ? `<h2>GPU fleet</h2><p class="muted">Routing across clusters: ${esc(fleet.mode)} · selected cluster ${esc(fleet.preferred)}</p><table><tr><th>Cluster</th><th>GPUs</th><th>Models</th><th>Answers</th><th>Sensitive data</th><th>Region</th></tr>
+${rows(fleet.clusters, [(c) => `${c.label}${c.label !== c.cluster ? " (" + c.cluster + ")" : ""}`, (c) => `${c.cards}× ${c.gpuModel || "GPU"}`, (c) => c.models.map((m) => m.model).join(", ") || "none", (c) => (c.policy.routing ? "yes" : "no"), (c) => (c.policy.sensitive ? "allowed" : "not allowed"), (c) => c.policy.region || "—"])}</table>` : ""}
+<h2>Models</h2><table><tr><th>Model</th><th>Cluster</th><th>Role</th><th>GPU</th><th>State</th><th>First token</th><th>Tokens/s</th></tr>
+${rows(factory.models, ["model", (m) => m.cluster || cluster, "label", "gpu", (m) => (m.ready ? "ready" : m.error || "not answering"), (m) => (m.stats?.ttftMs != null ? m.stats.ttftMs + " ms" : "—"), (m) => m.stats?.tokensPerSec ?? "—"])}</table>
 <h2>GPUs</h2><table><tr><th>Node</th><th>Card</th><th>Utilisation</th><th>Memory</th><th>Temp</th><th>Power</th><th>Owned by</th></tr>
 ${rows(cards, ["node", (c) => `${c.model} #${c.index}`, (c) => (c.utilPct != null ? c.utilPct + "%" : "—"), (c) => (c.memUsedMiB != null ? `${Math.round(c.memUsedMiB / 1024)} / ${Math.round((c.memTotalMiB || 0) / 1024)} GB` : "—"), (c) => (c.tempC != null ? c.tempC + " °C" : "—"), (c) => (c.powerW != null ? Math.round(c.powerW) + " W" : "—"), (c) => c.slices.map((s) => `${s.owner} ${s.mib ? Math.round(s.mib / 1024) + " GB" : ""}`).join(", ") || "free"])}</table>
 <h2>Guardrail events</h2><table><tr><th>Time</th><th>Action</th><th>Why</th><th>Request (masked)</th></tr>
 ${rows(g.events, [(e) => when(e.at), (e) => (e.kind === "blocked" ? "Blocked" : "Kept on-prem"), "what", "question"]) || "<tr><td colspan=4 class=muted>None this session</td></tr>"}</table>
-<h2>AI traffic (latest 40, questions masked)</h2><table><tr><th>Time</th><th>Question</th><th>Answered by</th><th>Why</th><th>Duration</th></tr>
-${rows(a1.log || [], [(r) => when(r.at), "question", (r) => r.model || (r.blocked ? "blocked" : "—"), "reason", (r) => (r.ms ? (r.ms / 1000).toFixed(1) + " s" : "—")])}</table>
+<h2>AI traffic (latest 40, questions masked)</h2><table><tr><th>Time</th><th>Question</th><th>Answered by</th><th>Cluster</th><th>Why</th><th>Duration</th></tr>
+${rows(a1.log || [], [(r) => when(r.at), "question", (r) => r.model || (r.blocked ? "blocked" : "—"), (r) => r.cluster || "—", "reason", (r) => (r.ms ? (r.ms / 1000).toFixed(1) + " s" : "—")])}</table>
 <p class="muted" style="margin-top:24px">Every figure comes from the platform's own records: the AI router log, the guardrail counters, DCGM GPU telemetry and the incident and remediation workflows. Detailed entries are in the Audit trail.</p>
 </body></html>`;
 }

@@ -4,6 +4,7 @@ import { DockChip } from "../MinimizedDock";
 import { showToast } from "../../store/toastStore";
 import { useThemeStore } from "../../store/themeStore";
 import FactoryFloor from "./FactoryFloor";
+import FleetView from "./FleetView";
 
 // Private AI Factory — the stage and booth view.
 //
@@ -15,14 +16,19 @@ import FactoryFloor from "./FactoryFloor";
 // Opened by any of: the workspace header button, the dashboard banner, Ctrl+K,
 // or `window.dispatchEvent(new Event("open-command-center"))`.
 
-const ACTS = [["floor", "Factory floor"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
+const ACTS = [["floor", "Factory floor"], ["fleet", "GPU fleet"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
 
 const fmtClock = (sec) => (sec == null ? "--:--" : `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`);
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
 const fmtNum = (n) => (n == null ? "—" : Number(n).toLocaleString());
 
+// The GPU cluster being viewed (header switcher). Every read and action goes to it;
+// unset = the cluster selected in Settings → Private AI.
+let _view = null;
+const scoped = (path) => (_view ? `${path}${path.includes("?") ? "&" : "?"}cluster=${encodeURIComponent(_view)}` : path);
+
 async function post(path, body = {}) {
-  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch(scoped(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
   return j;
@@ -77,15 +83,35 @@ export function CommandCenter({ open, onClose }) {
   const [maximized, setMaximized] = useState(true);
   const [now, setNow] = useState(Date.now());
   const timer = useRef(null);
+  const [view, setView] = useState(() => { try { return localStorage.getItem("cc-view-cluster") || null; } catch { return null; } });
+  _view = view;
+  const [fleet, setFleet] = useState(null);
+  const chooseCluster = (c) => {
+    const v = c || null; _view = v; setView(v); setData(null);
+    try { if (v) localStorage.setItem("cc-view-cluster", v); else localStorage.removeItem("cc-view-cluster"); } catch { /* private window */ }
+  };
+  const loadFleet = useCallback(async () => {
+    try {
+      const r = await fetch("/api/command-center/fleet");
+      const j = await r.json();
+      setFleet(r.ok ? j : { error: j.error || "GPU fleet unavailable" });
+    } catch (e) { setFleet({ error: e.message }); }
+  }, []);
+  useEffect(() => {
+    if (!open || minimized) return undefined;
+    loadFleet();
+    const t = setInterval(loadFleet, act === "fleet" ? 10000 : 30000);
+    return () => clearInterval(t);
+  }, [open, minimized, act, loadFleet]);
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch("/api/command-center");
+      const r = await fetch(scoped("/api/command-center"));
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Private AI Factory unavailable");
       setData(j); setErr(null);
     } catch (e) { setErr(e.message); }
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     if (!open || minimized) return undefined;
@@ -120,7 +146,12 @@ export function CommandCenter({ open, onClose }) {
               <span className="ah-lockup-rule" aria-hidden="true" />
               <span className="ah-lockup-mod"><span className="ah-lockup-module cc-title">Private AI Factory</span></span>
             </div>
-            {d?.hardware && <span className="cc-hw">{d.hardware}</span>}
+            {fleet?.clusters?.length > 1 ? (
+              <select className="cc-cluster" value={view || fleet.preferred || ""} onChange={(e) => chooseCluster(e.target.value === fleet.preferred ? null : e.target.value)}
+                title="GPU cluster shown in the Private AI Factory" aria-label="GPU cluster">
+                {fleet.clusters.map((c) => <option key={c.cluster} value={c.cluster}>{c.label}{c.cards ? ` · ${c.cards}× ${c.gpuModel || "GPU"}` : ""}{c.preferred ? " · selected" : ""}</option>)}
+              </select>
+            ) : d?.hardware && <span className="cc-hw">{d.hardware}</span>}
             {(d?.access?.expired || d?.access?.expiringSoon) && (
               <span className={"cc-access" + (d.access.expired ? " bad" : "")} title={`Direct access to ${d.cluster}: renew it in Settings → Private AI → Cluster access`}>
                 {`Access to ${d.cluster} ${d.access.expiry}`}
@@ -144,18 +175,19 @@ export function CommandCenter({ open, onClose }) {
           <nav className="cc-nav" aria-label="Acts">
             {ACTS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
             <div style={{ flex: 1 }} />
-            {d?.enabled && <span className="cc-since">Session since {fmtTime(d.session.since)}</span>}
             <button className={"vc-btn ghost sm" + (stage ? " on" : "")} onClick={toggleStage} title="Larger type and figures for a projector">{stage ? "Stage mode: on" : "Stage mode"}</button>
             {d?.enabled && <button className="vc-btn ghost sm" onClick={() => window.open("/api/command-center/evidence", "_blank", "noopener")} title="Printable report of this session: models, GPUs, guardrails, AI traffic">Evidence pack</button>}
             <button className="vc-btn ghost sm" onClick={cycleTheme} title={ccTheme === "auto" ? `Following the console (${look}); click to force dark, then light` : `Forced ${ccTheme}; click to change`}>{CC_THEMES[ccTheme] || CC_THEMES.auto}</button>
-            <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>New session</button>
+            <button className="vc-btn ghost sm" disabled={!!busy} title={d?.session?.since ? `Current session since ${fmtTime(d.session.since)} — start a new one to reset the counters` : "Reset the counters"} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>New session</button>
           </nav>
 
           <div className="cc-body">
             {err && <div className="vc-alert">{err}</div>}
             {!d && !err && <div className="cc-empty">Loading…</div>}
             {d && !d.enabled && <div className="cc-empty">The Private AI Factory is switched off. An admin can turn it on in Settings → Private AI.</div>}
-            {d?.enabled && act === "floor" && <FactoryFloor busy={busy} act$={act$} hardware={d.hardware} />}
+            {d?.enabled && act === "floor" && <FactoryFloor key={view || "default"} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />}
+            {d?.enabled && act === "fleet" && <FleetView fleet={fleet} busy={busy} act$={act$} reload={loadFleet} viewCluster={view || fleet?.preferred}
+              onOpen={(c) => { chooseCluster(c === fleet?.preferred ? null : c); setAct("floor"); }} />}
             {d?.enabled && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act2" && <Act2 d={d} busy={busy} act$={act$} />}
             {d?.enabled && act === "act3" && <Act3 d={d} />}

@@ -2137,9 +2137,25 @@ async function startSSE() {
       const IO = await import("./services/incident-orchestrator.js");
       const PS = await import("./services/private-ai/settings.js");
       SC.configureScenario({ runForCluster: privateAiRun, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
+      const FL = await import("./services/private-ai/fleet.js");
+      const RT = await import("./services/private-ai/router.js");
+      const EM = await import("./services/private-ai/embeddings.js");
+      const CLB = await import("./services/cluster-labels.js");
+      FL.configureFleet({
+        runForCluster: privateAiRun, gpu: getGpuOverview, ocp: { fetch: ocpFetch, post: ocpPost },
+        preferred: () => PS.effectiveSettings().cluster, accessClusters: () => PS.accessClusters(),
+        label: (c) => CLB.clusterLabels()[c] || c,
+      });
+      await FL.restoreFleet();
+      RT.setFleetProvider({ models: FL.fleetModels, mode: FL.routingMode, preferred: FL.preferredCluster });
+      EM.setEmbedProvider(() => {
+        const em = FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false);
+        return em.find((m) => m.cluster === FL.preferredCluster()) || em[0] || null;
+      });
       const FY = await import("./services/private-ai/factory.js");
       FY.configureFactory({
         runForCluster: privateAiRun, gpu: getGpuOverview,
+        fleetEmbeds: () => FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false),
         prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
         ocp: { fetch: ocpFetch, patch: ocpPatch },
       });
@@ -9262,10 +9278,17 @@ spec:
           const FY = await import("./services/private-ai/factory.js");
           const since = CC.sessionSince();
           if (url.pathname === "/api/command-center/factory") return sendJson(res, 200, await FY.factoryState({ cluster, since }));
-          const [state, factory] = await Promise.all([CC.commandCenterState({ cluster }), FY.factoryState({ cluster, since })]);
+          const FL = await import("./services/private-ai/fleet.js");
+          const [state, factory, fleet] = await Promise.all([CC.commandCenterState({ cluster }), FY.factoryState({ cluster, since }), FY.fleetWithHealth(FL).catch(() => null)]);
           logAuditTrailEvent({ type: "action_taken", severity: "info", title: "Private AI Factory evidence pack exported", details: { cluster }, username: actor, source: "command-center" }).catch(() => {});
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
-          return res.end(FY.evidenceHtml({ state, factory, actor, cluster }));
+          return res.end(FY.evidenceHtml({ state, factory, fleet, actor, cluster }));
+        }
+        if (req.method === "GET" && url.pathname === "/api/command-center/fleet") {
+          if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
+          const FY = await import("./services/private-ai/factory.js");
+          const FL = await import("./services/private-ai/fleet.js");
+          return sendJson(res, 200, { ...(await FY.fleetWithHealth(FL)), you: { canManage: checkPermission(req, "manage") } });
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
         if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
@@ -9281,6 +9304,32 @@ spec:
             const FY = await import("./services/private-ai/factory.js");
             const out = await FY.compare(body.question);
             audit("Side-by-side model comparison", { models: out.answers.map((a) => a.model) });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/fleet/discover":
+          case "/api/command-center/fleet/policy":
+          case "/api/command-center/fleet/mode":
+          case "/api/command-center/fleet/forget": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing the GPU fleet needs the Admin role" });
+            const FL = await import("./services/private-ai/fleet.js");
+            const c = typeof body.cluster === "string" ? body.cluster : cluster;
+            if (url.pathname.endsWith("/discover")) {
+              const out = await FL.discoverModels(c, { actor });
+              audit(`Models discovered on ${c}: ${out.models.map((m) => m.model).join(", ") || "none"}`, { cluster: c, storage: out.storage });
+              return sendJson(res, 200, out);
+            }
+            if (url.pathname.endsWith("/policy")) {
+              const out = await FL.setClusterPolicy(c, body);
+              audit(`AI routing policy for ${c}: ${out.policy.routing ? "answers" : "no answers"}, sensitive data ${out.policy.sensitive ? "allowed" : "not allowed"}${out.policy.region ? `, region ${out.policy.region}` : ""}`, { cluster: c, ...out.policy });
+              return sendJson(res, 200, out);
+            }
+            if (url.pathname.endsWith("/mode")) {
+              const out = await FL.setRoutingMode(body.mode);
+              audit(`AI routing across GPU clusters: ${out.mode}`, out);
+              return sendJson(res, 200, out);
+            }
+            const out = await FL.forgetCluster(c);
+            audit(`GPU cluster ${c} removed from the AI fleet`, { cluster: c });
             return sendJson(res, 200, out);
           }
           case "/api/command-center/model": {

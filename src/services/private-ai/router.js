@@ -30,7 +30,39 @@ export const ROLES = ["large", "small", "vision", "coder"];
 const ROLE_LABEL = { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML" };
 const DEFAULT_MODEL = { large: "gpt-oss-120b", small: "llama-3-1-8b", vision: "qwen2-5-vl-7b", coder: "" };
 
+// Models discovered on the GPU clusters (fleet.js), with each cluster's policy.
+// Set at startup; tests and single-cluster setups use the environment only.
+let _fleet = { models: () => [], mode: () => "preferred", preferred: () => null };
+export function setFleetProvider(p) { _fleet = { ..._fleet, ...p }; }
+
+// Requests running per endpoint, as last read from each model's /metrics (factory.js).
+const _load = new Map();
+export function noteLoad(url, running) { if (url && Number.isFinite(running)) _load.set(url, running); }
+
+/** The environment's models (enable.sh) plus every cluster's discovered ones; one entry per URL. */
 export function models() {
+  const out = envModels();
+  const seen = new Set(out.map((m) => m.url));
+  for (const m of _fleet.models()) {
+    if (!m.url || seen.has(m.url) || !ROLES.includes(m.role)) continue;
+    seen.add(m.url);
+    out.push({ role: m.role, label: ROLE_LABEL[m.role] || m.label, url: m.url.replace(/\/+$/, ""), model: m.model, gpu: m.gpu || null,
+      cluster: m.cluster, routing: m.routing !== false, sensitiveOk: m.sensitiveOk !== false, region: m.region || "" });
+  }
+  return out;
+}
+
+/** Order the models able to take a request: allowed by their cluster's policy, then preferred / least-loaded. */
+export function rankCandidates(list, role, { sensitive = false } = {}) {
+  const pref = _fleet.preferred();
+  const ok = list.filter((m) => m.role === role && m.routing !== false && !(sensitive && m.sensitiveOk === false));
+  const prefRank = (m) => (m.cluster == null || m.cluster === pref ? 0 : 1);
+  return ok.sort(_fleet.mode() === "least-loaded"
+    ? (a, b) => (_load.get(a.url) ?? 0) - (_load.get(b.url) ?? 0) || prefRank(a) - prefRank(b)
+    : (a, b) => prefRank(a) - prefRank(b) || (_load.get(a.url) ?? 0) - (_load.get(b.url) ?? 0));
+}
+
+function envModels() {
   const out = [];
   for (const role of ROLES) {
     const R = role.toUpperCase();
@@ -40,6 +72,7 @@ export function models() {
       role, label: ROLE_LABEL[role], url,
       model: process.env[`PRIVATE_AI_${R}_MODEL`] || DEFAULT_MODEL[role] || role,
       gpu: process.env[`PRIVATE_AI_${R}_GPU`] || null,
+      cluster: process.env.PRIVATE_AI_MODELS_CLUSTER || _fleet.preferred() || null, routing: true, sensitiveOk: true, region: "",
     });
   }
   return out;
@@ -217,21 +250,28 @@ export async function route(o, messages, { useCase = null, conversationId = null
   const d = decide({ messages, system: o.system, images: o.images, tools: o.tools, available });
   if (d.sensitive.length) guardEvent("on-prem", d.sensitive.join(", "), lastQ);
 
-  // Prefer the chosen role; if it is down, the nearest healthy on-prem model.
+  // Prefer the chosen role — on any GPU cluster its policy allows, in the fleet's
+  // order — and if every copy is down, the nearest healthy on-prem model.
   const order = [d.role, ...(d.role === "small" ? ["large"] : d.role === "vision" ? [] : ["small"]), ...available].filter((r, i, a) => a.indexOf(r) === i);
   let chosen = null, fallbackNote = null;
+  const firstPick = rankCandidates(list, d.role, { sensitive: d.sensitive.length > 0 })[0] || null;
   for (const role of order) {
-    const m = list.find((x) => x.role === role);
-    if (!m) continue;
     if (role === "vision" && d.role !== "vision") continue;
-    const h = await checkHealth(m);
-    if (h.ok) { chosen = m; if (role !== d.role) fallbackNote = `${d.role} model unavailable (${(await checkHealth(list.find((x) => x.role === d.role) || m)).error || "down"})`; break; }
+    for (const m of rankCandidates(list, role, { sensitive: d.sensitive.length > 0 })) {
+      const h = await checkHealth(m);
+      if (!h.ok) continue;
+      chosen = m;
+      if (role !== d.role) fallbackNote = `${d.role} model unavailable (${firstPick ? (await checkHealth(firstPick)).error || "down" : "none allowed"})`;
+      else if (firstPick && m.url !== firstPick.url) fallbackNote = `${firstPick.model} on ${firstPick.cluster || "the selected cluster"} unavailable, answered on ${m.cluster}`;
+      break;
+    }
+    if (chosen) break;
   }
 
   const cloud = process.env.PRIVATE_AI_CLOUD_PROVIDER;
   const decision = {
     id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview([...messages].reverse().find((m) => m.role === "user")?.content || useCase || ""),
-    role: chosen?.role || null, wanted: d.role, model: chosen?.model || null, gpu: chosen?.gpu || null, reason: fallbackNote ? `${d.reason} · ${fallbackNote}` : d.reason,
+    role: chosen?.role || null, wanted: d.role, model: chosen?.model || null, gpu: chosen?.gpu || null, cluster: chosen?.cluster || null, reason: fallbackNote ? `${d.reason} · ${fallbackNote}` : d.reason,
     sensitive: d.sensitive, onPrem: true, useCase, conversationId, ms: null, ok: null, tokens: null,
   };
 

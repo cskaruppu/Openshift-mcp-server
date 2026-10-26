@@ -9995,3 +9995,39 @@ code.new { color: #22a06b; }
 .ff-trow { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--cc-line); font-size: 0.78rem; color: var(--cc-fg); }
 .ff-trow .q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ff-trow > span:last-child { display: flex; align-items: center; white-space: nowrap; font-size: 0.76rem; }
+
+/* Private AI Factory — GPU fleet tab and the header cluster switcher (FleetView.jsx). */
+.cc-cluster { max-width: 340px; padding: 6px 30px 6px 11px; border-radius: 8px; background: var(--cc-chip); color: var(--cc-chip-fg);
+  border: 1px solid var(--cc-btn-line); font: 600 0.78rem var(--tcs-font); cursor: pointer; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; text-overflow: ellipsis; }
+.cc-cluster option { color: #14202f; background: #fff; }
+.fl-totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 12px; }
+.fl-totals > div { padding: 13px 15px; border-radius: 12px; background: var(--cc-card); border: 1px solid var(--cc-line); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fl-totals b { font: 800 1.6rem var(--tcs-font); color: var(--cc-strong); }
+.fl-seg { display: flex; gap: 4px; padding: 3px; border-radius: 9px; background: var(--cc-sub); border: 1px solid var(--cc-line); }
+.fl-seg button { flex: 1; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--cc-ink2); font: 600 0.76rem var(--tcs-font); cursor: pointer; white-space: nowrap; }
+.fl-seg button.on { background: var(--cc-blue); color: #fff; }
+.fl-seg button:disabled:not(.on) { cursor: default; opacity: .7; }
+.fl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; }
+.fl-card.viewing { border-color: var(--cc-blue); box-shadow: 0 0 0 1px var(--cc-blue) inset; }
+.fl-card > header .mono { font-size: 0.72rem; }
+.fl-hw { display: flex; align-items: baseline; gap: 10px; } .fl-hw b { font: 700 1.05rem var(--tcs-font); color: var(--cc-fg); }
+.fl-meters { display: grid; gap: 8px; }
+.fl-meters > div { display: grid; grid-template-columns: 120px minmax(0, 1fr) 130px; align-items: center; gap: 10px; font-size: 0.76rem; }
+.fl-meters .ff-util { margin: 0; }
+.fl-meters .mono { text-align: right; color: var(--cc-ink2); font-size: 0.74rem; }
+.fl-reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.74rem; }
+.fl-models { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-model { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 99px; background: var(--cc-sub); border: 1px solid var(--cc-line); font: 600 0.74rem var(--tcs-font); color: var(--cc-fg); }
+.fl-model i { width: 8px; height: 8px; border-radius: 50%; } .fl-model em { font-style: normal; font-weight: 500; color: var(--cc-ok-t); }
+.fl-model.down em { color: var(--cc-crit-t); }
+.fl-policy { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 10px; border-top: 1px solid var(--cc-line); }
+.fl-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border-radius: 99px; border: 1px solid var(--cc-btn-line); background: var(--cc-btn); color: var(--cc-fg); font: 600 0.74rem var(--tcs-font); cursor: pointer; }
+.fl-toggle i { width: 26px; height: 15px; border-radius: 99px; background: var(--cc-track); position: relative; transition: background .15s; }
+.fl-toggle i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.fl-toggle.on i { background: var(--cc-ok); } .fl-toggle.on i::after { left: 13px; }
+.fl-toggle:disabled { cursor: default; opacity: .75; }
+.fl-region { flex: 1; min-width: 120px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--cc-btn-line); background: var(--cc-sub); color: var(--cc-fg); font: 500 0.76rem var(--tcs-font); }
+.ff-cl { font-style: normal; margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--cc-chip); color: var(--cc-chip-fg); font-size: 0.66rem; font-weight: 600; }
+@media (max-width: 1300px) { .fl-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

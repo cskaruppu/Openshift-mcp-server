@@ -68,8 +68,8 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
 subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
 ---
-# Private AI Factory: stop / start the demo models (OpenShift AI InferenceServices) from the console.
-# Only the stop annotation is changed; nothing else in openshift-mcp.
+# Private AI Factory: find the models (and expose each with a Route) and stop / start them from
+# the console. Only the stop annotation and new Routes are written; nothing else in openshift-mcp.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -79,6 +79,10 @@ rules:
   - apiGroups: ["serving.kserve.io"]
     resources: ["inferenceservices"]
     verbs: ["get", "list", "watch", "patch"]
+  # Model discovery: each model is reached through a Route (created if missing).
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

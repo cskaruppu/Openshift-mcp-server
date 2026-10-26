@@ -16,9 +16,15 @@ const CACHE_MAX = 4000;
 const _cache = new Map();
 let _stats = { calls: 0, texts: 0, failures: 0, lastError: null, lastMs: null };
 
-export function embeddingsConfigured() { return !!process.env.PRIVATE_AI_EMBED_URL; }
+// An embedding model discovered on a GPU cluster (fleet.js), used when none is set in the environment.
+let _fleetEmbed = () => null;
+export function setEmbedProvider(fn) { _fleetEmbed = fn; }
+
+export function embeddingsConfigured() { return !!process.env.PRIVATE_AI_EMBED_URL || !!_fleetEmbed(); }
 export function embeddingModel() {
-  return embeddingsConfigured() ? { role: "embed", label: "Incident memory", url: process.env.PRIVATE_AI_EMBED_URL.replace(/\/+$/, ""), model: process.env.PRIVATE_AI_EMBED_MODEL || "bge-m3", gpu: process.env.PRIVATE_AI_EMBED_GPU || null, healthPath: process.env.PRIVATE_AI_EMBED_HEALTH || "/health" } : null;
+  if (process.env.PRIVATE_AI_EMBED_URL) return { role: "embed", label: "Incident memory", url: process.env.PRIVATE_AI_EMBED_URL.replace(/\/+$/, ""), model: process.env.PRIVATE_AI_EMBED_MODEL || "bge-m3", gpu: process.env.PRIVATE_AI_EMBED_GPU || null, healthPath: process.env.PRIVATE_AI_EMBED_HEALTH || "/health", cluster: process.env.PRIVATE_AI_MODELS_CLUSTER || null };
+  const f = _fleetEmbed();
+  return f ? { role: "embed", label: "Incident memory", url: f.url.replace(/\/+$/, ""), model: f.model, gpu: f.gpu || null, healthPath: "/health", cluster: f.cluster } : null;
 }
 export function embeddingStats() { return { ..._stats, cached: _cache.size }; }
 
