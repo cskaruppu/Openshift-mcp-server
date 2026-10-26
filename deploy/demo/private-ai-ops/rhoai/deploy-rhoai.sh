@@ -104,10 +104,23 @@ spec:
               os.environ["HF_HUB_OFFLINE"] = "0"
               d = pathlib.Path("/cache/model"); done = d / ".tcs-complete"
               if done.exists(): print("already downloaded"); sys.exit(0)
+              for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"): os.environ[k] = "0"
               try:
+                  import huggingface_hub, huggingface_hub.constants as hc
                   from huggingface_hub import snapshot_download
               except Exception as e:
                   print("ERROR: this image has no huggingface_hub:", e); sys.exit(3)
+              # Red Hat's vLLM image runs offline by design; force the library online for this download only.
+              hc.HF_HUB_OFFLINE = False
+              if hasattr(hc, "is_offline_mode"): hc.is_offline_mode = lambda: False
+              for mod in ("file_download", "_snapshot_download", "utils._http", "hf_api"):
+                  try:
+                      m = __import__("huggingface_hub." + mod, fromlist=["x"])
+                      if hasattr(m, "HF_HUB_OFFLINE"): m.HF_HUB_OFFLINE = False
+                      if hasattr(m, "is_offline_mode"): m.is_offline_mode = lambda: False
+                      if hasattr(m, "constants"): m.constants.HF_HUB_OFFLINE = False
+                  except Exception: pass
+              print("huggingface_hub", huggingface_hub.__version__, "offline:", hc.HF_HUB_OFFLINE, flush=True)
               if not (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")):
                   try: socket.getaddrinfo("huggingface.co", 443)
                   except Exception as e:
