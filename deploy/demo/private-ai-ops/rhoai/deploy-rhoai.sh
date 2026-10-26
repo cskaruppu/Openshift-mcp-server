@@ -8,6 +8,9 @@
 #   --only <model>   deploy one model (bge-m3, llama-3-1-8b, qwen2-5-vl-7b, gpt-oss-120b); default all,
 #                    smallest first, each one checked before the next
 #   --dashboard      also label openshift-mcp so its models show in the OpenShift AI dashboard
+#   --download-here  download the weights on THIS machine (needs internet + python3) and copy them
+#                    into the claims, for clusters whose pods cannot reach huggingface.co
+#                    (local copy kept in \$MODELS_DIR, default ~/tcs-models)
 #
 # Needs: OpenShift AI with KServe Managed and its pods Running; Secret hf-token in openshift-mcp
 # (oc -n openshift-mcp create secret generic hf-token --from-literal=HF_TOKEN=<token>).
@@ -16,12 +19,13 @@
 set -euo pipefail
 NS=openshift-mcp
 HERE="$(cd "$(dirname "$0")" && pwd)"
-KC=""; ONLY=""; DASH=false
+KC=""; ONLY=""; DASH=false; HERE_DL=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --kubeconfig) KC="$2"; shift 2 ;;
     --only) ONLY="$2"; shift 2 ;;
     --dashboard) DASH=true; shift ;;
+    --download-here) HERE_DL=true; shift ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -84,25 +88,38 @@ apiVersion: batch/v1
 kind: Job
 metadata: { name: download-$n, namespace: $NS, labels: { tcs.com/demo: private-ai-ops } }
 spec:
-  backoffLimit: 3
+  backoffLimit: 1
   activeDeadlineSeconds: 10800
   template:
     metadata: { labels: { tcs.com/demo: private-ai-ops } }
     spec:
-      restartPolicy: OnFailure
+      restartPolicy: Never   # failed pods are kept, so their logs can be read
       containers:
         - name: download
           image: $VLLM_IMG
           command: ["python3", "-c"]
           args:
             - |
-              import os, pathlib
-              from huggingface_hub import snapshot_download
+              import os, sys, socket, pathlib
               d = pathlib.Path("/cache/model"); done = d / ".tcs-complete"
-              if done.exists(): print("already downloaded"); raise SystemExit(0)
+              if done.exists(): print("already downloaded"); sys.exit(0)
+              try:
+                  from huggingface_hub import snapshot_download
+              except Exception as e:
+                  print("ERROR: this image has no huggingface_hub:", e); sys.exit(3)
+              if not (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")):
+                  try: socket.getaddrinfo("huggingface.co", 443)
+                  except Exception as e:
+                      print("ERROR: the cluster cannot resolve huggingface.co (no internet/DNS from pods):", e)
+                      print("HINT: run deploy-rhoai.sh with --download-here to download on this machine instead"); sys.exit(4)
               skip = [p for p in os.environ.get("SKIP", "").split(",") if p]
-              snapshot_download(os.environ["REPO"], local_dir=str(d), ignore_patterns=skip or None,
-                                token=os.environ.get("HF_TOKEN") or None)
+              try:
+                  snapshot_download(os.environ["REPO"], local_dir=str(d), ignore_patterns=skip or None,
+                                    token=os.environ.get("HF_TOKEN") or None)
+              except Exception as e:
+                  print("ERROR:", type(e).__name__, str(e)[:600])
+                  print("HINT: 401/403/gated = accept the licence and check the hf-token Secret; "
+                        "connection errors = no internet from the cluster (use --download-here)"); sys.exit(5)
               done.write_text("ok"); print("downloaded", os.environ["REPO"])
           env:
             - { name: REPO, value: "$repo" }
@@ -126,9 +143,52 @@ YAML
   if [[ "$st" != *Complete* ]]; then
     echo "✗ Download of $repo did not finish (job: ${st:-no status}). Last log lines:" >&2
     o -n "$NS" get pods -l job-name="download-$n" -o wide >&2 || true
-    o -n "$NS" logs "job/download-$n" --tail=25 >&2 2>&1 || o -n "$NS" describe job "download-$n" | tail -15 >&2 || true
+    for p in $(o -n "$NS" get pods -l job-name="download-$n" -o name 2>/dev/null); do o -n "$NS" logs "$p" --tail=25 >&2 || true; done
     exit 1
   fi
+  echo "  ✓ weights in $n-cache"
+}
+
+download_here() { # name repo skip  — download on this machine, copy into the claim via a helper pod
+  local n="$1" repo="$2" skip="$3" dir="${MODELS_DIR:-$HOME/tcs-models}/$n" pod="copy-$n"
+  o -n "$NS" delete pod "$pod" --ignore-not-found >/dev/null
+  cat <<YAML | o apply -f - >/dev/null
+apiVersion: v1
+kind: Pod
+metadata: { name: $pod, namespace: $NS, labels: { tcs.com/demo: private-ai-ops } }
+spec:
+  restartPolicy: Never
+  containers:
+    - name: copy
+      image: $VLLM_IMG
+      command: ["sleep", "86400"]
+      volumeMounts: [{ name: cache, mountPath: /cache }]
+  volumes: [{ name: cache, persistentVolumeClaim: { claimName: $n-cache } }]
+YAML
+  o -n "$NS" wait --for=condition=Ready "pod/$pod" --timeout=10m >/dev/null \
+    || { echo "✗ Helper pod $pod did not start: oc -n $NS describe pod $pod" >&2; exit 1; }
+  if o -n "$NS" exec "$pod" -- test -f /cache/model/.tcs-complete 2>/dev/null; then
+    o -n "$NS" delete pod "$pod" --wait=false >/dev/null; echo "  ✓ already in $n-cache"; return
+  fi
+  python3 -c 'import huggingface_hub' 2>/dev/null || python3 -m pip install --user -q huggingface_hub \
+    || { echo "✗ Install huggingface_hub here first: python3 -m pip install --user huggingface_hub" >&2; exit 1; }
+  local tok="${HF_TOKEN:-$(o -n "$NS" get secret hf-token -o jsonpath='{.data.HF_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || true)}"
+  echo "  … downloading $repo to $dir (on this machine)"
+  mkdir -p "$dir"
+  REPO="$repo" SKIP="$skip" DIR="$dir" HF_TOKEN="$tok" python3 - <<'PY' || { echo "✗ Download of $repo failed on this machine" >&2; exit 1; }
+import os
+from huggingface_hub import snapshot_download
+skip = [p for p in os.environ["SKIP"].split(",") if p]
+snapshot_download(os.environ["REPO"], local_dir=os.environ["DIR"], ignore_patterns=skip or None,
+                  token=os.environ.get("HF_TOKEN") or None)
+PY
+  rm -rf "$dir/.cache"
+  echo "  … copying $(du -sh "$dir" | cut -f1) into $n-cache (can take a while for large models)"
+  o -n "$NS" exec "$pod" -- mkdir -p /cache/model
+  o -n "$NS" rsync --strategy=tar --progress=false "$dir/" "$pod:/cache/model/" >/dev/null \
+    || { echo "✗ Copy into $n-cache failed" >&2; exit 1; }
+  o -n "$NS" exec "$pod" -- sh -c 'echo ok > /cache/model/.tcs-complete'
+  o -n "$NS" delete pod "$pod" --wait=false >/dev/null
   echo "  ✓ weights in $n-cache"
 }
 
@@ -136,7 +196,17 @@ for m in "${MODELS[@]}"; do
   IFS='|' read -r n repo size skip file <<<"$m"
   [[ -z "$ONLY" || "$ONLY" == "$n" ]] || continue
   echo "▶ $n"
-  download "$n" "$repo" "$size" "$skip"
+  if $HERE_DL; then
+    o -n "$NS" get pvc "$n-cache" >/dev/null 2>&1 || cat <<YAML | o apply -f - >/dev/null
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: $n-cache, namespace: $NS, labels: { tcs.com/demo: private-ai-ops } }
+spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: $size } } }
+YAML
+    download_here "$n" "$repo" "$skip"
+  else
+    download "$n" "$repo" "$size" "$skip"
+  fi
   before=$(restarts)
   sed "s/__VLLM_RUNTIME__/$VLLM_RT/" "$HERE/$file" | o apply -f - >/dev/null
   echo "  … starting (oc -n $NS get pods -l serving.kserve.io/inferenceservice=$n)"
