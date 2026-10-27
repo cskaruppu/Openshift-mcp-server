@@ -91,6 +91,7 @@ export function CommandCenter({ open, onClose }) {
   const [stage, setStage] = useState(() => { try { return localStorage.getItem("cc-stage") === "1"; } catch { return false; } });
   const toggleStage = () => setStage((v) => { try { localStorage.setItem("cc-stage", v ? "0" : "1"); } catch { /* private window */ } return !v; });
   const shellRef = useRef(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   // Present: full screen with larger type for a projector; leaving full screen (Esc) ends it.
   const present = () => {
     const el = shellRef.current;
@@ -179,17 +180,23 @@ export function CommandCenter({ open, onClose }) {
               <span className="ah-lockup-rule" aria-hidden="true" />
               <span className="ah-lockup-mod"><span className="ah-lockup-module cc-title">Private AI Factory</span></span>
             </div>
-            <div className="cc-tools" role="toolbar" aria-label="Private AI Factory actions">
-              <button className={"cc-tool" + (stage ? " on" : "")} onClick={present} title={stage ? "Presenting — Esc to leave full screen" : "Present: full screen with larger type for a projector"} aria-label="Present">
-                <Icon d={<><path d="M3 4h18v12H3z" /><path d="M8 20h8M12 16v4" /></>} /><span>Present</span></button>
-              {d?.enabled && <button className="cc-tool" onClick={() => window.open(scoped("/api/command-center/evidence"), "_blank", "noopener")} title="Export a printable report of this session: models, GPUs, guardrails, AI traffic (Save as PDF)" aria-label="Export report">
-                <Icon d={<><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 19h14" /></>} /><span>Export</span></button>}
-              <button className="cc-tool" onClick={cycleTheme} title={`Theme: ${ccTheme}${ccTheme === "auto" ? ` (following the console: ${look})` : ""} — click to change`} aria-label="Theme">
-                <Icon d={look === "dark" ? <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" /> : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>} />
-                <span>{CC_THEMES[ccTheme] || CC_THEMES.auto}</span></button>
-              <button className="cc-tool" disabled={!!busy} title={d?.session?.since ? `Reset the session counters (current session since ${fmtTime(d.session.since)}). The usage record is kept.` : "Reset the session counters"} aria-label="Reset session"
-                onClick={() => { if (window.confirm("Start a new session? The session counters, AI traffic and trend lines reset; the usage record is kept.")) act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset"); }}>
-                <Icon d={<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>} /><span>Reset</span></button>
+            <div className="cc-more">
+              <button className={"cc-tool" + (moreOpen ? " on" : "")} onClick={() => setMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={moreOpen} title="More: present, export report, theme, reset" aria-label="More actions">
+                <Icon d={<><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></>} />
+              </button>
+              {moreOpen && (
+                <div className="cc-menu" role="menu" onMouseLeave={() => setMoreOpen(false)}>
+                  <button role="menuitem" onClick={() => { setMoreOpen(false); present(); }}>
+                    <Icon d={<><path d="M3 4h18v12H3z" /><path d="M8 20h8M12 16v4" /></>} /><span>{stage ? "Stop presenting" : "Present (full screen)"}</span></button>
+                  {d?.enabled && <button role="menuitem" onClick={() => { setMoreOpen(false); window.open(scoped("/api/command-center/evidence"), "_blank", "noopener"); }}>
+                    <Icon d={<><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 19h14" /></>} /><span>Export report (PDF)</span></button>}
+                  <button role="menuitem" onClick={() => cycleTheme()}>
+                    <Icon d={look === "dark" ? <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" /> : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2" /></>} />
+                    <span>Theme: {CC_THEMES[ccTheme] || CC_THEMES.auto}</span></button>
+                  <button role="menuitem" disabled={!!busy} onClick={() => { setMoreOpen(false); if (window.confirm("Start a new session? The session counters, AI traffic and trend lines reset; the usage record is kept.")) act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset"); }}>
+                    <Icon d={<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>} /><span>Reset session</span></button>
+                </div>
+              )}
             </div>
             <div className="ah-winbtns">
               <button className="ah-winbtn" onClick={() => setMinimized(true)} title="Minimise" aria-label="Minimise"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg></button>
