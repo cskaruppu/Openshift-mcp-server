@@ -10157,3 +10157,19 @@ code.new { color: #22a06b; }
 .cc-act.demo { background: transparent; border: 1px solid var(--cc-line); }
 .cc-act.demo.on { border-color: transparent; }
 .cc-shell:fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+
+/* Slimmer context bar; short labels when the window is narrow (full text in the tooltip). */
+.cc-ctx { padding: 5px 24px; gap: 8px; min-height: 0; }
+.cc-ctx-name { font-size: 0.8rem; }
+.cc-hwchip { padding: 2px 9px; font-size: 0.72rem; }
+.cc-ctx .cc-egress, .cc-ctx .cc-access { padding: 3px 9px; font-size: 0.72rem; }
+.cc-ctx .cc-since { font-size: 0.72rem; } .cc-ctx .cc-clock { font-size: 0.76rem; }
+.cc-ctx .cc-cluster { padding: 4px 28px 4px 9px; font-size: 0.74rem; }
+.cc-short { display: none; }
+@media (max-width: 1640px) {
+  .cc-act .cc-full { display: none; } .cc-act .cc-short { display: inline; }
+}
+@media (max-width: 1500px) {
+  .cc-egress .cc-full { display: none; } .cc-egress .cc-short { display: inline; }
+  .cc-hide-narrow { display: none; }
+}

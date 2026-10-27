@@ -24,7 +24,8 @@ const PLATFORM_TABS = [["floor", "Overview"], ["catalogue", "Models"], ["fleet",
 // The stage demo (Settings → Private AI → Demo tabs): "event" = the presenter's
 // numbered running order; "product" = the same views as feature names; "hidden".
 const DEMO_TABS = {
-  event: { label: "Live demo", tabs: [["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]] },
+  // [key, full name, short name shown when the window is narrow (full name in the tooltip)]
+  event: { label: "Live demo", tabs: [["act1", "1 · Private by design", "1 · Private"], ["act2", "2 · Incident at scale", "2 · Incident"], ["act3", "3 · Secure the AI supply chain", "3 · Supply chain"], ["act4", "4 · Modernise at GPU speed", "4 · Modernise"], ["score", "Scorecard", "Scorecard"]] },
   product: { label: "Operations", tabs: [["act1", "Private AI"], ["act2", "Incident response"], ["act3", "Supply chain security"], ["act4", "VM modernisation"], ["score", "Scorecard"]] },
   hidden: null,
 };
@@ -216,11 +217,12 @@ export function CommandCenter({ open, onClose }) {
             )}
             {d?.enabled && (
               <span className={"cc-egress" + (d.act1.egress.blocked ? " on" : "")} title={d.act1.egress.blocked ? `NetworkPolicy ${d.act1.egress.policy} in ${d.act1.egress.namespace}` : "The platform can reach the internet"}>
-                ● {d.act1.egress.blocked ? `Internet egress blocked · since ${fmtTime(d.act1.egress.since)}` : "Internet egress open"}
+                ● <span className="cc-full">{d.act1.egress.blocked ? `Internet egress blocked · since ${fmtTime(d.act1.egress.since)}` : "Internet egress open"}</span>
+                <span className="cc-short">{d.act1.egress.blocked ? "Egress blocked" : "Egress open"}</span>
               </span>
             )}
-            {d?.enabled && <span className="cc-since">Session since {fmtTime(d.session.since)}</span>}
-            <span className="cc-clock">{new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+            {d?.enabled && <span className="cc-since cc-hide-narrow">Session since {fmtTime(d.session.since)}</span>}
+            <span className="cc-clock cc-hide-narrow">{new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
           </div>
 
           <nav className="cc-nav" aria-label="Private AI Factory views">
@@ -228,7 +230,11 @@ export function CommandCenter({ open, onClose }) {
             {demo && <>
               <span className="cc-nav-div" aria-hidden="true" />
               <span className="cc-nav-lbl">{demo.label}</span>
-              {demo.tabs.map(([k, l]) => <button key={k} className={"cc-act demo" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
+              {demo.tabs.map(([k, l, sh]) => (
+                <button key={k} className={"cc-act demo" + (act === k ? " on" : "")} onClick={() => setAct(k)} title={sh && sh !== l ? l : undefined}>
+                  {sh && sh !== l ? <><span className="cc-full">{l}</span><span className="cc-short">{sh}</span></> : l}
+                </button>
+              ))}
             </>}
           </nav>
 
