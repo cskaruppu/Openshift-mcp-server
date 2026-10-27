@@ -147,6 +147,12 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
   const [cmp, setCmp] = useState(null);
   const [cmpBusy, setCmpBusy] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [tests, setTests] = useState({});   // model → { busy } | test result
+  const testModel = async (name) => {
+    setTests((t) => ({ ...t, [name]: { busy: true } }));
+    try { const r = await post("/api/command-center/model/test", { name }); setTests((t) => ({ ...t, [name]: r })); }
+    catch (e) { setTests((t) => ({ ...t, [name]: { ok: false, error: e.message } })); }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -237,22 +243,33 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
         <section className="cc-card">
           <header><h3>Model performance</h3><span>OpenShift AI · vLLM</span></header>
           <div className="ff-table">
-            <div className="ff-tr ff-th"><span>Model</span><span>Status</span><span>First token</span><span>Tokens/s</span><span>Load</span><span /></div>
+            <div className="ff-tr ff-th"><span>Model</span><span>Status</span><span>First token</span><span>Tokens/s</span><span>Load</span><span>Actions</span></div>
             {f.models.map((m) => (
-              <div key={m.model} className="ff-tr">
+              <div key={m.model} className={"ff-trw" + (m.notConnected ? " off" : "")}><div className="ff-tr">
                 <span><i className="ff-dot" style={{ background: ROLE_COLOR[m.role] || OTHER }} /><b>{m.model}</b></span>
-                <span className={m.ready ? "ff-ok" : "ff-bad"} title={m.error || ""}>{m.control?.stopped ? "■ Stopped" : m.ready ? "● Ready" : "● Down"}</span>
+                <span className={m.ready ? "ff-ok" : m.control?.stopped ? "ff-muted" : "ff-bad"} title={m.error || ""}>{m.control?.stopped ? "■ Stopped" : m.ready ? "● Ready" : m.notConnected ? "● Not connected" : "● Down"}</span>
                 <span className="mono">{m.stats?.ttftMs != null ? `${num(m.stats.ttftMs)} ms` : "—"}</span>
                 <span className="mono">{m.stats?.tokensPerSec != null ? num(m.stats.tokensPerSec) : "—"}</span>
                 <span className="mono" title={m.stats?.kvCachePct != null ? `KV cache ${m.stats.kvCachePct}%` : ""}>{m.stats?.running != null ? `${m.stats.running}${m.stats.waiting ? ` +${m.stats.waiting}` : ""}` : "—"}</span>
-                <span>{m.control && (
+                <span className="ff-acts">
+                  {!m.notConnected && <button className="vc-btn ghost sm" disabled={tests[m.model]?.busy} title="Send a tiny real request and time the answer"
+                    onClick={() => testModel(m.model)}>{tests[m.model]?.busy ? "Testing…" : "Test"}</button>}
+                  {m.control && (
                   <button className="vc-btn ghost sm" disabled={!!busy}
-                    onClick={() => act$(`model-${m.model}`, () => post("/api/command-center/model", { name: m.model, run: m.control.stopped }), m.control.stopped ? `${m.model} starting` : `${m.model} stopped — GPU memory released`)}>
+                    onClick={() => act$(`model-${m.model}`, () => post("/api/command-center/model", { name: m.model, run: m.control.stopped }), m.control.stopped ? `${m.model} starting — connect it again when it is ready` : `${m.model} stopped — GPU memory released`)}>
                     {m.control.stopped ? "Start" : "Stop"}
-                  </button>)}</span>
+                  </button>)}
+                </span>
+              </div>
+              {tests[m.model] && !tests[m.model].busy && (
+                <div className={"ff-test " + (tests[m.model].ok ? "ok" : "bad")}>
+                  {tests[m.model].ok ? `✓ Answered in ${tests[m.model].ms} ms: “${tests[m.model].reply}”` : `✗ ${tests[m.model].error}`}
+                </div>)}
+              {m.notConnected && <div className="ff-test muted">{m.error}</div>}
               </div>
             ))}
             {!f.models.length && <p className="cc-note">No models connected yet.</p>}
+            {f.models.length > 0 && <span className="cc-muted">Test sends a tiny real request to the model and times the answer; it is listed in AI traffic.</span>}
           </div>
           <div className="ff-cap">
             <span className="cc-lbl">Headroom on these GPUs</span>

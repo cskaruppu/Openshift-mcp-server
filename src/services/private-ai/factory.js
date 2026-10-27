@@ -16,6 +16,7 @@ import { lanFetch } from "../../utils/lan-dns.js";
 import * as router from "./router.js";
 import { embeddingModel } from "./embeddings.js";
 import { registerPart, changed } from "./persist.js";
+import { inferRole } from "./fleet.js";
 
 const MODELS_NS = () => process.env.PRIVATE_AI_MODELS_NAMESPACE || "openshift-mcp";
 const PRICE = () => { const n = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK); return Number.isFinite(n) && n > 0 ? n : 5; };
@@ -24,6 +25,22 @@ const HISTORY = 40;
 
 let _deps = { runForCluster: (_c, fn) => fn(), gpu: null, prom: null, promRange: null, ocp: null };
 export function configureFactory(deps) { _deps = { ..._deps, ...deps }; }
+
+/* ─────────────────────────── caching ─────────────────────────── */
+
+// Several panels (and the header, every 3 s) ask for the same slow reads: the GPU
+// overview is ~13 Prometheus queries, the pod list covers the whole cluster. One
+// read per key per `ttl`, shared by every caller while it is in flight.
+const _memo = new Map();
+export function memo(key, ttlMs, fn) {
+  const hit = _memo.get(key);
+  if (hit && (hit.pending || Date.now() - hit.at < ttlMs)) return hit.pending || Promise.resolve(hit.value);
+  const pending = Promise.resolve().then(fn).then((value) => { _memo.set(key, { at: Date.now(), value }); return value; },
+    (e) => { _memo.delete(key); throw e; });
+  _memo.set(key, { ...(hit || {}), pending });
+  return pending;
+}
+export function _resetMemo() { _memo.clear(); }
 
 /* ─────────────────────────── Prometheus text ─────────────────────────── */
 
@@ -138,7 +155,7 @@ async function floorNow() {
   if (!_deps.gpu) return { available: false, reason: "GPU telemetry not configured" };
   const g = await _deps.gpu().catch((e) => ({ available: false, reason: e.message }));
   let pods = [];
-  try { pods = (await _deps.ocp.fetch("/api/v1/pods?fieldSelector=status.phase%3DRunning")).items || []; } catch { /* slices optional */ }
+  try { pods = await memo(`pods:${_deps.clusterKey ? _deps.clusterKey() : "local"}`, 15000, async () => (await _deps.ocp.fetch("/api/v1/pods?fieldSelector=status.phase%3DRunning")).items || []); } catch { /* slices optional */ }
   const models = [...router.models().map((m) => m.model), ...(embeddingModel() ? [embeddingModel().model] : [])];
   const { byUuid, unplaced } = slicesFromPods(pods, models);
   const cards = (g.gpus || []).map((c) => {
@@ -207,12 +224,16 @@ async function gpuHistoryNow() {
   return { available: util.length > 0, hours: 24, stepSec: DAY_STEP, util, memPct: memPts, powerW: powerPts, cards };
 }
 
+// The 24 h queries never hold up the floor: the last result is served at once and
+// refreshed in the background (every 60 s); the very first read shows "loading".
 async function gpuHistory(cluster) {
   const hit = _gpuHist.get(cluster);
-  if (hit && Date.now() - hit.at < 60000) return hit.data;
-  const data = await _deps.runForCluster(cluster, gpuHistoryNow).catch((e) => ({ available: false, reason: e.message }));
-  _gpuHist.set(cluster, { at: Date.now(), data });
-  return data;
+  if (!hit || (!hit.pending && Date.now() - hit.at >= 60000)) {
+    const pending = _deps.runForCluster(cluster, gpuHistoryNow).catch((e) => ({ available: false, reason: e.message }))
+      .then((data) => { _gpuHist.set(cluster, { at: Date.now(), data }); return data; });
+    _gpuHist.set(cluster, { ...(hit || { data: { available: false, reason: "loading the last 24 hours…" } }), pending });
+  }
+  return _gpuHist.get(cluster).data;
 }
 
 /* ─────────────────────────── alerts: GPU health and idle capacity ─────────────────────────── */
@@ -280,7 +301,7 @@ function sample(k) {
   if (_hist.length > HISTORY) _hist.shift();
   changed();
 }
-export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); _gpuHist.clear(); changed(); }
+export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); _gpuHist.clear(); _snap.clear(); changed(); }
 // Trend lines and the session's energy baseline survive a restart (persist.js).
 registerPart("factory", {
   exportState: () => ({ hist: _hist.slice(), energyStart: _energyStart }),
@@ -289,7 +310,23 @@ registerPart("factory", {
 
 /* ─────────────────────────── the read ─────────────────────────── */
 
-export async function factoryState({ cluster = "local", since }) {
+// The floor is served from the last snapshot (at most a few seconds old) while the
+// next one is read, so opening the tab or switching back to it is instant.
+const _snap = new Map();
+export function factoryState({ cluster = "local", since }) {
+  const hit = _snap.get(cluster);
+  const fresh = hit && hit.since === since && Date.now() - hit.at < 4000;
+  if (fresh) return Promise.resolve(hit.value);
+  if (!hit?.pending) {
+    const pending = readFactory({ cluster, since }).then((value) => { _snap.set(cluster, { at: Date.now(), since, value }); return value; })
+      .catch((e) => { const h = _snap.get(cluster); if (h) delete h.pending; throw e; });
+    _snap.set(cluster, { ...(hit || {}), pending });
+  }
+  const cur = _snap.get(cluster);
+  return cur.value && cur.since === since ? Promise.resolve(cur.value) : cur.pending;
+}
+
+async function readFactory({ cluster = "local", since }) {
   const [models, floor, energy, isvcs, history] = await Promise.all([
     modelsNow(cluster),
     _deps.runForCluster(cluster, floorNow).catch((e) => ({ available: false, reason: e.message, nodes: [] })),
@@ -323,7 +360,17 @@ export async function factoryState({ cluster = "local", since }) {
   return {
     kpis, history: _hist.slice(),
     router: { on: routed > 0, split: Object.fromEntries(Object.entries(roles).filter(([r]) => r !== "none").map(([r, n]) => [r, routed ? Math.round((n / routed) * 100) : 0])) },
-    floor, models: models.map((m) => ({ ...m, control: isvcs.find((i) => i.name === m.model) || null })),
+    // Every model deployed in OpenShift AI, connected or not, so a stopped one can be started from here.
+    floor, models: [
+      ...models.map((m) => ({ ...m, control: isvcs.find((i) => i.name === m.model) || null })),
+      ...isvcs.filter((i) => !models.some((m) => m.model === i.name)).map((i) => {
+        const role = inferRole(i.name);
+        return { role, label: { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML", embed: "Incident memory" }[role],
+          model: i.name, gpu: null, cluster, ready: false, notConnected: true, stats: null,
+          error: i.stopped ? "stopped in OpenShift AI" : i.ready ? "running, not connected to the platform (run enable.sh or GPU fleet → Discover models)" : "not ready in OpenShift AI",
+          control: i };
+      }),
+    ],
     capacity: { totalMiB: totalMem, freeMiB: freeMem, usedPct: totalMem ? Math.round(((totalMem - freeMem) / totalMem) * 100) : null, freeCards },
     guardrails: g, log: log.slice(0, 12),
     history24h: history && history.available ? { util: history.util, memPct: history.memPct, powerW: history.powerW, stepSec: history.stepSec,
@@ -358,6 +405,39 @@ export async function setModelRunning({ cluster = "local", name, run }) {
 /* ─────────────────────────── side by side ─────────────────────────── */
 
 const SYSTEM = "You are an SRE assistant for OpenShift and Kubernetes. Answer in at most three sentences, concrete and actionable.";
+
+/** Is this model really answering? A tiny real request: a one-word reply, or one embedding. */
+export async function testModel(name) {
+  const m = allModels().find((x) => x.model === name);
+  if (!m) throw Object.assign(new Error(`${name} is not connected to the platform — start it, then run enable.sh or GPU fleet → Discover models`), { status: 409 });
+  const t0 = Date.now();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 60000);
+  const headers = { "Content-Type": "application/json", ...(process.env.PRIVATE_AI_API_KEY ? { Authorization: `Bearer ${process.env.PRIVATE_AI_API_KEY}` } : {}) };
+  let out;
+  try {
+    if (m.role === "embed") {
+      const r = await lanFetch(`${m.url}/v1/embeddings`, { method: "POST", signal: ctl.signal, headers, body: JSON.stringify({ model: m.model, input: "payments-api pod crashlooping" }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error?.message || j.error || `HTTP ${r.status}`);
+      const dims = j.data?.[0]?.embedding?.length || 0;
+      out = { ok: dims > 0, reply: `${dims}-dimension vector`, ms: Date.now() - t0 };
+    } else {
+      const r = await lanFetch(`${m.url}/v1/chat/completions`, { method: "POST", signal: ctl.signal, headers,
+        body: JSON.stringify({ model: m.model, messages: [{ role: "user", content: "Reply with exactly one word: ready" }], max_tokens: 16, temperature: 0 }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error?.message || `HTTP ${r.status}`);
+      const msg = j.choices?.[0]?.message || {};
+      out = { ok: true, reply: String(msg.content || msg.reasoning_content || "").trim().slice(0, 80) || "(empty reply)", ms: Date.now() - t0, tokens: j.usage?.total_tokens ?? null };
+    }
+  } catch (e) {
+    out = { ok: false, error: e?.name === "AbortError" ? "no answer within 60 s" : e.message, ms: Date.now() - t0 };
+  } finally { clearTimeout(timer); }
+  const d = router.logDirect({ id: Math.random().toString(16).slice(2, 14), at: new Date().toISOString(), question: `Model test: ${m.model}`, role: m.role, wanted: m.role,
+    model: m.model, gpu: m.gpu || null, cluster: m.cluster || null, reason: "model test from the Factory", sensitive: [], onPrem: true, useCase: "model-test", conversationId: null, ms: null, ok: null, tokens: null });
+  router.complete(d, { ms: out.ms, ok: out.ok, usage: out.tokens ? { totalTokens: out.tokens } : null, text: out.reply, error: out.error });
+  return { model: m.model, role: m.role, ...out };
+}
 
 async function ask(m, question) {
   const t0 = Date.now();

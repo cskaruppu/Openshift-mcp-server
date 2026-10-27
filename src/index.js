@@ -2157,12 +2157,17 @@ async function startSSE() {
       const IO = await import("./services/incident-orchestrator.js");
       const PS = await import("./services/private-ai/settings.js");
       SC.configureScenario({ runForCluster: privateAiRun, detect: detectIncidents, promote: IO.promoteDetection, getSession: IO.getIncidentSession });
+      const FYm = await import("./services/private-ai/factory.js");
+      const { activeClusterContext } = await import("./utils/openshift-client.js");
+      const clusterKey = () => activeClusterContext()?.apiUrl || "local";
+      // ~13 Prometheus queries: read once per cluster every 10 s, shared by every panel.
+      const gpuCached = () => FYm.memo(`gpu:${clusterKey()}`, 10000, () => getGpuOverview());
       const FL = await import("./services/private-ai/fleet.js");
       const RT = await import("./services/private-ai/router.js");
       const EM = await import("./services/private-ai/embeddings.js");
       const CLB = await import("./services/cluster-labels.js");
       FL.configureFleet({
-        runForCluster: privateAiRun, gpu: getGpuOverview, ocp: { fetch: ocpFetch, post: ocpPost },
+        runForCluster: privateAiRun, gpu: gpuCached, ocp: { fetch: ocpFetch, post: ocpPost },
         preferred: () => PS.effectiveSettings().cluster, accessClusters: () => PS.accessClusters(),
         label: (c) => CLB.clusterLabels()[c] || c,
       });
@@ -2182,7 +2187,7 @@ async function startSSE() {
       });
       const FY = await import("./services/private-ai/factory.js");
       FY.configureFactory({
-        runForCluster: privateAiRun, gpu: getGpuOverview,
+        runForCluster: privateAiRun, gpu: gpuCached, clusterKey,
         fleetEmbeds: () => FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false),
         prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
         promRange: async (q, start, end, step) => (await import("./services/prometheus.js")).promRange(q, start, end, step),
@@ -2190,7 +2195,7 @@ async function startSSE() {
       });
       CC.configureCommandCenter({
         runForCluster: privateAiRun,
-        gpu: getGpuOverview,
+        gpu: gpuCached,
         scanSummary: async () => summariseLatestScan(),
         remediations: async (cluster) => (await import("./services/remediation/workflow.js")).list({ cluster }),
         clusterAccess: async (c) => (PS.getClusterAccess(c) || hasCredentials(c) ? "direct" : hasActiveChannel(c) ? "agent" : hasSpoke(c) ? "spoke" : "none"),
@@ -9374,6 +9379,12 @@ spec:
             }
             const out = await FL.forgetCluster(c);
             audit(`GPU cluster ${c} removed from the AI fleet`, { cluster: c });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/model/test": {
+            const FY = await import("./services/private-ai/factory.js");
+            const out = await FY.testModel(String(body.name || ""));
+            audit(`Model test: ${out.model} ${out.ok ? `answered in ${out.ms} ms` : `failed (${out.error})`}`, { model: out.model });
             return sendJson(res, 200, out);
           }
           case "/api/command-center/model": {

@@ -10060,3 +10060,11 @@ code.new { color: #22a06b; }
 .ff-kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--cc-line); font-size: 0.78rem; }
 .ff-kv span { color: var(--cc-ink2); } .ff-kv b { color: var(--cc-fg); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 .ff-ans-text { margin: 0; font-size: 0.8rem; line-height: 1.5; color: var(--cc-ink2); white-space: pre-wrap; }
+/* Factory: model rows with Test results and models not connected (FactoryFloor.jsx). */
+.ff-trw { border-top: 1px solid var(--cc-line); } .ff-trw .ff-tr { border-top: 0; }
+.ff-trw.off .ff-tr > span:first-child b { color: var(--cc-ink2); }
+.ff-tr { grid-template-columns: minmax(0, 1.5fr) 0.9fr 0.8fr 0.7fr 0.5fr 128px; }
+.ff-acts { display: flex; gap: 6px; justify-content: flex-end; }
+.ff-muted { color: var(--cc-ink3); font-weight: 700; font-size: 0.76rem; }
+.ff-test { margin: -2px 0 8px 16px; font-size: 0.74rem; color: var(--cc-ink2); }
+.ff-test.ok { color: var(--cc-ok-t); } .ff-test.bad { color: var(--cc-crit-t); }
