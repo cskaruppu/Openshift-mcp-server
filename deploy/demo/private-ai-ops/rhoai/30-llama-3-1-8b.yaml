@@ -1,4 +1,5 @@
-# Fast answers and summaries. bf16 weights about 16 GB, context 8K, 24 GB HAMi slice.
+# Fast answers and summaries; also the agent model when gpt-oss-120b is not deployed (tool calling on).
+# bf16 weights about 16 GB, context 16K, 24 GB HAMi slice.
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
@@ -21,7 +22,7 @@ spec:
       runtime: __VLLM_RUNTIME__
       # Weights downloaded once into this claim by deploy-rhoai.sh (download-llama-3-1-8b Job).
       storageUri: pvc://llama-3-1-8b-cache/model
-      args: ["--gpu-memory-utilization=0.90", "--max-model-len=8192", "--max-num-seqs=128"]
+      args: ["--gpu-memory-utilization=0.90", "--max-model-len=16384", "--max-num-seqs=64", "--enable-auto-tool-choice", "--tool-call-parser=llama3_json"]
       # HAMi keeps its per-container GPU-memory accounting file under /usr/local/vgpu, which OpenShift's
       # non-root, SELinux-confined pods cannot write (HAMI-core "Fail to open shrreg … errno=13").
       # Point it at the container's own /tmp instead; the memory limit is still enforced.
