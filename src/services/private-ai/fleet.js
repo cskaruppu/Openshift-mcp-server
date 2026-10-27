@@ -85,7 +85,8 @@ export function inferRole(name, annotations = {}) {
   return "small";
 }
 
-/** Find the OpenShift AI models on one cluster and remember them (with their Route URLs). */
+/** Find the OpenShift AI models on one cluster and remember the running ones (with their Route URLs).
+    Models stopped in OpenShift AI are listed but not used; discover again after starting them. */
 export async function discoverModels(cluster, { actor = "admin", expose = true } = {}) {
   if (!validCluster(cluster)) throw Object.assign(new Error("Not a valid cluster"), { status: 400 });
   const ns = MODELS_NS();
@@ -118,7 +119,7 @@ export async function discoverModels(cluster, { actor = "admin", expose = true }
     }
     return out;
   });
-  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url).map(({ ready: _r, stopped: _s, ...m }) => m),
+  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url && !m.stopped).map(({ ready: _r, stopped: _s, ...m }) => m),
     discoveredAt: new Date().toISOString(), discoveredBy: actor };
   const storage = await persist();
   return { cluster, models: found, storage };
