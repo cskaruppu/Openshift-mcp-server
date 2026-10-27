@@ -908,6 +908,9 @@ export function ChatView() {
     const cfg = providers[key];
     if (!cfg) return false;
     if (key === "ollama") return !!cfg.apiUrl;
+    // Private AI is set up by the deployment (the on-prem model endpoints), not with
+    // an API key here; the server lists it only when those endpoints exist.
+    if (key === "private") return !!cfg.enabled;
     if (key === "azure") return !!(cfg.apiKey && cfg.apiUrl && (cfg.deployment || cfg.model));
     return !!cfg.apiKey; // openai, anthropic, google, bedrock
   }
