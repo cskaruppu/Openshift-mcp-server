@@ -52,3 +52,38 @@ test("a blocked request is refused before any model is called and is counted", a
   delete process.env.PRIVATE_AI_SMALL_URL;
   R.resetTraffic();
 });
+
+import { factoryAlerts } from "../../src/services/private-ai/factory.js";
+
+test("GPU health and idle alerts, worst first", () => {
+  const now = Date.now();
+  const ts = (h) => Math.floor((now - h * 3600e3) / 1000);
+  const card = (index, extra) => ({ index, uuid: `GPU-${index}`, model: "NVIDIA H100 80GB HBM3", memTotalMiB: 81559, memUsedMiB: 1000, slices: [], ...extra });
+  const floor = { nodes: [{ name: "n1.lab", cards: [
+    card(0, { tempC: 88, xidError: 79 }),
+    card(1, { slices: [{ owner: "llama-3-1-8b", mib: 24576 }], powerW: 690, powerLimitW: 700 }),
+    card(2, {}),
+  ] }] };
+  const history = { cards: [
+    { node: "n1.lab", index: "1", uuid: "GPU-1", util: [[ts(2), 40], [ts(0.5), 1], [ts(0), 2]] },
+    { node: "n1.lab", index: "2", uuid: "GPU-2", util: [[ts(23), 0], [ts(1), 0], [ts(0), 0]] },
+  ] };
+  const a = factoryAlerts({ floor, history, now });
+  assert.equal(a[0].severity, "critical");
+  assert.ok(a.some((x) => /XID 79/.test(x.title)));
+  assert.ok(a.some((x) => /88 °C/.test(x.title) && x.severity === "critical"));
+  assert.ok(a.some((x) => /power limit/.test(x.title) && x.severity === "warning"));
+  assert.ok(a.some((x) => x.kind === "idle" && /24 GB reserved/.test(x.title)));
+  assert.ok(a.some((x) => x.kind === "free" && /#2/.test(x.title)));
+  assert.equal(a.at(-1).severity, "info");
+});
+
+test("a finished request keeps what the detail panel shows, masked", () => {
+  const d = { id: "x", sensitive: [] };
+  R.complete(d, { ms: 1200, ok: true, firstTokenMs: 180, usage: { promptTokens: 900, completionTokens: 120, totalTokens: 1020 },
+    toolCalls: [{ name: "get_pods" }, { function: { name: "get_events" } }], text: "Pods restart: password=hunter2xyz in the config" });
+  assert.equal(d.firstTokenMs, 180);
+  assert.equal(d.promptTokens, 900);
+  assert.deepEqual(d.toolCalls, ["get_pods", "get_events"]);
+  assert.ok(!d.answer.includes("hunter2xyz"));
+});

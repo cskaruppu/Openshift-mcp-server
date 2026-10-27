@@ -504,11 +504,11 @@ export async function callLLM({ messages, ...opts }) {
     else result = { text: "", toolCalls: [] };
     // Usage lives inside the provider's raw body, not beside it.
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion });
-    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw) });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw), toolCalls: result?.toolCalls, text: result?.text });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message });
-    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false, error: err?.message });
     throw err;
   }
 }
@@ -529,8 +529,9 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
   if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata };
   else if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
   if (!relayPrivate) validateLLMConfig(o);
-  const hooks = { onDelta, onToolCall };
   const t0 = Date.now();
+  let firstTokenMs = null;
+  const hooks = { onDelta: onDelta ? (d) => { if (firstTokenMs == null) firstTokenMs = Date.now() - t0; return onDelta(d); } : onDelta, onToolCall };
   let provider = o.provider;
   let model = o.azureDeployment || o.model || null;
   try {
@@ -544,11 +545,11 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
     else if (o.provider === "ollama") result = await callOllama(messages, o, true, hooks);
     else result = { text: "", toolCalls: [] };
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: true, usage: normaliseUsage(result?.raw), stop: normaliseStopReason(result?.raw), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, streaming: true });
-    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw) });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: true, usage: normaliseUsage(result?.raw), firstTokenMs, toolCalls: result?.toolCalls, text: result?.text });
     return result;
   } catch (err) {
     _recordTelemetry({ provider, model, durationMs: Date.now() - t0, success: false, errorClass: _classifyErr(err), conversationId: opts.conversationId, agentId: opts.agentId, agentVersion: opts.agentVersion, errMsg: err?.message, streaming: true });
-    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false });
+    if (routed) completePrivate(routed, { ms: Date.now() - t0, ok: false, error: err?.message });
     throw err;
   }
 }

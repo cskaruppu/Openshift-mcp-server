@@ -2178,6 +2178,7 @@ async function startSSE() {
         runForCluster: privateAiRun, gpu: getGpuOverview,
         fleetEmbeds: () => FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false),
         prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
+        promRange: async (q, start, end, step) => (await import("./services/prometheus.js")).promRange(q, start, end, step),
         ocp: { fetch: ocpFetch, patch: ocpPatch },
       });
       CC.configureCommandCenter({

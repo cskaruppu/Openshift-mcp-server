@@ -210,11 +210,11 @@ const _log = [];
 const _counts = { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0, masked: 0 };
 let _since = new Date().toISOString();
 
-function preview(q) {
-  // What the traffic panel shows: the question with anything sensitive masked.
+function preview(q, max = 140) {
+  // What the traffic panel shows: the text with anything sensitive masked.
   let s = String(q || "").replace(/\s+/g, " ").trim();
   for (const [, re] of SENSITIVE) s = s.replace(new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"), "••••••");
-  return s.length > 140 ? s.slice(0, 137) + "…" : s;
+  return s.length > max ? s.slice(0, max - 3) + "…" : s;
 }
 
 export function trafficLog(limit = 50, { conversationId = null } = {}) {
@@ -273,6 +273,9 @@ export async function route(o, messages, { useCase = null, conversationId = null
     id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview([...messages].reverse().find((m) => m.role === "user")?.content || useCase || ""),
     role: chosen?.role || null, wanted: d.role, model: chosen?.model || null, gpu: chosen?.gpu || null, cluster: chosen?.cluster || null, reason: fallbackNote ? `${d.reason} · ${fallbackNote}` : d.reason,
     sensitive: d.sensitive, onPrem: true, useCase, conversationId, ms: null, ok: null, tokens: null,
+    // For the request detail panel: what the model was given and what it did.
+    toolsOffered: Array.isArray(o.tools) ? o.tools.length : 0, images: Array.isArray(o.images) ? o.images.length : 0,
+    turns: messages.length, override: d.override || null,
   };
 
   let out;
@@ -306,9 +309,15 @@ function record(decision) {
 export function logDirect(decision) { record(decision); return decision; }
 
 /** Called by llm.js when the call finishes. */
-export function complete(decision, { ms, ok, usage }) {
+export function complete(decision, { ms, ok, usage, firstTokenMs = null, toolCalls = null, text = null, error = null }) {
   if (!decision) return;
   decision.ms = ms; decision.ok = ok;
+  decision.firstTokenMs = firstTokenMs;
+  decision.promptTokens = usage?.promptTokens ?? null;
+  decision.completionTokens = usage?.completionTokens ?? null;
+  decision.toolCalls = Array.isArray(toolCalls) ? toolCalls.map((t) => t?.name || t?.function?.name || "tool").slice(0, 12) : [];
+  decision.answer = text ? preview(text, 400) : null;
+  decision.error = error ? String(error).slice(0, 300) : null;
   const t = usage ? (usage.totalTokens ?? (((usage.promptTokens || 0) + (usage.completionTokens || 0)) || null)) : null;
   decision.tokens = t || null;
   if (t) _counts.tokens += t;

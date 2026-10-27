@@ -26,12 +26,12 @@ async function post(path, body = {}) {
   return j;
 }
 
-function Spark({ points, color = "var(--cc-blue)" }) {
+function Spark({ points, color = "var(--cc-blue)", stretch = false }) {
   const v = (points || []).filter((p) => p != null);
   if (v.length < 2) return <svg className="ff-spark" viewBox="0 0 84 26" aria-hidden="true" />;
   const lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1;
   const pts = v.map((p, i) => `${(i / (v.length - 1)) * 84},${24 - ((p - lo) / span) * 20}`).join(" ");
-  return <svg className="ff-spark" viewBox="0 0 84 26" aria-hidden="true"><polyline fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" points={pts} /></svg>;
+  return <svg className="ff-spark" viewBox="0 0 84 26" preserveAspectRatio={stretch ? "none" : undefined} aria-hidden="true"><polyline fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" points={pts} /></svg>;
 }
 
 function Kpi({ label, value, sub, hist, color, tone, badge }) {
@@ -44,6 +44,101 @@ function Kpi({ label, value, sub, hist, color, tone, badge }) {
   );
 }
 
+/** GPU use over the last 24 h: average utilisation and memory reserved, with a hover readout. */
+function DayChart({ h }) {
+  const [hover, setHover] = useState(null);
+  const util = h?.util || [], mem = h?.memPct || [];
+  if (util.length < 2) return <p className="cc-note">{h?.reason ? `GPU history unavailable: ${h.reason}` : "GPU history appears once the cluster's monitoring has a few readings."}</p>;
+  const W = 600, H = 120, t0 = util[0][0], t1 = util[util.length - 1][0], span = t1 - t0 || 1;
+  const x = (ts) => ((ts - t0) / span) * W, y = (v) => H - (Math.max(0, Math.min(100, v)) / 100) * H;
+  const path = (s) => s.map(([ts, v], i) => `${i ? "L" : "M"}${x(ts).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const near = (s, ts) => s.reduce((b, p) => (Math.abs(p[0] - ts) < Math.abs(b[0] - ts) ? p : b), s[0]);
+  const onMove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const ts = t0 + ((e.clientX - r.left) / r.width) * span;
+    const u = near(util, ts), m = mem.length ? near(mem, ts) : null;
+    setHover({ px: ((u[0] - t0) / span) * 100, ts: u[0], u: u[1], m: m ? m[1] : null });
+  };
+  const peak = Math.max(...util.map(([, v]) => v));
+  const avg = util.reduce((a, [, v]) => a + v, 0) / util.length;
+  return (
+    <div className="ff-day">
+      <div className="ff-day-h">
+        <span><i style={{ background: "var(--cc-blue)" }} />Utilisation · avg {Math.round(avg)}% · peak {Math.round(peak)}%</span>
+        {mem.length > 1 && <span><i style={{ background: "#18a0a6" }} />Memory reserved · now {Math.round(mem[mem.length - 1][1])}%</span>}
+      </div>
+      <div className="ff-day-plot" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="GPU use over the last 24 hours">
+          {[25, 50, 75].map((g) => <line key={g} x1="0" x2={W} y1={y(g)} y2={y(g)} className="ff-grid" />)}
+          {mem.length > 1 && <path d={path(mem)} fill="none" stroke="#18a0a6" strokeWidth="2" vectorEffect="non-scaling-stroke" />}
+          <path d={path(util)} fill="none" stroke="var(--cc-blue)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        </svg>
+        {hover && <><span className="ff-day-x" style={{ left: `${hover.px}%` }} />
+          <span className="ff-day-tip" style={{ left: `${Math.min(80, Math.max(0, hover.px - 10))}%` }}>
+            {new Date(hover.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })} · {Math.round(hover.u)}% used{hover.m != null ? ` · ${Math.round(hover.m)}% memory` : ""}
+          </span></>}
+      </div>
+      <div className="ff-day-axis"><span>24 h ago</span><span>18 h</span><span>12 h</span><span>6 h</span><span>now</span></div>
+    </div>
+  );
+}
+
+const SEV = { critical: "crit", warning: "warn", info: "" };
+function Alerts({ alerts }) {
+  const [all, setAll] = useState(false);
+  if (!alerts?.length) return <div className="ff-alerts ok"><span className="cc-pill ok">All GPUs healthy</span><span className="cc-muted">No temperature, error, power or idle-capacity findings.</span></div>;
+  const shown = all ? alerts : alerts.slice(0, 3);
+  return (
+    <div className="ff-alerts">
+      {shown.map((a, i) => (
+        <div key={i} className={"ff-alert " + (SEV[a.severity] || "")} title={a.detail}>
+          <span className={"cc-pill " + (SEV[a.severity] || "")}>{a.severity === "critical" ? "Critical" : a.severity === "warning" ? "Warning" : a.kind === "free" ? "Free capacity" : "Idle"}</span>
+          <b>{a.title}</b><span className="cc-muted">{a.detail}</span>
+        </div>
+      ))}
+      {alerts.length > 3 && <button className="vc-btn ghost sm" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${alerts.length}`}</button>}
+    </div>
+  );
+}
+
+/** One AI request in full: what was asked (masked), which model and why, tokens, time, tools. */
+function RequestDetail({ r, onClose }) {
+  useEffect(() => {
+    const k = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [onClose]);
+  const row = (l, v) => (v == null || v === "" ? null : <div className="ff-kv"><span>{l}</span><b>{v}</b></div>);
+  const ms = (v) => (v == null ? null : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${v} ms`);
+  return (
+    <div className="ff-modal" onClick={onClose}>
+      <div className="ff-modal-box" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="AI request detail">
+        <header><h3>AI request</h3><span className="mono">{r.id}</span><button className="vc-btn ghost sm" onClick={onClose}>Close</button></header>
+        <p className="ff-q">{r.question || r.useCase || "—"}</p>
+        {r.sensitive?.length > 0 && <p className="cc-note">Sensitive data detected ({r.sensitive.join(", ")}): kept on-prem, masked here.</p>}
+        <div className="ff-kvs">
+          {row("Time", new Date(r.at).toLocaleString())}
+          {row("Outcome", r.blocked ? "Blocked by guardrails" : r.ok === false ? `Failed${r.error ? `: ${r.error}` : ""}` : r.ok ? "Answered" : "In progress")}
+          {row("Answered by", r.model ? `${r.model}${r.gpu ? ` · ${r.gpu}` : ""}` : null)}
+          {row("GPU cluster", r.cluster)}
+          {row("Why this model", r.reason)}
+          {row("Asked for", r.wanted && r.wanted !== r.role ? `${r.wanted} model (fell back)` : null)}
+          {row("Feature", r.useCase)}
+          {row("First token", ms(r.firstTokenMs))}
+          {row("Total time", ms(r.ms))}
+          {row("Tokens", r.tokens != null ? `${r.tokens.toLocaleString()}${r.promptTokens != null ? ` (${r.promptTokens.toLocaleString()} in · ${(r.completionTokens ?? 0).toLocaleString()} out)` : ""}` : null)}
+          {row("Conversation turns", r.turns)}
+          {row("Tools offered", r.toolsOffered ? `${r.toolsOffered}` : null)}
+          {row("Tools called", r.toolCalls?.length ? r.toolCalls.join(", ") : r.toolsOffered ? "none" : null)}
+          {row("Images", r.images || null)}
+          {row("Location", r.onPrem === false ? "Cloud model (non-sensitive, by policy)" : "On-prem")}
+        </div>
+        {r.answer && <><span className="cc-lbl">Answer (start, masked)</span><p className="ff-ans-text">{r.answer}</p></>}
+      </div>
+    </div>
+  );
+}
+
 export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
   _cluster = cluster;
   const [f, setF] = useState(null);
@@ -51,6 +146,7 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
   const [q, setQ] = useState("Why is payments-api restarting in tcs-demo-payments?");
   const [cmp, setCmp] = useState(null);
   const [cmpBusy, setCmpBusy] = useState(false);
+  const [detail, setDetail] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +183,8 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
         <Kpi label="GPU energy" value={k.energy ? `${k.energy.kwh} kWh` : "—"} sub={k.energy ? `${k.energy.co2Kg} kg CO₂e this session` : "DCGM energy not reported"} hist={col("kwh")} color="var(--cc-orange)" />
       </div>
 
+      <Alerts alerts={f.alerts} />
+
       <div className="ff-row">
         <section className="cc-card">
           <header><h3>GPU factory floor</h3><span>which model owns which slice of which card</span>
@@ -118,6 +216,10 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
                         <span className="ff-free">{c.freeMiB != null && (!c.memTotalMiB || c.freeMiB / c.memTotalMiB >= 0.14) ? `${gb(c.freeMiB)} free` : ""}</span>
                       </div>
                       <div className="ff-util"><i style={{ width: `${c.utilPct || 0}%` }} /></div>
+                      {(() => {
+                        const hc = (f.history24h?.cards || []).find((x) => (c.uuid && x.uuid === c.uuid) || (String(x.node).split(".")[0] === String(c.node).split(".")[0] && String(x.index) === String(c.index)));
+                        return hc?.util?.length > 1 ? <div className="ff-card-day" title="Utilisation over the last 24 hours"><span className="cc-muted">24 h</span><Spark points={hc.util} stretch /></div> : null;
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -129,6 +231,7 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
             {f.models.map((m) => <span key={m.model}><i style={{ background: ROLE_COLOR[m.role] || OTHER }} />{m.model} · {m.label}</span>)}
             <span><i style={{ background: OTHER }} />other workloads</span>
           </div>
+          <div className="ff-day-wrap"><span className="cc-lbl">GPU use · last 24 hours</span><DayChart h={f.history24h} /></div>
         </section>
 
         <section className="cc-card">
@@ -198,15 +301,18 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
         <section className="cc-card">
           <header><h3>AI traffic control</h3><span>every answer, the model that wrote it</span></header>
           {(f.log || []).map((r) => (
-            <div key={r.id} className="ff-trow">
+            <div key={r.id} className="ff-trow click" role="button" tabIndex={0} title="Show this request in full"
+              onClick={() => setDetail(r)} onKeyDown={(e) => { if (e.key === "Enter") setDetail(r); }}>
               <span className="mono cc-muted">{fmtTime(r.at)}</span>
               <span className="q">{r.question || r.useCase || "—"}{r.sensitive?.length ? <span className="cc-pill ok"> sensitive</span> : null}</span>
               <span>{r.blocked ? <span className="cc-pill crit">blocked</span> : <><i className="ff-dot" style={{ background: ROLE_COLOR[r.role] || OTHER }} />{r.model || "—"}{r.cluster ? <em className="ff-cl">{r.cluster}</em> : null}</>}</span>
             </div>
           ))}
           {!(f.log || []).length && <p className="cc-note">Ask something in AI Chat with "Private AI" selected — each answer appears here.</p>}
+          {(f.log || []).length > 0 && <span className="cc-muted">Click a request to see it in full.</span>}
         </section>
       </div>
+      {detail && <RequestDetail r={detail} onClose={() => setDetail(null)} />}
     </>
   );
 }

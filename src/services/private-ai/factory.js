@@ -21,7 +21,7 @@ const PRICE = () => { const n = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MT
 const GRID = () => { const n = Number(process.env.PRIVATE_AI_GRID_KG_PER_KWH); return Number.isFinite(n) && n >= 0 ? n : 0.4; };
 const HISTORY = 40;
 
-let _deps = { runForCluster: (_c, fn) => fn(), gpu: null, prom: null, ocp: null };
+let _deps = { runForCluster: (_c, fn) => fn(), gpu: null, prom: null, promRange: null, ocp: null };
 export function configureFactory(deps) { _deps = { ..._deps, ...deps }; }
 
 /* ─────────────────────────── Prometheus text ─────────────────────────── */
@@ -147,7 +147,7 @@ async function floorNow() {
     if (!owners.length && c.pod) owners.push({ owner: c.pod.replace(/-[a-z0-9]{8,10}-[a-z0-9]{5}$/, ""), namespace: c.namespace, pod: c.pod, mib: c.memUsedMiB, ours: false });
     const reserved = owners.reduce((a, o) => a + (o.mib || 0), 0);
     return { node: c.node, index: c.index, uuid: c.uuid, model: c.model, utilPct: c.utilPct, memUsedMiB: c.memUsedMiB, memTotalMiB: total,
-      tempC: c.tempC, powerW: c.powerW, powerLimitW: c.powerLimitW, status: c.status, slices: owners, freeMiB: total != null ? Math.max(0, total - reserved) : null };
+      tempC: c.tempC, powerW: c.powerW, powerLimitW: c.powerLimitW, status: c.status, xidError: c.xidError ?? null, eccDbe: c.eccDbe ?? null, slices: owners, freeMiB: total != null ? Math.max(0, total - reserved) : null };
   });
   // No DCGM telemetry: still draw the cards the API server knows about, with
   // the GPU pods on each node, so the floor is never empty when GPUs exist.
@@ -181,6 +181,93 @@ async function energyNow(since) {
   return { kwh: Math.round(kwh * 1000) / 1000, co2Kg: Math.round(kwh * GRID() * 100) / 100, gridKgPerKwh: GRID() };
 }
 
+/* ─────────────────────────── GPU use over 24 h (DCGM range queries) ─────────────────────────── */
+
+const DAY_STEP = 900;           // 15 min → 96 points per series
+const _gpuHist = new Map();     // cluster → { at, data }
+
+async function gpuHistoryNow() {
+  if (!_deps.promRange) return { available: false, reason: "metrics not configured" };
+  const end = Math.floor(Date.now() / 1000), start = end - 24 * 3600, step = `${DAY_STEP}s`;
+  const q = async (expr) => { try { return (await _deps.promRange(expr, start, end, step)) || []; } catch { return []; } };
+  const [perCard, mem, power] = await Promise.all([
+    q("avg by (Hostname, gpu, UUID) (DCGM_FI_DEV_GPU_UTIL)"),
+    q("100 * sum(DCGM_FI_DEV_FB_USED) / (sum(DCGM_FI_DEV_FB_USED) + sum(DCGM_FI_DEV_FB_FREE))"),
+    q("sum(DCGM_FI_DEV_POWER_USAGE)"),
+  ]);
+  const pts = (vals) => (vals || []).map(([ts, v]) => [Number(ts), Number(v)]).filter(([, v]) => Number.isFinite(v));
+  const cards = perCard.map((r) => ({ node: r.metric?.Hostname || "", index: r.metric?.gpu ?? null, uuid: r.metric?.UUID || null, util: pts(r.values) }))
+    .filter((c) => c.util.length);
+  // Fleet average utilisation per time step, from the per-card series.
+  const byTs = new Map();
+  for (const c of cards) for (const [ts, v] of c.util) { const a = byTs.get(ts) || [0, 0]; byTs.set(ts, [a[0] + v, a[1] + 1]); }
+  const util = [...byTs.entries()].sort((a, b) => a[0] - b[0]).map(([ts, [sumV, n]]) => [ts, Math.round((sumV / n) * 10) / 10]);
+  const memPts = pts(mem[0]?.values), powerPts = pts(power[0]?.values);
+  return { available: util.length > 0, hours: 24, stepSec: DAY_STEP, util, memPct: memPts, powerW: powerPts, cards };
+}
+
+async function gpuHistory(cluster) {
+  const hit = _gpuHist.get(cluster);
+  if (hit && Date.now() - hit.at < 60000) return hit.data;
+  const data = await _deps.runForCluster(cluster, gpuHistoryNow).catch((e) => ({ available: false, reason: e.message }));
+  _gpuHist.set(cluster, { at: Date.now(), data });
+  return data;
+}
+
+/* ─────────────────────────── alerts: GPU health and idle capacity ─────────────────────────── */
+
+const avgLast = (series, seconds) => {
+  if (!series?.length) return null;
+  const cut = series[series.length - 1][0] - seconds;
+  const v = series.filter(([ts]) => ts >= cut).map(([, x]) => x);
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+};
+
+/**
+ * What needs attention on the floor, worst first. Health from DCGM (temperature,
+ * XID and uncorrectable ECC errors, power at the card's limit, memory full);
+ * idle capacity from 24 h of use (GPU memory held but the card doing nothing,
+ * a model nobody asked for an hour); unused whole cards as an opportunity.
+ */
+export function factoryAlerts({ floor, history, models = [], log = [], now = Date.now() }) {
+  const out = [];
+  const add = (severity, kind, title, detail) => out.push({ severity, kind, title, detail });
+  const cards = (floor?.nodes || []).flatMap((n) => n.cards.map((c) => ({ ...c, node: n.name })));
+  const name = (c) => `${String(c.node).split(".")[0]} · ${String(c.model || "GPU").replace(/NVIDIA\s*/i, "").split(" ")[0]} #${c.index}`;
+  for (const c of cards) {
+    if (c.xidError != null && c.xidError > 0) add("critical", "health", `${name(c)}: GPU error XID ${c.xidError}`, "The driver reported a hardware or driver fault on this card. Check the node's NVIDIA driver logs; workloads on it may fail.");
+    if (c.eccDbe != null && c.eccDbe > 0) add("critical", "health", `${name(c)}: ${c.eccDbe} uncorrectable memory error(s)`, "Uncorrectable ECC errors: plan to drain the node and have the card checked.");
+    if (c.tempC != null && c.tempC >= 87) add("critical", "health", `${name(c)}: ${c.tempC} °C`, "At or above the throttling range. Check cooling and airflow on the server.");
+    else if (c.tempC != null && c.tempC >= 80) add("warning", "health", `${name(c)}: ${c.tempC} °C`, "Running hot; performance may be throttled soon.");
+    if (c.powerW != null && c.powerLimitW && c.powerW >= c.powerLimitW * 0.95) add("warning", "health", `${name(c)}: at its power limit (${Math.round(c.powerW)} / ${Math.round(c.powerLimitW)} W)`, "The card is power-capped; answers may slow down under load.");
+    if (c.memUsedMiB != null && c.memTotalMiB && c.memUsedMiB >= c.memTotalMiB * 0.97) add("warning", "health", `${name(c)}: GPU memory full`, "New models or larger requests on this card will fail to start or run out of memory.");
+  }
+  // Idle: memory reserved on a card that has done almost nothing for an hour.
+  const hist = history?.cards || [];
+  for (const c of cards) {
+    const h = hist.find((x) => (c.uuid && x.uuid === c.uuid) || (String(x.node).split(".")[0] === String(c.node).split(".")[0] && String(x.index) === String(c.index)));
+    const lastHour = h ? avgLast(h.util, 3600) : null;
+    const day = h ? avgLast(h.util, 24 * 3600) : null;
+    const held = (c.slices || []).reduce((a, s) => a + (s.mib || 0), 0);
+    if (held > 0 && lastHour != null && lastHour < 5) {
+      add("info", "idle", `${name(c)}: ${Math.round(held / 1024)} GB reserved, ${Math.round(lastHour)}% used in the last hour`,
+        `Held by ${(c.slices || []).map((s) => s.owner).join(", ")}. Stop what is not needed (Model performance → Stop) to free the card for other work.`);
+    } else if (!held && day != null && day < 1) {
+      add("info", "free", `${name(c)}: unused for 24 hours`, "A whole H100 is free: room for another model or another team's workload.");
+    }
+  }
+  // Models nobody has asked in the last hour (only when the router has been running that long).
+  const hourAgo = now - 3600 * 1000;
+  for (const m of models.filter((x) => x.ready && x.role !== "embed")) {
+    const used = log.some((r) => r.model === m.model && new Date(r.at).getTime() >= hourAgo);
+    if (!used && log.length && new Date(log[log.length - 1].at).getTime() <= hourAgo) {
+      add("info", "idle", `${m.model}: no requests in the last hour`, "Ready and holding its GPU slice. Stop it between demos to release the memory.");
+    }
+  }
+  const rank = { critical: 0, warning: 1, info: 2 };
+  return out.sort((a, b) => rank[a.severity] - rank[b.severity]);
+}
+
 /* ─────────────────────────── history (sparklines) ─────────────────────────── */
 
 const _hist = [];
@@ -191,16 +278,17 @@ function sample(k) {
   _hist.push({ at: new Date().toISOString(), onPrem: k.onPrem, saved: k.savedUsd, ttft: k.ttftMs, tps: k.tokensPerSec, guard: k.guardrailStops, kwh: k.energy?.kwh ?? null });
   if (_hist.length > HISTORY) _hist.shift();
 }
-export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); }
+export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); _gpuHist.clear(); }
 
 /* ─────────────────────────── the read ─────────────────────────── */
 
 export async function factoryState({ cluster = "local", since }) {
-  const [models, floor, energy, isvcs] = await Promise.all([
+  const [models, floor, energy, isvcs, history] = await Promise.all([
     modelsNow(cluster),
     _deps.runForCluster(cluster, floorNow).catch((e) => ({ available: false, reason: e.message, nodes: [] })),
     _deps.runForCluster(cluster, () => energyNow(since)).catch(() => null),
     _deps.runForCluster(cluster, () => listModels()).catch(() => []),
+    gpuHistory(cluster),
   ]);
   const t = router.trafficCounts();
   const g = router.guardrails();
@@ -229,7 +317,10 @@ export async function factoryState({ cluster = "local", since }) {
     router: { on: routed > 0, split: Object.fromEntries(Object.entries(roles).filter(([r]) => r !== "none").map(([r, n]) => [r, routed ? Math.round((n / routed) * 100) : 0])) },
     floor, models: models.map((m) => ({ ...m, control: isvcs.find((i) => i.name === m.model) || null })),
     capacity: { totalMiB: totalMem, freeMiB: freeMem, usedPct: totalMem ? Math.round(((totalMem - freeMem) / totalMem) * 100) : null, freeCards },
-    guardrails: g, log: log.slice(0, 8),
+    guardrails: g, log: log.slice(0, 12),
+    history24h: history && history.available ? { util: history.util, memPct: history.memPct, powerW: history.powerW, stepSec: history.stepSec,
+      cards: history.cards.map((c) => ({ node: c.node, index: c.index, uuid: c.uuid, util: c.util.map(([, v]) => v) })) } : { available: false, reason: history?.reason || null },
+    alerts: factoryAlerts({ floor, history, models, log: router.trafficLog(300) }),
   };
 }
 
