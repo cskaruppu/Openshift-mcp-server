@@ -256,6 +256,9 @@ async function callViaRelay(messages, opts) {
     azureApiVersion: opts.azureApiVersion,
   };
   if (opts.tools && opts.tools.length) payload.tools = opts.tools;
+  if (opts.images && opts.images.length) payload.images = opts.images;
+  if (opts.conversationId) payload.conversationId = opts.conversationId;
+  if (opts.metadata) payload.metadata = opts.metadata;
   const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
   const headers = { "Content-Type": "application/json" };
   if (hubToken) headers["Authorization"] = `Bearer ${hubToken}`;
@@ -472,8 +475,12 @@ export async function callLLM({ messages, ...opts }) {
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   let o = resolveOpts(opts);
   let routed = null;
-  if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
-  validateLLMConfig(o);
+  // Behind a hub relay, Private AI is routed by the hub (it has the models and keeps the
+  // records); here it is only forwarded. Elsewhere it is routed in this process.
+  const relayPrivate = !!_relayUrl && o.provider === "private";
+  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata };
+  else if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
+  if (!relayPrivate) validateLLMConfig(o);
   const t0 = Date.now();
   let provider = o.provider;
   let model = o.azureDeployment || o.model || null;
@@ -507,8 +514,12 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
   messages = messages.map(m => ({ ...m, content: typeof m.content === "string" ? redactIfEnabled(m.content) : m.content }));
   let o = resolveOpts(opts);
   let routed = null;
-  if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
-  validateLLMConfig(o);
+  // Behind a hub relay, Private AI is routed by the hub (it has the models and keeps the
+  // records); here it is only forwarded. Elsewhere it is routed in this process.
+  const relayPrivate = !!_relayUrl && o.provider === "private";
+  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata };
+  else if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
+  if (!relayPrivate) validateLLMConfig(o);
   const hooks = { onDelta, onToolCall };
   const t0 = Date.now();
   let provider = o.provider;

@@ -155,6 +155,7 @@ import { loadConfig } from "./utils/config.js";
 import { validateCommand, getAccessLevel, isToolAllowed } from "./security/command-validator.js";
 import { initComponents, isToolRegistrationEnabled, getComponentCatalog, getComponentSummary } from "./security/component-registry.js";
 import { initTelemetry, shutdownTelemetry, startSpan, traceChatRequest, traceToolCall, getTelemetryStatus } from "./utils/telemetry-otel.js";
+import { Readable } from "node:stream";
 import { ocpGet, ocpPost, ocpPatch, ocpDelete, ocpFetch, withRemoteCluster, setRemoteCluster, clearRemoteCluster, setBridgeInvoker, enterRemoteClusterBridge, enterRemoteClusterDirect } from "./utils/openshift-client.js";
 import { initPlatform, getPlatform } from "./platform/index.js";
 import {
@@ -1707,6 +1708,25 @@ function parseMultipart(buffer, contentType) {
   return parts;
 }
 
+/** Read the whole request body once, then make it readable again for the handler that follows. */
+function bufferRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0;
+    req.on("data", (c) => { size += c.length; if (size > MAX_BODY_BYTES) { req.destroy(); return reject(new Error("Request body too large")); } chunks.push(c); });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+function rewindRequestBody(req, buf) {
+  const replay = Readable.from(buf.length ? [buf] : []);
+  const BODY = new Set(["data", "end", "error", "readable"]);
+  const on = req.on.bind(req), once = req.once.bind(req);
+  req.on = (ev, fn) => (BODY.has(ev) ? (replay.on(ev, fn), req) : on(ev, fn));
+  req.once = (ev, fn) => (BODY.has(ev) ? (replay.once(ev, fn), req) : once(ev, fn));
+  req.pipe = (dest, o) => replay.pipe(dest, o);
+  req[Symbol.asyncIterator] = () => replay[Symbol.asyncIterator]();
+}
+
 async function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -2566,8 +2586,19 @@ async function startSSE() {
       // local in-process handling instead of returning a 502 to the dashboard.
       if (!isHubLocal && hasSpoke(_reqCluster) && p.startsWith("/api/")) {
         const isHubProxy = _reqCluster === HUB_AGENT_CLUSTER || _reqCluster.toLowerCase() === HUB_AGENT_CLUSTER.toLowerCase();
-        const proxied = await proxyToSpoke(_reqCluster, req, res, url, { allowFallback: isHubProxy });
-        if (proxied) return;
+        // Private AI chats about the hub stay in this process: the on-prem models,
+        // the router and its records (Private AI Factory) live here, not in the hub agent.
+        let keepHere = false;
+        if (isHubProxy && req.method === "POST" && /^\/api\/chat(\/stream|\/analyze-image)?$/.test(p)) {
+          const buf = await bufferRequestBody(req);
+          try { keepHere = JSON.parse(buf.toString() || "{}").provider === "private"; } catch { /* not JSON: proxy as before */ }
+          rewindRequestBody(req, buf);
+        }
+        if (keepHere) _reqCluster = "local";
+        else {
+          const proxied = await proxyToSpoke(_reqCluster, req, res, url, { allowFallback: isHubProxy });
+          if (proxied) return;
+        }
       }
       // Direct-access: route OCP calls using stored credentials
       const { hasCredentials: _hasCreds2, getCredentials: _getCreds2 } = await import("./utils/cluster-credentials.js");
@@ -5204,6 +5235,10 @@ async function startSSE() {
           tools: body.tools || null,
           azureDeployment: body.azureDeployment,
           azureApiVersion: body.azureApiVersion,
+          // Private AI from an agent: the hub routes it (its models, its records).
+          ...(Array.isArray(body.images) && body.images.length ? { images: body.images } : {}),
+          ...(body.conversationId ? { conversationId: body.conversationId } : {}),
+          ...(body.metadata && typeof body.metadata === "object" ? { metadata: body.metadata } : {}),
         });
         return sendJson(res, 200, result);
       } catch (err) {
