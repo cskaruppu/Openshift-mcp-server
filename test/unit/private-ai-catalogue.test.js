@@ -47,3 +47,31 @@ test("a catalog image must be an oci:// reference; clearing it goes back to Hugg
   assert.equal((await C.setCatalogImage("llama-3-1-8b", "")).source.kind, "hf");
   C._resetCatalogue();
 });
+
+test("a deploy in progress can be cancelled: download job removed, model service stopped, weights kept", async () => {
+  C._resetCatalogue();
+  const calls = [];
+  C.configureCatalogue({
+    runForCluster: (_c, fn) => fn(),
+    ocp: {
+      fetch: async (p) => {
+        if (p.endsWith("/servingruntimes")) return { items: [{ metadata: { name: "vllm-cuda-runtime" }, spec: { containers: [{ image: "img" }] } }] };
+        if (p.includes("/persistentvolumeclaims/")) return {};
+        return { status: { conditions: [] } };
+      },
+      post: async (p) => { calls.push(["post", p]); return {}; },
+      del: async (p) => { calls.push(["del", p]); return {}; },
+      patch: async (p, body) => { calls.push(["patch", p, body]); return {}; },
+    },
+    floor: async () => ({ floor: { nodes: [{ name: "n1", cards: [{ index: 0, freeMiB: 80 * 1024, memTotalMiB: 80 * 1024, slices: [] }] }] }, models: [] }),
+  });
+  const out = await C.deployModel({ cluster: "gpu", id: "gpt-oss-20b", actor: "t" });
+  assert.equal(out.node, "n1");
+  await new Promise((r) => setTimeout(r, 50));
+  const c = await C.cancelDeploy({ cluster: "gpu", id: "gpt-oss-20b", actor: "t" });
+  assert.equal(c.cancelled, true);
+  assert.ok(calls.some(([m, p]) => m === "del" && p.includes("/jobs/download-gpt-oss-20b")));
+  assert.ok(calls.some(([m, p, b]) => m === "patch" && p.endsWith("/inferenceservices/gpt-oss-20b") && b.metadata.annotations["serving.kserve.io/stop"] === "true"));
+  await assert.rejects(C.cancelDeploy({ cluster: "gpu", id: "gpt-oss-20b" }), /No deploy in progress/);
+  C._resetCatalogue();
+});

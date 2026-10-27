@@ -2195,7 +2195,7 @@ async function startSSE() {
       });
       const CAT = await import("./services/private-ai/catalogue.js");
       CAT.configureCatalogue({
-        runForCluster: privateAiRun, ocp: { fetch: ocpFetch, post: ocpPost, del: ocpDelete },
+        runForCluster: privateAiRun, ocp: { fetch: ocpFetch, post: ocpPost, del: ocpDelete, patch: ocpPatch },
         floor: (o) => FY.factoryState(o), discover: (c, actor) => FL.discoverModels(c, { actor }),
       });
       await CAT.restoreCatalogue();
@@ -9403,6 +9403,13 @@ spec:
             }
             const out = await FL.forgetCluster(c);
             audit(`GPU cluster ${c} removed from the AI fleet`, { cluster: c });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/catalogue/cancel": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Cancelling a deploy needs the Admin role" });
+            const CAT = await import("./services/private-ai/catalogue.js");
+            const out = await CAT.cancelDeploy({ cluster, id: String(body.id || ""), actor });
+            audit(`Model ${out.id} deployment cancelled on ${cluster}`, out);
             return sendJson(res, 200, out);
           }
           case "/api/command-center/catalogue/deploy":

@@ -209,6 +209,26 @@ function downloadJob(e, image) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Stop a deploy that is still in progress (downloading or waiting to become
+ * ready). The download job is removed; a model service already created is
+ * stopped in OpenShift AI (not deleted). Downloaded weights stay in the claim.
+ */
+export async function cancelDeploy({ cluster = "local", id, actor = "admin" }) {
+  const key = `${cluster}/${id}`;
+  const dep = _deploys[key];
+  if (!dep || ["ready", "failed"].includes(dep.phase)) throw Object.assign(new Error("No deploy in progress for this model"), { status: 409 });
+  dep.cancelled = true;
+  dep.steps.push({ at: new Date().toISOString(), text: `Cancelled by ${actor}` });
+  const ns = MODELS_NS();
+  await _deps.runForCluster(cluster, async () => {
+    try { await _deps.ocp.del(`/apis/batch/v1/namespaces/${ns}/jobs/download-${id}?propagationPolicy=Background`); } catch { /* not created yet */ }
+    try { await _deps.ocp.patch(`/apis/serving.kserve.io/v1beta1/namespaces/${ns}/inferenceservices/${id}`, { metadata: { annotations: { "serving.kserve.io/stop": "true" } } }, "application/merge-patch+json"); } catch { /* not created yet */ }
+  });
+  dep.phase = "failed"; dep.error = "Cancelled — downloaded weights are kept; deploy again to resume"; changed();
+  return { id, cluster, cancelled: true };
+}
+
+/**
  * Deploy a catalogue model on a GPU cluster. Returns at once; progress is in the
  * catalogue read (deploy.phase / steps). Refuses when it does not fit now.
  */
@@ -226,7 +246,7 @@ export async function deployModel({ cluster = "local", id, node = null, actor = 
   const dep = { phase: "starting", steps: [], startedAt: new Date().toISOString(), by: actor, node: target.node, source: sourceOf(e), error: null };
   _deploys[key] = dep; changed();
   const step = (text) => { dep.steps.push({ at: new Date().toISOString(), text }); changed(); };
-  run().catch((err) => { dep.phase = "failed"; dep.error = err.message; step(`Failed: ${err.message}`); });
+  run().catch((err) => { if (dep.cancelled) return; dep.phase = "failed"; dep.error = err.message; step(`Failed: ${err.message}`); });
   return { id, cluster, node: target.node, phase: dep.phase };
 
   async function run() {
@@ -256,6 +276,7 @@ export async function deployModel({ cluster = "local", id, node = null, actor = 
         step(`Downloading ${e.hf} from Hugging Face (job download-${e.id})`);
         for (let i = 0; ; i++) {
           await sleep(15000);
+          if (dep.cancelled) throw new Error("cancelled");
           const j = await O.fetch(`/apis/batch/v1/namespaces/${ns}/jobs/download-${e.id}`);
           const conds = (j.status?.conditions || []).filter((c) => c.status === "True").map((c) => c.type).join(" ");
           if (/Complete/.test(conds)) { step("Weights downloaded"); break; }
@@ -265,16 +286,20 @@ export async function deployModel({ cluster = "local", id, node = null, actor = 
         storageUri = `pvc://${e.id}-cache/model`;
       }
       dep.phase = "starting"; changed();
+      if (dep.cancelled) throw new Error("cancelled");
       await O.post(`/apis/serving.kserve.io/v1beta1/namespaces/${ns}/inferenceservices`, inferenceService(e, { runtime: rt.metadata.name, storageUri, node: dep.node }));
       step(`Model service created on ${String(dep.node).split(".")[0]} (${Math.round(e.gpuMiB / 1024)} GB GPU slice)`);
       for (let i = 0; ; i++) {
         await sleep(15000);
+        if (dep.cancelled) throw new Error("cancelled");
         const isvc = await O.fetch(`/apis/serving.kserve.io/v1beta1/namespaces/${ns}/inferenceservices/${e.id}`);
+        if (isvc.metadata?.annotations?.["serving.kserve.io/stop"] === "true") { dep.cancelled = true; dep.phase = "failed"; dep.error = "Stopped before it was ready — Start it when there is room"; changed(); return; }
         if ((isvc.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True")) break;
         if (i > 160) throw new Error(`not ready after 40 minutes — oc -n ${ns} describe inferenceservice ${e.id}`);
       }
       step("Model ready in OpenShift AI");
     });
+    if (dep.cancelled) return;
     if (_deps.discover) { await _deps.discover(cluster, actor); step("Connected to the AI router (GPU fleet → Discover models)"); }
     dep.phase = "ready"; dep.readyAt = new Date().toISOString(); changed();
   }

@@ -145,7 +145,12 @@ export default function CatalogueView({ busy, act$, scoped, onTab }) {
                   )}
                   <div className="ct-acts">
                     {it.status === "running" && <button className="vc-btn ghost sm" onClick={() => onTab("floor")}>Test on Factory floor</button>}
-                    {it.status === "running" && admin && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => startStop(it, false)}>Stop</button>}
+                    {["running", "starting", "down", "not-connected"].includes(it.status) && it.model?.control && admin && (
+                      <button className="vc-btn ghost sm" disabled={!!busy} title={it.status === "running" ? "Stop the model and release its GPU memory" : "Stop it starting and release its GPU memory (the model stays, shown as Stopped)"}
+                        onClick={() => startStop(it, false)}>Stop</button>)}
+                    {it.status === "deploying" && admin && (
+                      <button className="vc-btn ghost sm" disabled={!!busy} title="Cancel this deploy: the download stops, a model service already created is stopped; downloaded weights are kept"
+                        onClick={() => { if (window.confirm(`Cancel deploying ${it.name}? Downloaded weights are kept, so deploying again resumes.`)) act$(`cancel-${it.id}`, async () => { await post(scoped("/api/command-center/catalogue/cancel"), { id: it.id }); await load(); }, "Deploy cancelled"); }}>Cancel</button>)}
                     {it.status === "stopped" && admin && <button className="vc-btn primary sm" disabled={!!busy || it.fit?.status === "no-fit"} title={it.fit?.status === "no-fit" ? "Not enough free GPU memory on any card" : ""} onClick={() => startStop(it, true)}>Start{it.fit?.node ? ` on ${short(it.fit.node)}` : ""}</button>}
                     {it.status === "not-deployed" && <button className={"vc-btn sm " + (it.fit?.status === "fits" ? "primary" : "ghost")} disabled={!!busy || !it.fit || it.fit.status === "no-fit" || it.fit.status === "unknown"} onClick={() => setSel(it.id)}>Deploy…</button>}
                     {it.status === "not-connected" && <button className="vc-btn ghost sm" onClick={() => onTab("fleet")}>Connect (GPU fleet)</button>}
