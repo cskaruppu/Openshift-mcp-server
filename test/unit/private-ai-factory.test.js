@@ -87,3 +87,13 @@ test("a finished request keeps what the detail panel shows, masked", () => {
   assert.deepEqual(d.toolCalls, ["get_pods", "get_events"]);
   assert.ok(!d.answer.includes("hunter2xyz"));
 });
+
+import { whyDown } from "../../src/services/private-ai/factory.js";
+test("Down says whether the pods or the Route are at fault", () => {
+  const m = { model: "llama-3-1-8b", ready: false, error: "HTTP 503" };
+  assert.equal(whyDown({ ...m, ready: true, error: null }, null, "gpu"), null);
+  assert.match(whyDown(m, { ready: false, stopped: false }, "gpu"), /not ready in OpenShift AI/);
+  assert.match(whyDown(m, { ready: true, stopped: false }, "gpu"), /Route reaches no pod/);
+  assert.equal(whyDown(m, { ready: false, stopped: true }, "gpu"), "stopped in OpenShift AI");
+  assert.equal(whyDown({ ...m, error: "getaddrinfo ENOTFOUND x" }, { ready: true }, "gpu"), "getaddrinfo ENOTFOUND x");
+});

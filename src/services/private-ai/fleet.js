@@ -85,6 +85,42 @@ export function inferRole(name, annotations = {}) {
   return "small";
 }
 
+/** The port a Route must name to reach a Service's pods. On a Route a number means the
+    pod port (not the Service port), so use the port's name, else the pod port. */
+export function routePort(svc) {
+  const p = svc?.spec?.ports?.[0];
+  if (!p) return null;
+  return p.name || p.targetPort || p.port || null;
+}
+
+/** Whether a Route's port reaches one of the Service's pods. No port: the router picks one. */
+export function routeMatches(route, svc) {
+  const want = route?.spec?.port?.targetPort;
+  if (want == null || want === "") return true;
+  return (svc?.spec?.ports || []).some((p) => p.name === want || String(p.targetPort ?? p.port) === String(want));
+}
+
+/* Self-repair: when a model answers 502/503 through its Route, look at that cluster's
+   Routes again (at most every two minutes per cluster) and fix the ones that are wrong. */
+const HEAL_EVERY_MS = 120000;
+const _heal = new Map();   // cluster → { at, notes: [] }
+export async function healRoutes(cluster) {
+  if (!validCluster(cluster)) return null;
+  const last = _heal.get(cluster);
+  if (last && Date.now() - last.at < HEAL_EVERY_MS) return last;
+  const cur = { at: Date.now(), notes: [], running: true };
+  _heal.set(cluster, cur);
+  try {
+    const r = await discoverModels(cluster, { actor: "self-repair" });
+    cur.notes = r.models.filter((m) => m.routeNote).map((m) => ({ model: m.model, note: m.routeNote }));
+    if (cur.notes.length) console.error(`[private-ai] ${cluster}: ${cur.notes.map((n) => `${n.model}: ${n.note}`).join("; ")}`);
+  } catch (e) { cur.error = e.message; }
+  cur.running = false;
+  return cur;
+}
+export function healStatus(cluster) { return _heal.get(cluster) || null; }
+export function _resetHeal() { _heal.clear(); }
+
 /** Find the OpenShift AI models on one cluster and remember the running ones (with their Route URLs).
     Models stopped in OpenShift AI are listed but not used; discover again after starting them. */
 export async function discoverModels(cluster, { actor = "admin", expose = true } = {}) {
@@ -93,18 +129,33 @@ export async function discoverModels(cluster, { actor = "admin", expose = true }
   const found = await _deps.runForCluster(cluster, async () => {
     const isvcs = (await _deps.ocp.fetch(`/apis/serving.kserve.io/v1beta1/namespaces/${ns}/inferenceservices`)).items || [];
     const routes = await _deps.ocp.fetch(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`).then((r) => r.items || []).catch(() => []);
+    const services = await _deps.ocp.fetch(`/api/v1/namespaces/${ns}/services`).then((r) => r.items || []).catch(() => []);
     const out = [];
     for (const i of isvcs) {
       const name = i.metadata.name;
+      const svc = services.find((x) => x.metadata?.name === `${name}-predictor`) || null;
+      const port = routePort(svc);
       let route = routes.find((r) => r.metadata.name === name || r.spec?.to?.name === `${name}-predictor`);
+      let routeNote = null;
       if (!route && expose) {
         try {
           route = await _deps.ocp.post(`/apis/route.openshift.io/v1/namespaces/${ns}/routes`, {
             apiVersion: "route.openshift.io/v1", kind: "Route",
             metadata: { name, namespace: ns, labels: { "tcs.com/demo": "private-ai-ops" } },
-            spec: { to: { kind: "Service", name: `${name}-predictor` }, port: { targetPort: 80 } },
+            spec: { to: { kind: "Service", name: `${name}-predictor` }, ...(port != null ? { port: { targetPort: port } } : {}) },
           });
         } catch { /* no permission to create Routes: listed, not reachable */ }
+      } else if (route && svc && !routeMatches(route, svc) && port != null) {
+        // The Route names a port the model's pods do not have, so the router answers 503
+        // (OpenShift AI can recreate the predictor Service with another port name).
+        const was = route.spec.port.targetPort;
+        try {
+          if (!_deps.ocp.patch) throw new Error("no patch");
+          await _deps.ocp.patch(`/apis/route.openshift.io/v1/namespaces/${ns}/routes/${route.metadata.name}`, { spec: { port: { targetPort: port } } }, "application/merge-patch+json");
+          routeNote = `Route port ${was} → ${port} (repaired)`;
+        } catch {
+          routeNote = `Route points at port ${was}, the model serves on ${port}: allow "patch" on routes (re-apply gpu-cluster-access.yaml) or run enable.sh`;
+        }
       }
       const host = route?.spec?.host || null;
       const tls = !!route?.spec?.tls;
@@ -115,11 +166,12 @@ export async function discoverModels(cluster, { actor = "admin", expose = true }
         healthPath: role === "embed" ? "/health" : undefined,
         ready: (i.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"),
         stopped: i.metadata.annotations?.["serving.kserve.io/stop"] === "true",
+        ...(routeNote ? { routeNote } : {}),
       });
     }
     return out;
   });
-  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url && !m.stopped).map(({ ready: _r, stopped: _s, ...m }) => m),
+  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url && !m.stopped).map(({ ready: _r, stopped: _s, routeNote: _n, ...m }) => m),
     discoveredAt: new Date().toISOString(), discoveredBy: actor };
   const storage = await persist();
   return { cluster, models: found, storage };

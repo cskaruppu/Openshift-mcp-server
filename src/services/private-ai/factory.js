@@ -334,6 +334,7 @@ async function readFactory({ cluster = "local", since }) {
     _deps.runForCluster(cluster, () => listModels()).catch(() => []),
     gpuHistory(cluster),
   ]);
+  healIfNeeded(models, cluster);
   const t = router.trafficCounts();
   const g = router.guardrails();
   // Answers only: incident-memory lookups (embeddings) are listed in AI traffic but are not answers.
@@ -362,7 +363,7 @@ async function readFactory({ cluster = "local", since }) {
     router: { on: routed > 0, split: Object.fromEntries(Object.entries(roles).filter(([r]) => r !== "none").map(([r, n]) => [r, routed ? Math.round((n / routed) * 100) : 0])) },
     // Every model deployed in OpenShift AI, connected or not, so a stopped one can be started from here.
     floor, models: [
-      ...models.map((m) => ({ ...m, control: isvcs.find((i) => i.name === m.model) || null })),
+      ...models.map((m) => { const control = isvcs.find((i) => i.name === m.model) || null; return { ...m, control, error: whyDown(m, control, m.cluster || cluster) }; }),
       ...isvcs.filter((i) => !models.some((m) => m.model === i.name)).map((i) => {
         const role = inferRole(i.name);
         return { role, label: { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML", embed: "Incident memory" }[role],
@@ -377,6 +378,37 @@ async function readFactory({ cluster = "local", since }) {
       cards: history.cards.map((c) => ({ node: c.node, index: c.index, uuid: c.uuid, util: c.util.map(([, v]) => v) })) } : { available: false, reason: history?.reason || null },
     alerts: factoryAlerts({ floor, history, models, log: router.trafficLog(300) }),
   };
+}
+
+/* A model Down with 502/503 is reached (DNS and the router answer) but the router has no
+   backend for it: either its pods are not ready, or its Route names the wrong port. The
+   fleet module repairs Routes; this starts it, in the background, for the clusters affected. */
+const NO_BACKEND = /HTTP 50[23]/;
+function healIfNeeded(models, cluster) {
+  if (!_deps.heal) return;
+  const clusters = new Set(models.filter((m) => !m.ready && NO_BACKEND.test(m.error || "")).map((m) => m.cluster || cluster).filter((c) => c && c !== "local"));
+  for (const c of clusters) Promise.resolve(_deps.heal(c)).catch(() => {});
+}
+
+/** Background check (control plane): heal Routes even when nobody has the Factory open. */
+export async function healCheck(preferredCluster = null) {
+  const models = await Promise.all(allModels().map(async (m) => ({ ...m, ...(await router.checkHealth(m).then((h) => ({ ready: h.ok, error: h.error }))) })));
+  healIfNeeded(models, preferredCluster);
+  return models.filter((m) => !m.ready).length;
+}
+
+/** The health error plus what it means, from OpenShift AI's view of the model and the last Route check. */
+export function whyDown(m, control, cluster) {
+  if (m.ready || !m.error) return m.error || null;
+  if (control?.stopped) return "stopped in OpenShift AI";
+  if (control && !control.ready) return `${m.error} · not ready in OpenShift AI (pods starting, restarting or failing)`;
+  if (NO_BACKEND.test(m.error)) {
+    const h = _deps.healStatus?.(cluster);
+    const note = h?.notes?.find((n) => n.model === m.model)?.note;
+    if (note) return `${m.error} · ${note}`;
+    return control?.ready ? `${m.error} · running in OpenShift AI, but its Route reaches no pod — checking the Route` : `${m.error} · no pod behind the Route`;
+  }
+  return m.error;
 }
 
 /** Fleet tiles with each model's health, for the Fleet tab and the evidence pack. */

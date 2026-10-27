@@ -45,6 +45,13 @@ url() { # where the platform reaches a KServe RawDeployment predictor
   if [[ -z "$MCTX" ]]; then echo "http://$svc.$MODELS_NS.svc.cluster.local:${port:-80}"; return; fi
   # Another cluster: in-cluster DNS does not reach it, so expose the predictor with a Route.
   moc -n "$MODELS_NS" get route "$1" >/dev/null 2>&1 || moc -n "$MODELS_NS" expose svc "$svc" --name "$1" >/dev/null
+  # Point the Route at the port the pods serve on (the Service port's name, else the pod port).
+  # A Route's number is the pod port, so a wrong one, or a name the Service no longer has, gives 503.
+  local pname pport want
+  pname=$(moc -n "$MODELS_NS" get svc "$svc" -o jsonpath='{.spec.ports[0].name}' 2>/dev/null || true)
+  pport=$(moc -n "$MODELS_NS" get svc "$svc" -o jsonpath='{.spec.ports[0].targetPort}' 2>/dev/null || true)
+  if [[ -n "$pname" ]]; then want="\"$pname\""; elif [[ "$pport" =~ ^[0-9]+$ ]]; then want="$pport"; elif [[ -n "$pport" ]]; then want="\"$pport\""; fi
+  [[ -n "${want:-}" ]] && moc -n "$MODELS_NS" patch route "$1" --type merge -p "{\"spec\":{\"port\":{\"targetPort\":$want}}}" >/dev/null
   host=$(moc -n "$MODELS_NS" get route "$1" -o jsonpath='{.spec.host}')
   echo "http://$host"
 }

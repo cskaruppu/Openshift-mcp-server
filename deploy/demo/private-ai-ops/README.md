@@ -156,3 +156,13 @@ Needs: the serving runtimes (run `rhoai/deploy-rhoai.sh` once), and the GPU-clus
 re-applied so the hub may create storage, download jobs and model services in openshift-mcp:
 `oc --kubeconfig "$GPU_KC" apply -f deploy/demo/private-ai-ops/gpu-cluster-access.yaml`.
 The list lives in `src/services/private-ai/catalogue.js`.
+
+## A model shows Down
+
+The reason is shown under **Down** in Factory → Model performance:
+
+| Shows | Meaning | What happens / what to do |
+|---|---|---|
+| `getaddrinfo ENOTFOUND` | The hub cannot resolve `*.apps.<gpu cluster>` | `LAN_HOSTS` in `deploy/dashboard/manifests/configmap.yaml` (kept across redeploys) |
+| `HTTP 503 · not ready in OpenShift AI` | The model's pods are starting, restarting or failing | `oc -n openshift-mcp get pods` on the GPU cluster |
+| `HTTP 503 · Route reaches no pod` | The Route names a port the pods do not have (OpenShift AI recreated the predictor Service, or an old Route used port 80) | Repaired automatically within two minutes; needs `patch` on routes: re-apply `gpu-cluster-access.yaml` once. Or run `enable.sh` again, or GPU fleet → Discover models |

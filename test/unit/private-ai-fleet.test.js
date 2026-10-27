@@ -110,3 +110,57 @@ test("usage totals per model, user, feature and day; blocked requests counted", 
   assert.equal(u.byDay[at.slice(0, 10)].requests, 3);
   R.resetTraffic(); R.resetUsage();
 });
+
+test("a Route names the port the model's pods serve on, never the Service's number", () => {
+  const svc = { spec: { ports: [{ name: "http", port: 80, targetPort: 8080 }] } };
+  assert.equal(FL.routePort(svc), "http");
+  assert.equal(FL.routePort({ spec: { ports: [{ port: 80, targetPort: 8080 }] } }), 8080);
+  assert.equal(FL.routePort(null), null);
+  assert.equal(FL.routeMatches({ spec: { port: { targetPort: 80 } } }, svc), false, "80 is the Service port: the router finds no pod, 503");
+  assert.equal(FL.routeMatches({ spec: { port: { targetPort: 8080 } } }, svc), true);
+  assert.equal(FL.routeMatches({ spec: { port: { targetPort: "http" } } }, svc), true);
+  assert.equal(FL.routeMatches({ spec: { port: { targetPort: "predictor" } } }, svc), false, "a port name the Service no longer has");
+  assert.equal(FL.routeMatches({ spec: {} }, svc), true);
+});
+
+test("discovery repairs a Route whose port reaches no pod, and creates new ones with the right port", async () => {
+  FL._resetFleet(); FL._resetHeal();
+  const patched = [], posted = [];
+  const svc = (n) => ({ metadata: { name: `${n}-predictor` }, spec: { ports: [{ name: "http", port: 80, targetPort: 8080 }] } });
+  FL.configureFleet({
+    runForCluster: (_c, fn) => fn(),
+    ocp: {
+      fetch: async (p) => p.includes("inferenceservices")
+        ? { items: [{ metadata: { name: "llama-3-1-8b", annotations: {} }, status: { conditions: [{ type: "Ready", status: "True" }] } },
+                    { metadata: { name: "bge-m3", annotations: {} }, status: { conditions: [{ type: "Ready", status: "True" }] } }] }
+        : p.includes("/services") ? { items: [svc("llama-3-1-8b"), svc("bge-m3")] }
+        : { items: [{ metadata: { name: "llama-3-1-8b" }, spec: { host: "llama.apps.gpu.lab", to: { name: "llama-3-1-8b-predictor" }, port: { targetPort: 80 } } }] },
+      post: async (_p, body) => { posted.push(body.spec.port); return { spec: { host: "bge.apps.gpu.lab" } }; },
+      patch: async (p, body) => { patched.push([p.split("/").pop(), body.spec.port.targetPort]); },
+    },
+  });
+  const h = await FL.healRoutes("gpu-a");
+  assert.deepEqual(patched, [["llama-3-1-8b", "http"]]);
+  assert.deepEqual(posted, [{ targetPort: "http" }]);
+  assert.match(h.notes[0].note, /80 → http \(repaired\)/);
+  assert.equal(await FL.healRoutes("gpu-a"), h, "at most one repair pass every two minutes per cluster");
+  assert.ok(FL.fleetModels().every((m) => !("routeNote" in m)));
+  FL._resetFleet(); FL._resetHeal();
+});
+
+test("without permission to patch, the note says what to do", async () => {
+  FL._resetFleet(); FL._resetHeal();
+  FL.configureFleet({
+    runForCluster: (_c, fn) => fn(),
+    ocp: {
+      fetch: async (p) => p.includes("inferenceservices") ? { items: [{ metadata: { name: "qwen2-5-vl-7b", annotations: {} }, status: {} }] }
+        : p.includes("/services") ? { items: [{ metadata: { name: "qwen2-5-vl-7b-predictor" }, spec: { ports: [{ name: "http", port: 80, targetPort: 8080 }] } }] }
+        : { items: [{ metadata: { name: "qwen2-5-vl-7b" }, spec: { host: "q.apps", to: { name: "qwen2-5-vl-7b-predictor" }, port: { targetPort: "h2c" } } }] },
+      post: async () => ({}),
+      patch: async () => { throw new Error("forbidden"); },
+    },
+  });
+  const h = await FL.healRoutes("gpu-b");
+  assert.match(h.notes[0].note, /allow "patch" on routes/);
+  FL._resetFleet(); FL._resetHeal();
+});

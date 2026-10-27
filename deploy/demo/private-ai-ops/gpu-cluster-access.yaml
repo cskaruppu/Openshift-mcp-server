@@ -90,10 +90,11 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "create", "delete"]
-  # Model discovery: each model is reached through a Route (created if missing).
+  # Model discovery: each model is reached through a Route (created if missing, and its
+  # port corrected when OpenShift AI recreates the model's Service with another port).
   - apiGroups: ["route.openshift.io"]
     resources: ["routes"]
-    verbs: ["get", "list", "create"]
+    verbs: ["get", "list", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

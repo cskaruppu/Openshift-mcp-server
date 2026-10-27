@@ -2167,7 +2167,7 @@ async function startSSE() {
       const EM = await import("./services/private-ai/embeddings.js");
       const CLB = await import("./services/cluster-labels.js");
       FL.configureFleet({
-        runForCluster: privateAiRun, gpu: gpuCached, ocp: { fetch: ocpFetch, post: ocpPost },
+        runForCluster: privateAiRun, gpu: gpuCached, ocp: { fetch: ocpFetch, post: ocpPost, patch: ocpPatch },
         preferred: () => PS.effectiveSettings().cluster, accessClusters: () => PS.accessClusters(),
         label: (c) => CLB.clusterLabels()[c] || c,
       });
@@ -2192,7 +2192,13 @@ async function startSSE() {
         prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
         promRange: async (q, start, end, step) => (await import("./services/prometheus.js")).promRange(q, start, end, step),
         ocp: { fetch: ocpFetch, patch: ocpPatch },
+        heal: (c) => FL.healRoutes(c), healStatus: (c) => FL.healStatus(c),
       });
+      // Repair model Routes that stopped reaching their pods, even with nobody on the Factory page.
+      if ((process.env.MCP_MODE || "hub").toLowerCase() !== "spoke") {
+        const t = setInterval(() => { FY.healCheck(PS.effectiveSettings().cluster).catch(() => {}); }, 120000);
+        if (t.unref) t.unref();
+      }
       const CAT = await import("./services/private-ai/catalogue.js");
       CAT.configureCatalogue({
         runForCluster: privateAiRun, ocp: { fetch: ocpFetch, post: ocpPost, del: ocpDelete, patch: ocpPatch },
