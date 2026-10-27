@@ -21,11 +21,17 @@ const DB_KEY = "private_ai_settings";
 const FILE_PATH = process.env.PRIVATE_AI_SETTINGS_PATH || "/data/mcp-private-ai-settings.json";
 const KEYS = ["commandCenter", "banner", "routeChat"];
 
-const EMPTY = { commandCenter: null, banner: null, routeChat: null, cluster: null, updatedBy: null, updatedAt: null };
+// demoTabs: how the stage demo appears in the Private AI Factory —
+//   "event" numbered acts under "Live demo" (the presenter's running order)
+//   "product" the same views under feature names, no numbers
+//   "hidden" not shown (customers see Overview, Models, GPU fleet, Usage only)
+export const DEMO_TABS = ["event", "product", "hidden"];
+const EMPTY = { commandCenter: null, banner: null, routeChat: null, cluster: null, demoTabs: null, updatedBy: null, updatedAt: null };
 let _saved = { ...EMPTY };
 
 const validCluster = (c) => typeof c === "string" && /^[A-Za-z0-9._-]{1,100}$/.test(c);
-const pick = (raw = {}) => ({ ...Object.fromEntries(KEYS.map((k) => [k, typeof raw[k] === "boolean" ? raw[k] : null])), cluster: validCluster(raw.cluster) ? raw.cluster : null });
+const pick = (raw = {}) => ({ ...Object.fromEntries(KEYS.map((k) => [k, typeof raw[k] === "boolean" ? raw[k] : null])), cluster: validCluster(raw.cluster) ? raw.cluster : null,
+  demoTabs: DEMO_TABS.includes(raw.demoTabs) ? raw.demoTabs : null });
 
 export function lockedOff() { return process.env.PRIVATE_AI_OPS === "false"; }
 
@@ -39,6 +45,7 @@ export function effectiveSettings() {
   return {
     commandCenter, banner, routeChat, lockedOff: locked,
     cluster: _saved.cluster || process.env.PRIVATE_AI_CLUSTER || "local",
+    demoTabs: _saved.demoTabs || (DEMO_TABS.includes(process.env.PRIVATE_AI_DEMO_TABS) ? process.env.PRIVATE_AI_DEMO_TABS : "event"),
     source: { commandCenter: source("commandCenter"), banner: source("banner"), routeChat: source("routeChat") },
     updatedBy: _saved.updatedBy, updatedAt: _saved.updatedAt,
   };
@@ -66,6 +73,10 @@ export async function savePrivateAiSettings(patch, { actor = "admin" } = {}) {
   if (lockedOff()) throw Object.assign(new Error("Private AI is switched off by the deployment (PRIVATE_AI_OPS=false)"), { status: 409 });
   const next = { ..._saved };
   for (const k of KEYS) if (k in patch && (typeof patch[k] === "boolean" || patch[k] === null)) next[k] = patch[k];
+  if ("demoTabs" in patch) {
+    if (patch.demoTabs !== null && !DEMO_TABS.includes(patch.demoTabs)) throw Object.assign(new Error("Demo tabs: event, product or hidden"), { status: 400 });
+    next.demoTabs = patch.demoTabs;
+  }
   if ("cluster" in patch) {
     if (patch.cluster !== null && !validCluster(patch.cluster)) throw Object.assign(new Error("Not a valid cluster name"), { status: 400 });
     next.cluster = patch.cluster;

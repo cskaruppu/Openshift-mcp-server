@@ -9302,10 +9302,11 @@ spec:
           const eg = await CC.egressStatus();
           if (eg.blocked) await CC.setEgress(false).catch(() => {});
         }
-        const saved = await PS.savePrivateAiSettings({ commandCenter: want.commandCenter, banner: want.commandCenter && want.banner, routeChat: want.routeChat, ...(cluster !== before.cluster ? { cluster } : {}) }, { actor });
-        const changed = ["commandCenter", "banner", "routeChat", "cluster"].filter((k) => before[k] !== saved[k]);
+        const saved = await PS.savePrivateAiSettings({ commandCenter: want.commandCenter, banner: want.commandCenter && want.banner, routeChat: want.routeChat,
+          ...(cluster !== before.cluster ? { cluster } : {}), ...(typeof body.demoTabs === "string" && body.demoTabs !== before.demoTabs ? { demoTabs: body.demoTabs } : {}) }, { actor });
+        const changed = ["commandCenter", "banner", "routeChat", "cluster", "demoTabs"].filter((k) => before[k] !== saved[k]);
         if (changed.length) logAuditTrailEvent({ type: "config_change", severity: "info", source: "private-ai-settings", username: actor,
-          title: `Private AI settings: ${changed.map((k) => `${{ commandCenter: "Private AI Factory", banner: "dashboard banner", routeChat: "AI Chat on-prem routing", cluster: "GPU cluster" }[k]} ${k === "cluster" ? saved[k] : saved[k] ? "on" : "off"}`).join(", ")}`,
+          title: `Private AI settings: ${changed.map((k) => `${{ commandCenter: "Private AI Factory", banner: "dashboard banner", routeChat: "AI Chat on-prem routing", cluster: "GPU cluster", demoTabs: "demo tabs" }[k]} ${k === "cluster" || k === "demoTabs" ? saved[k] : saved[k] ? "on" : "off"}`).join(", ")}`,
           details: { before: Object.fromEntries(changed.map((k) => [k, before[k]])), after: Object.fromEntries(changed.map((k) => [k, saved[k]])), storage: saved.storage } }).catch(() => {});
         return sendJson(res, 200, { settings: saved });
       } catch (e) { return sendJson(res, e.status || 500, { error: e.message }); }

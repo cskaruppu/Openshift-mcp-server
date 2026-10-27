@@ -119,6 +119,7 @@ export async function commandCenterState({ cluster = "local" } = {}) {
   return {
     enabled: commandCenterEnabled(),
     banner: effectiveSettings().banner,
+    demoTabs: effectiveSettings().demoTabs,
     hardware: process.env.PRIVATE_AI_HARDWARE || null,
     cluster, access: accessExpiry(cluster),
     session: { ..._session },

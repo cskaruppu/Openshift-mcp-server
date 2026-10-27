@@ -1414,6 +1414,24 @@ function PrivateAITab() {
         </div>
       ))}
 
+      <div style={{ ...S.card, ...S.flexBetween, gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Demo tabs</div>
+          <div style={S.muted}>How the stage demo appears in the Private AI Factory, after Overview · Models · GPU fleet · Usage.</div>
+          <div style={{ ...S.muted, marginTop: 4 }}>
+            {{ event: "Event: numbered acts under “Live demo” — the presenter’s running order",
+               product: "Product: the same views as features — Private AI, Incident response, Supply chain security, VM modernisation, Scorecard",
+               hidden: "Hidden: customers see only the platform views" }[st.demoTabs || "event"]}
+          </div>
+        </div>
+        <select style={{ ...S.select, width: "auto" }} value={st.demoTabs || "event"} disabled={!canEdit || saving === "demoTabs"}
+          onChange={(e) => save({ demoTabs: e.target.value }, "demoTabs")} aria-label="Demo tabs">
+          <option value="event">Event (numbered)</option>
+          <option value="product">Product (named)</option>
+          <option value="hidden">Hidden</option>
+        </select>
+      </div>
+
       {st.updatedBy && <div style={S.muted}>Last changed by {st.updatedBy} · {new Date(st.updatedAt).toLocaleString()}</div>}
     </div>
   );
