@@ -15,12 +15,12 @@ import { logDirect, complete as completeRoute } from "./router.js";
 
 // Each lookup also appears in the Private AI Factory's AI traffic (role "embed"),
 // without the texts themselves: only how many were compared.
-function logLookup(m, n, ms, ok, error = null) {
+function logLookup(m, n, ms, ok, error = null, tokens = 0) {
   try {
     const d = logDirect({ id: Math.random().toString(16).slice(2, 14), at: new Date().toISOString(), question: `Incident memory: ${n} text${n === 1 ? "" : "s"} compared by meaning`,
       role: "embed", wanted: "embed", model: m.model, gpu: m.gpu || null, cluster: m.cluster || null, reason: "similar past incidents (embeddings)",
       sensitive: [], onPrem: true, useCase: "incident-memory", conversationId: null, ms: null, ok: null, tokens: null });
-    completeRoute(d, { ms, ok, error });
+    completeRoute(d, { ms, ok, error, usage: tokens ? { promptTokens: tokens, completionTokens: 0, totalTokens: tokens } : null });
   } catch { /* the lookup's own result is what matters */ }
 }
 
@@ -52,6 +52,7 @@ export async function embedMany(texts, { fetchImpl } = {}) {
     const t0 = Date.now();
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 15000);
+    let tokens = 0;
     try {
       for (let s = 0; s < missing.length; s += 64) {
         const idx = missing.slice(s, s + 64);
@@ -62,6 +63,7 @@ export async function embedMany(texts, { fetchImpl } = {}) {
         });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json();
+        tokens += Number(j.usage?.total_tokens ?? j.usage?.prompt_tokens) || 0;
         (j.data || []).forEach((d, k) => {
           const v = normalise(d.embedding);
           out[idx[d.index ?? k]] = v;
@@ -70,7 +72,7 @@ export async function embedMany(texts, { fetchImpl } = {}) {
         });
       }
       _stats = { ..._stats, calls: _stats.calls + 1, texts: _stats.texts + missing.length, lastMs: Date.now() - t0, lastError: null };
-      logLookup(m, missing.length, Date.now() - t0, true);
+      logLookup(m, missing.length, Date.now() - t0, true, null, tokens);
     } catch (e) {
       _stats = { ..._stats, failures: _stats.failures + 1, lastError: e?.name === "AbortError" ? "timed out" : e.message };
       logLookup(m, missing.length, Date.now() - t0, false, _stats.lastError);

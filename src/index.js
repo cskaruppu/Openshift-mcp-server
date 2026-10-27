@@ -5253,6 +5253,7 @@ async function startSSE() {
           ...(Array.isArray(body.images) && body.images.length ? { images: body.images } : {}),
           ...(body.conversationId ? { conversationId: body.conversationId } : {}),
           ...(body.metadata && typeof body.metadata === "object" ? { metadata: body.metadata } : {}),
+          ...(typeof body.userId === "string" ? { userId: body.userId.slice(0, 120) } : {}),
         });
         return sendJson(res, 200, result);
       } catch (err) {
@@ -9333,6 +9334,13 @@ spec:
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
           return res.end(FY.evidenceHtml({ state, factory, fleet, actor, cluster }));
         }
+        if (req.method === "GET" && url.pathname === "/api/command-center/usage") {
+          if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
+          const R = await import("./services/private-ai/router.js");
+          const price = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) > 0 ? Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) : 5;
+          // Questions in the request list are masked by the router before they are kept.
+          return sendJson(res, 200, { ...R.usage(), pricePerMTok: price, requests: R.trafficLog(300).map(({ _counted, ...d }) => d), you: { canManage: checkPermission(req, "manage") } });
+        }
         if (req.method === "GET" && url.pathname === "/api/command-center/fleet") {
           if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
           const FY = await import("./services/private-ai/factory.js");
@@ -9380,6 +9388,13 @@ spec:
             const out = await FL.forgetCluster(c);
             audit(`GPU cluster ${c} removed from the AI fleet`, { cluster: c });
             return sendJson(res, 200, out);
+          }
+          case "/api/command-center/usage/reset": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Resetting the usage record needs the Admin role" });
+            const R = await import("./services/private-ai/router.js");
+            R.resetUsage();
+            audit("Private AI usage record reset", {});
+            return sendJson(res, 200, R.usage());
           }
           case "/api/command-center/model/test": {
             const FY = await import("./services/private-ai/factory.js");

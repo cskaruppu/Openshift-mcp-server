@@ -10068,3 +10068,25 @@ code.new { color: #22a06b; }
 .ff-muted { color: var(--cc-ink3); font-weight: 700; font-size: 0.76rem; }
 .ff-test { margin: -2px 0 8px 16px; font-size: 0.74rem; color: var(--cc-ink2); }
 .ff-test.ok { color: var(--cc-ok-t); } .ff-test.bad { color: var(--cc-crit-t); }
+
+/* Private AI Factory — Usage tab (UsageView.jsx). */
+.us-totals > div:not(.fl-mode) .cc-muted { font-size: 0.72rem; }
+.us-row2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.us-t { display: flex; flex-direction: column; }
+.us-tr { display: grid; grid-template-columns: minmax(0, 1.6fr) 0.9fr 0.8fr 0.8fr 0.8fr 0.7fr 0.8fr; gap: 8px; align-items: center; padding: 7px 0; border-top: 1px solid var(--cc-line); font-size: 0.78rem; color: var(--cc-fg); }
+.us-th { border-top: 0; font: 700 0.64rem var(--tcs-font); letter-spacing: .07em; text-transform: uppercase; color: var(--cc-label); }
+.us-name { display: flex; align-items: center; gap: 0; min-width: 0; flex-wrap: wrap; }
+.us-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.us-bar { flex-basis: 100%; height: 4px; border-radius: 3px; background: var(--cc-track); margin-top: 4px; overflow: hidden; }
+.us-bar i { display: block; height: 100%; }
+.us-bad { font-style: normal; color: var(--cc-crit-t); }
+.us-req { grid-template-columns: 96px 0.8fr minmax(0, 2.4fr) 1fr 0.8fr 0.5fr 0.5fr 0.5fr; }
+.us-req.click { cursor: pointer; border-radius: 6px; } .us-req.click:hover { background: var(--cc-sub); }
+.us-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; }
+.us-filters { margin-left: auto; display: flex; gap: 6px; }
+.us-filters select { padding: 5px 8px; border-radius: 8px; border: 1px solid var(--cc-btn-line); background: var(--cc-sub); color: var(--cc-fg); font: 600 0.74rem var(--tcs-font); }
+.us-days { display: flex; align-items: flex-end; gap: 4px; height: 160px; padding-top: 6px; }
+.us-day { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.us-day i { width: 100%; max-width: 22px; border-radius: 4px 4px 0 0; background: var(--cc-blue); }
+.us-day span { font-size: 0.6rem; color: var(--cc-ink3); }
+@media (max-width: 1300px) { .us-row2 { grid-template-columns: 1fr; } }

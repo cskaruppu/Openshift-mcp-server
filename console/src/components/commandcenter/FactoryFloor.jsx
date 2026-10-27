@@ -102,7 +102,7 @@ function Alerts({ alerts }) {
 }
 
 /** One AI request in full: what was asked (masked), which model and why, tokens, time, tools. */
-function RequestDetail({ r, onClose }) {
+export function RequestDetail({ r, onClose }) {
   useEffect(() => {
     const k = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", k, true);
@@ -123,6 +123,7 @@ function RequestDetail({ r, onClose }) {
           {row("GPU cluster", r.cluster)}
           {row("Why this model", r.reason)}
           {row("Asked for", r.wanted && r.wanted !== r.role ? `${r.wanted} model (fell back)` : null)}
+          {row("User", r.user || (r.useCase && r.useCase !== "ai-chat" ? "platform (background)" : null))}
           {row("Feature", r.useCase)}
           {row("First token", ms(r.firstTokenMs))}
           {row("Total time", ms(r.ms))}

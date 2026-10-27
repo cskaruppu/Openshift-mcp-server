@@ -231,14 +231,41 @@ export function resetTraffic() {
   changed();
 }
 
+/* ─────────────────────────── usage (enterprise view) ─────────────────────────── */
+
+// Running totals per model, user, feature and day. Not limited to the last 300
+// requests and not cleared by "New session": this is the usage record.
+const MAX_DAYS = 60;
+let _usage = { since: new Date().toISOString(), byModel: {}, byUser: {}, byFeature: {}, byDay: {} };
+const blank = () => ({ requests: 0, ok: 0, failed: 0, blocked: 0, tokensIn: 0, tokensOut: 0, tokens: 0, ms: 0, timed: 0 });
+function bump(map, key, d, fn) { const k = key || "unknown"; map[k] = map[k] || blank(); fn(map[k], d); }
+function countUsage(d, kind) {
+  const day = String(d.at || new Date().toISOString()).slice(0, 10);
+  const add = (u) => {
+    if (kind === "blocked") { u.requests++; u.blocked++; return; }
+    u.requests++; if (d.ok) u.ok++; else u.failed++;
+    u.tokensIn += d.promptTokens || 0; u.tokensOut += d.completionTokens || 0; u.tokens += d.tokens || 0;
+    if (d.ms) { u.ms += d.ms; u.timed++; }
+  };
+  bump(_usage.byModel, d.blocked ? "(blocked)" : d.model || (d.onPrem === false ? "cloud" : "none"), d, add);
+  bump(_usage.byUser, d.user || "platform (background)", d, add);
+  bump(_usage.byFeature, d.useCase || "other", d, add);
+  bump(_usage.byDay, day, d, add);
+  const days = Object.keys(_usage.byDay).sort();
+  for (const old of days.slice(0, Math.max(0, days.length - MAX_DAYS))) delete _usage.byDay[old];
+}
+export function usage() { return JSON.parse(JSON.stringify(_usage)); }
+export function resetUsage() { _usage = { since: new Date().toISOString(), byModel: {}, byUser: {}, byFeature: {}, byDay: {} }; changed(); }
+
 // Saved across restarts (persist.js). The log holds masked questions only.
 registerPart("traffic", {
-  exportState: () => ({ since: _since, counts: { ..._counts, byRole: { ..._counts.byRole } }, log: _log.slice(-MAX_LOG), guard: { injectionsBlocked: _guard.injectionsBlocked, events: _guard.events.slice() } }),
+  exportState: () => ({ since: _since, counts: { ..._counts, byRole: { ..._counts.byRole } }, log: _log.slice(-MAX_LOG), guard: { injectionsBlocked: _guard.injectionsBlocked, events: _guard.events.slice() }, usage: _usage }),
   importState: (st) => {
     if (st.since) _since = st.since;
     if (st.counts) Object.assign(_counts, st.counts, { byRole: { ...(st.counts.byRole || {}) } });
     if (Array.isArray(st.log)) { _log.length = 0; _log.push(...st.log.slice(-MAX_LOG)); }
     if (st.guard) { _guard.injectionsBlocked = st.guard.injectionsBlocked || 0; _guard.events.length = 0; _guard.events.push(...(st.guard.events || []).slice(-MAX_EVENTS)); }
+    if (st.usage && st.usage.byModel) _usage = { since: st.usage.since || _usage.since, byModel: st.usage.byModel || {}, byUser: st.usage.byUser || {}, byFeature: st.usage.byFeature || {}, byDay: st.usage.byDay || {} };
   },
 });
 
@@ -249,7 +276,7 @@ registerPart("traffic", {
  * chosen endpoint. Returns { o, decision } — `o` is ready for callOpenAI, or
  * for the cloud provider when (and only when) policy allows it.
  */
-export async function route(o, messages, { useCase = null, conversationId = null } = {}) {
+export async function route(o, messages, { useCase = null, conversationId = null, user = null } = {}) {
   const list = models();
   const available = list.map((m) => m.role);
   if (!list.length) throw Object.assign(new Error("Private AI is selected but no model endpoints are configured (PRIVATE_AI_LARGE_URL …)"), { llmConfigError: true });
@@ -258,7 +285,7 @@ export async function route(o, messages, { useCase = null, conversationId = null
   if (inj) {
     _guard.injectionsBlocked++; guardEvent("blocked", inj, lastQ);
     record({ id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview(lastQ), role: null, wanted: null, model: null, gpu: null,
-      reason: `guardrail: ${inj}`, sensitive: [], onPrem: true, blocked: true, useCase, conversationId, ms: 0, ok: false, tokens: null });
+      reason: `guardrail: ${inj}`, sensitive: [], onPrem: true, blocked: true, useCase, conversationId, user, ms: 0, ok: false, tokens: null });
     throw Object.assign(new Error(`Blocked by the Private AI guardrails (${inj}). Rephrase the request without asking the assistant to override its instructions.`), { status: 400, guardrail: inj });
   }
   const d = decide({ messages, system: o.system, images: o.images, tools: o.tools, available });
@@ -286,7 +313,7 @@ export async function route(o, messages, { useCase = null, conversationId = null
   const decision = {
     id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview([...messages].reverse().find((m) => m.role === "user")?.content || useCase || ""),
     role: chosen?.role || null, wanted: d.role, model: chosen?.model || null, gpu: chosen?.gpu || null, cluster: chosen?.cluster || null, reason: fallbackNote ? `${d.reason} · ${fallbackNote}` : d.reason,
-    sensitive: d.sensitive, onPrem: true, useCase, conversationId, ms: null, ok: null, tokens: null,
+    sensitive: d.sensitive, onPrem: true, useCase, conversationId, user, ms: null, ok: null, tokens: null,
     // For the request detail panel: what the model was given and what it did.
     toolsOffered: Array.isArray(o.tools) ? o.tools.length : 0, images: Array.isArray(o.images) ? o.images.length : 0,
     turns: messages.length, override: d.override || null,
@@ -317,6 +344,7 @@ function record(decision) {
   _counts.byRole[decision.role || "none"] = (_counts.byRole[decision.role || "none"] || 0) + 1;
   if (decision.sensitive.length && decision.onPrem) { _counts.sensitiveKeptOnPrem++; _counts.masked += decision.sensitive.length; }
   if (!decision.onPrem) _counts.cloudCalls++;
+  if (decision.blocked) countUsage(decision, "blocked");
   changed();
 }
 
@@ -335,7 +363,11 @@ export function complete(decision, { ms, ok, usage, firstTokenMs = null, toolCal
   decision.error = error ? String(error).slice(0, 300) : null;
   const t = usage ? (usage.totalTokens ?? (((usage.promptTokens || 0) + (usage.completionTokens || 0)) || null)) : null;
   decision.tokens = t || null;
-  if (t) _counts.tokens += t;
-  if (!ok) _counts.failures++;
+  if (!decision._counted) {
+    decision._counted = true;
+    if (t) _counts.tokens += t;
+    if (!ok) _counts.failures++;
+    countUsage(decision, "done");
+  }
   changed();
 }

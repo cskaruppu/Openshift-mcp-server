@@ -16172,7 +16172,8 @@ export async function handleChatAPI(req, res) {
 
     // Pillar 1 + 3: Inject parsed NLU + user identity for context augmentation
     llmOpts.parsed = parsed;
-    llmOpts.userId = body.userId || req.headers["x-user-id"] || null;
+    // The signed-in user (for the Private AI usage view), else what the client says.
+    llmOpts.userId = req.user?.name || body.userId || req.headers["x-user-id"] || null;
     llmOpts.conversationId = conversationId;
 
     // Pillar 2: Build reasoning trace from the parse result. Persisted at

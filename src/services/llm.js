@@ -268,6 +268,7 @@ async function callViaRelay(messages, opts) {
   if (opts.images && opts.images.length) payload.images = opts.images;
   if (opts.conversationId) payload.conversationId = opts.conversationId;
   if (opts.metadata) payload.metadata = opts.metadata;
+  if (opts.userId) payload.userId = opts.userId;
   const hubToken = process.env.HUB_API_TOKEN || process.env.MCP_API_TOKEN || "";
   const headers = { "Content-Type": "application/json" };
   if (hubToken) headers["Authorization"] = `Bearer ${hubToken}`;
@@ -466,7 +467,8 @@ export function estimateCost(model, promptTokens, completionTokens, prices = nul
 let _router = null;
 async function routePrivate(o, original, messages, opts) {
   _router = _router || await import("./private-ai/router.js");
-  const r = await _router.route(o, original, { useCase: opts?.metadata?.useCase || opts?.agentId || null, conversationId: opts?.conversationId || null });
+  const r = await _router.route(o, original, { useCase: opts?.metadata?.useCase || opts?.agentId || null, conversationId: opts?.conversationId || null,
+    user: opts?.userId || opts?.metadata?.user || null });
   if (r.cleaned != null) {
     const idx = messages.map((m) => m.role).lastIndexOf("user");
     if (idx >= 0) messages = messages.map((m, i) => (i === idx ? { ...m, content: redactIfEnabled(r.cleaned) } : m));
@@ -487,7 +489,7 @@ export async function callLLM({ messages, ...opts }) {
   // Behind a hub relay, Private AI is routed by the hub (it has the models and keeps the
   // records); here it is only forwarded. Elsewhere it is routed in this process.
   const relayPrivate = !!_relayUrl && o.provider === "private";
-  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata };
+  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata, userId: opts.userId };
   else if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
   if (!relayPrivate) validateLLMConfig(o);
   const t0 = Date.now();
@@ -526,7 +528,7 @@ export async function callLLMStream({ messages, onDelta, onToolCall, ...opts }) 
   // Behind a hub relay, Private AI is routed by the hub (it has the models and keeps the
   // records); here it is only forwarded. Elsewhere it is routed in this process.
   const relayPrivate = !!_relayUrl && o.provider === "private";
-  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata };
+  if (relayPrivate) o = { ...o, images: opts.images || o.images, conversationId: opts.conversationId, metadata: opts.metadata, userId: opts.userId };
   else if (o.provider === "private") ({ o, routed, messages } = await routePrivate(o, original, messages, opts));
   if (!relayPrivate) validateLLMConfig(o);
   const t0 = Date.now();
