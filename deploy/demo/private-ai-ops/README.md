@@ -142,3 +142,17 @@ The header switcher chooses which cluster the Factory floor and the acts show. I
 selected cluster's model is down, the same model on another cluster answers, and AI traffic
 and the evidence pack record which cluster answered each request. The models set by
 `enable.sh` still work and count as the selected cluster's.
+
+## Model catalogue (Private AI Factory → Models)
+
+The approved models, whether each runs, whether it fits on the GPUs now (HAMi free
+memory per card, best fit so whole cards stay free for big models), and **Deploy…**
+(Admin, audited). Sources: an **OpenShift AI catalog image** (`oci://registry.redhat.io/…`,
+pasted from the OpenShift AI model catalog in the Deploy panel — no download, no token) or
+**Hugging Face** (downloaded once into `<model>-cache`, the same steps as `rhoai/deploy-rhoai.sh`).
+After deploy the model is connected to the router automatically.
+
+Needs: the serving runtimes (run `rhoai/deploy-rhoai.sh` once), and the GPU-cluster access
+re-applied so the hub may create storage, download jobs and model services in openshift-mcp:
+`oc --kubeconfig "$GPU_KC" apply -f deploy/demo/private-ai-ops/gpu-cluster-access.yaml`.
+The list lives in `src/services/private-ai/catalogue.js`.

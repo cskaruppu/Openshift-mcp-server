@@ -2173,7 +2173,7 @@ async function startSSE() {
       });
       await FL.restoreFleet();
       // AI traffic, guardrail events, session, trend lines: back as they were before the restart.
-      for (const m of ["router", "command-center", "factory", "scenario", "vm-batch"]) await import(`./services/private-ai/${m}.js`);
+      for (const m of ["router", "command-center", "factory", "scenario", "vm-batch", "catalogue"]) await import(`./services/private-ai/${m}.js`);
       const PST = await import("./services/private-ai/persist.js");
       const rs = await PST.restore();
       if (rs.restored) console.log(`[private-ai] Restored AI traffic and Factory state from ${rs.storage} (saved ${rs.savedAt})`);
@@ -2193,6 +2193,12 @@ async function startSSE() {
         promRange: async (q, start, end, step) => (await import("./services/prometheus.js")).promRange(q, start, end, step),
         ocp: { fetch: ocpFetch, patch: ocpPatch },
       });
+      const CAT = await import("./services/private-ai/catalogue.js");
+      CAT.configureCatalogue({
+        runForCluster: privateAiRun, ocp: { fetch: ocpFetch, post: ocpPost, del: ocpDelete },
+        floor: (o) => FY.factoryState(o), discover: (c, actor) => FL.discoverModels(c, { actor }),
+      });
+      await CAT.restoreCatalogue();
       CC.configureCommandCenter({
         runForCluster: privateAiRun,
         gpu: gpuCached,
@@ -9334,6 +9340,11 @@ spec:
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
           return res.end(FY.evidenceHtml({ state, factory, fleet, actor, cluster }));
         }
+        if (req.method === "GET" && url.pathname === "/api/command-center/catalogue") {
+          if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
+          const CAT = await import("./services/private-ai/catalogue.js");
+          return sendJson(res, 200, { ...(await CAT.catalogueState({ cluster, since: CC.sessionSince() })), you: { canManage: checkPermission(req, "manage") } });
+        }
         if (req.method === "GET" && url.pathname === "/api/command-center/usage") {
           if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
           const R = await import("./services/private-ai/router.js");
@@ -9387,6 +9398,19 @@ spec:
             }
             const out = await FL.forgetCluster(c);
             audit(`GPU cluster ${c} removed from the AI fleet`, { cluster: c });
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/catalogue/deploy":
+          case "/api/command-center/catalogue/image": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Deploying models and choosing their source needs the Admin role" });
+            const CAT = await import("./services/private-ai/catalogue.js");
+            if (url.pathname.endsWith("/image")) {
+              const out = await CAT.setCatalogImage(String(body.id || ""), body.oci, { actor });
+              audit(out.source.kind === "oci" ? `Model ${out.id} set to the OpenShift AI catalog image ${out.source.uri}` : `Model ${out.id} back to its Hugging Face source`, { id: out.id });
+              return sendJson(res, 200, out);
+            }
+            const out = await CAT.deployModel({ cluster, id: String(body.id || ""), node: typeof body.node === "string" ? body.node : null, actor, since: CC.sessionSince() });
+            audit(`Model ${out.id} deployment started on ${cluster} (${String(out.node).split(".")[0]})`, out);
             return sendJson(res, 200, out);
           }
           case "/api/command-center/usage/reset": {

@@ -68,8 +68,9 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: edit }
 subjects: [{ kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access }]
 ---
-# Private AI Factory: find the models (and expose each with a Route) and stop / start them from
-# the console. Only the stop annotation and new Routes are written; nothing else in openshift-mcp.
+# Private AI Factory: find the models (and expose each with a Route), stop / start them, and deploy
+# approved models from the model catalogue (storage claim, download job, model service).
+# Nothing is deleted except a finished download job being replaced; nothing else in openshift-mcp.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -78,7 +79,17 @@ metadata:
 rules:
   - apiGroups: ["serving.kserve.io"]
     resources: ["inferenceservices"]
-    verbs: ["get", "list", "watch", "patch"]
+    verbs: ["get", "list", "watch", "patch", "create"]
+  # Model catalogue: deploy from the console (Admin) — runtimes, weights storage, download job.
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["servingruntimes"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
   # Model discovery: each model is reached through a Route (created if missing).
   - apiGroups: ["route.openshift.io"]
     resources: ["routes"]

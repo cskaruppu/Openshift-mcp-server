@@ -9770,7 +9770,7 @@ code.new { color: #22a06b; }
 .cc-egress.on { color: var(--cc-ok-t); background: rgba(43,182,115,.14); border-color: rgba(43,182,115,.45); }
 .cc-clock { font: 500 0.85rem var(--tcs-font-mono); color: var(--cc-label); }
 .cc-nav { display: flex; align-items: center; gap: 8px; padding: 12px 24px; border-bottom: 1px solid var(--cc-nav-line); flex-wrap: wrap; }
-.cc-act { padding: 8px 14px; border-radius: 8px; border: 0; background: var(--cc-act); color: var(--cc-act-fg); font: 600 0.82rem var(--tcs-font); cursor: pointer; }
+.cc-act { padding: 8px 12px; border-radius: 8px; border: 0; background: var(--cc-act); color: var(--cc-act-fg); font: 600 0.82rem var(--tcs-font); cursor: pointer; }
 .cc-act.on { background: #1559b4; color: #fff; font-weight: 700; }
 .cc-since { font: 500 0.76rem var(--tcs-font); color: var(--cc-label); }
 .cc-body { flex: 1; overflow: auto; padding: 18px 24px 26px; display: flex; flex-direction: column; gap: 14px; }
@@ -10090,3 +10090,34 @@ code.new { color: #22a06b; }
 .us-day i { width: 100%; max-width: 22px; border-radius: 4px 4px 0 0; background: var(--cc-blue); }
 .us-day span { font-size: 0.6rem; color: var(--cc-ink3); }
 @media (max-width: 1300px) { .us-row2 { grid-template-columns: 1fr; } }
+
+/* Private AI Factory — Model catalogue (CatalogueView.jsx). */
+.ct-totals { grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.7fr); }
+.ct-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.ct-f { padding: 5px 10px; border-radius: 99px; border: 1px solid var(--cc-line); background: var(--cc-sub); color: var(--cc-ink2); font: 600 0.74rem var(--tcs-font); cursor: pointer; }
+.ct-f.on { background: var(--cc-blue); border-color: var(--cc-blue); color: #fff; }
+.ct-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.ct-grid.with-side { grid-template-columns: minmax(0, 1fr) 420px; }
+.ct-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 12px; }
+.ct-m { border: 1px solid var(--cc-line); border-radius: 12px; padding: 13px 14px; display: flex; flex-direction: column; gap: 9px; background: var(--cc-card); }
+.ct-m.sel { border-color: var(--cc-blue); box-shadow: 0 0 0 1px var(--cc-blue) inset; }
+.ct-mh { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .ct-mh b { font: 700 0.92rem var(--tcs-font); color: var(--cc-fg); }
+.ct-st { margin-left: auto; }
+.ct-desc { margin: 0; font-size: 0.78rem; line-height: 1.4; color: var(--cc-ink2); }
+.ct-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.ct-facts div { background: var(--cc-sub); border: 1px solid var(--cc-line); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ct-facts span { font: 700 0.62rem var(--tcs-font); color: var(--cc-label); text-transform: uppercase; letter-spacing: .06em; }
+.ct-facts b { font-size: 0.78rem; color: var(--cc-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-fit { display: flex; align-items: center; gap: 8px; font-size: 0.74rem; color: var(--cc-ink2); }
+.ct-bar { flex: 0 0 120px; height: 6px; border-radius: 4px; background: var(--cc-track); overflow: hidden; } .ct-bar i { display: block; height: 100%; background: var(--cc-ok); }
+.ct-dep { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--cc-sub); border: 1px dashed var(--cc-btn-line); font-size: 0.76rem; color: var(--cc-fg); }
+.ct-dep.bad b { color: var(--cc-crit-t); }
+.ct-acts { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.ct-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ct-side .cc-card > header { flex-wrap: nowrap; } .ct-x { margin-left: auto; }
+.ct-small { font-size: 0.7rem !important; }
+.ct-oci { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+.ct-card { border: 1px solid var(--cc-line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 5px; }
+.ct-card.pick { border-color: var(--cc-ok); background: rgba(43,182,115,.07); }
+.ct-card-h { display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--cc-ink2); } .ct-card-h b { color: var(--cc-fg); }
+@media (max-width: 1300px) { .ct-grid.with-side { grid-template-columns: 1fr; } .ct-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

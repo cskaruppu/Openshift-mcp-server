@@ -6,6 +6,7 @@ import { useThemeStore } from "../../store/themeStore";
 import FactoryFloor from "./FactoryFloor";
 import FleetView from "./FleetView";
 import UsageView from "./UsageView";
+import CatalogueView from "./CatalogueView";
 
 // Private AI Factory — the stage and booth view.
 //
@@ -17,7 +18,7 @@ import UsageView from "./UsageView";
 // Opened by any of: the workspace header button, the dashboard banner, Ctrl+K,
 // or `window.dispatchEvent(new Event("open-command-center"))`.
 
-const ACTS = [["floor", "Factory floor"], ["fleet", "GPU fleet"], ["usage", "Usage"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
+const ACTS = [["floor", "Factory floor"], ["fleet", "GPU fleet"], ["catalogue", "Models"], ["usage", "Usage"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
 
 const fmtClock = (sec) => (sec == null ? "--:--" : `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`);
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
@@ -66,7 +67,7 @@ export function useCommandCenterEnabled() {
 
 // Look: follows the console's light/dark theme ("auto"), or is forced from the
 // header switch — dark reads best on a stage projector whatever the console uses.
-const CC_THEMES = { auto: "Theme: auto", dark: "Theme: dark", light: "Theme: light" };
+const CC_THEMES = { auto: "Auto", dark: "Dark", light: "Light" };
 const CC_NEXT = { auto: "dark", dark: "light", light: "auto" };
 
 export function CommandCenter({ open, onClose }) {
@@ -176,8 +177,8 @@ export function CommandCenter({ open, onClose }) {
           <nav className="cc-nav" aria-label="Acts">
             {ACTS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
             <div style={{ flex: 1 }} />
-            <button className={"vc-btn ghost sm" + (stage ? " on" : "")} onClick={toggleStage} title="Larger type and figures for a projector">{stage ? "Stage mode: on" : "Stage mode"}</button>
-            {d?.enabled && <button className="vc-btn ghost sm" onClick={() => window.open("/api/command-center/evidence", "_blank", "noopener")} title="Printable report of this session: models, GPUs, guardrails, AI traffic">Evidence pack</button>}
+            <button className={"vc-btn ghost sm" + (stage ? " on" : "")} onClick={toggleStage} title={stage ? "Stage mode is on: larger type for a projector. Click to turn off" : "Stage mode: larger type and figures for a projector"}>{stage ? "Stage ✓" : "Stage"}</button>
+            {d?.enabled && <button className="vc-btn ghost sm" onClick={() => window.open("/api/command-center/evidence", "_blank", "noopener")} title="Evidence pack: a printable report of this session (models, GPUs, guardrails, AI traffic)">Evidence</button>}
             <button className="vc-btn ghost sm" onClick={cycleTheme} title={ccTheme === "auto" ? `Following the console (${look}); click to force dark, then light` : `Forced ${ccTheme}; click to change`}>{CC_THEMES[ccTheme] || CC_THEMES.auto}</button>
             <button className="vc-btn ghost sm" disabled={!!busy} title={d?.session?.since ? `Current session since ${fmtTime(d.session.since)} — start a new one to reset the counters` : "Reset the counters"} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>New session</button>
           </nav>
@@ -188,6 +189,7 @@ export function CommandCenter({ open, onClose }) {
             {d && !d.enabled && <div className="cc-empty">The Private AI Factory is switched off. An admin can turn it on in Settings → Private AI.</div>}
             {d?.enabled && act === "floor" && <FactoryFloor key={view || "default"} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />}
             {d?.enabled && act === "usage" && <UsageView busy={busy} act$={act$} />}
+            {d?.enabled && act === "catalogue" && <CatalogueView key={view || "default"} busy={busy} act$={act$} scoped={scoped} onTab={setAct} />}
             {d?.enabled && act === "fleet" && <FleetView fleet={fleet} busy={busy} act$={act$} reload={loadFleet} viewCluster={view || fleet?.preferred}
               onOpen={(c) => { chooseCluster(c === fleet?.preferred ? null : c); setAct("floor"); }} />}
             {d?.enabled && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
