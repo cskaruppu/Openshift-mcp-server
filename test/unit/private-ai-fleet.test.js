@@ -78,3 +78,14 @@ test("discovery lists a cluster's OpenShift AI models, exposes missing Routes an
   await assert.rejects(FL.setRoutingMode("random"), /preferred or least-loaded/);
   FL._resetFleet();
 });
+
+test("with only fast, vision and embeddings running: text goes to the fast model, images to vision", () => {
+  const available = ["small", "vision"];
+  const d = (content, extra = {}) => R.decide({ messages: [{ role: "user", content }], available, ...extra });
+  assert.equal(d("how many pods are pending?").role, "small");
+  assert.equal(d("why is payments-api restarting? find the root cause").role, "small", "reasoning wanted, falls back to the fast model");
+  assert.equal(d("why is payments-api restarting?").reason, "needs multi-step reasoning");
+  assert.equal(d("what is wrong here?", { images: [{ mediaType: "image/png", base64: "x" }] }).role, "vision");
+  assert.equal(d("@vision describe the dashboard").role, "vision");
+  assert.equal(d("list pods", { tools: [{ name: "get_pods" }] }).role, "small");
+});

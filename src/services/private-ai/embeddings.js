@@ -11,6 +11,18 @@
 //   PRIVATE_AI_EMBED_GPU    label shown on screen
 
 import { lanFetch } from "../../utils/lan-dns.js";
+import { logDirect, complete as completeRoute } from "./router.js";
+
+// Each lookup also appears in the Private AI Factory's AI traffic (role "embed"),
+// without the texts themselves: only how many were compared.
+function logLookup(m, n, ms, ok, error = null) {
+  try {
+    const d = logDirect({ id: Math.random().toString(16).slice(2, 14), at: new Date().toISOString(), question: `Incident memory: ${n} text${n === 1 ? "" : "s"} compared by meaning`,
+      role: "embed", wanted: "embed", model: m.model, gpu: m.gpu || null, cluster: m.cluster || null, reason: "similar past incidents (embeddings)",
+      sensitive: [], onPrem: true, useCase: "incident-memory", conversationId: null, ms: null, ok: null, tokens: null });
+    completeRoute(d, { ms, ok, error });
+  } catch { /* the lookup's own result is what matters */ }
+}
 
 const CACHE_MAX = 4000;
 const _cache = new Map();
@@ -58,8 +70,10 @@ export async function embedMany(texts, { fetchImpl } = {}) {
         });
       }
       _stats = { ..._stats, calls: _stats.calls + 1, texts: _stats.texts + missing.length, lastMs: Date.now() - t0, lastError: null };
+      logLookup(m, missing.length, Date.now() - t0, true);
     } catch (e) {
       _stats = { ..._stats, failures: _stats.failures + 1, lastError: e?.name === "AbortError" ? "timed out" : e.message };
+      logLookup(m, missing.length, Date.now() - t0, false, _stats.lastError);
       return null;
     } finally { clearTimeout(timer); }
   }

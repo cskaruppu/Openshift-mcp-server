@@ -292,7 +292,8 @@ export async function factoryState({ cluster = "local", since }) {
   ]);
   const t = router.trafficCounts();
   const g = router.guardrails();
-  const onPrem = t.total - t.cloudCalls - g.injectionsBlocked;
+  // Answers only: incident-memory lookups (embeddings) are listed in AI traffic but are not answers.
+  const onPrem = t.total - t.cloudCalls - g.injectionsBlocked - (t.byRole?.embed || 0);
   const chat = models.filter((m) => m.role !== "embed" && m.stats);
   const ttfts = chat.map((m) => m.stats.ttftMs).filter((v) => v != null).sort((a, b) => a - b);
   const log = router.trafficLog(40);
