@@ -18,7 +18,16 @@ import CatalogueView from "./CatalogueView";
 // Opened by any of: the workspace header button, the dashboard banner, Ctrl+K,
 // or `window.dispatchEvent(new Event("open-command-center"))`.
 
-const ACTS = [["floor", "Factory floor"], ["fleet", "GPU fleet"], ["catalogue", "Models"], ["usage", "Usage"], ["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
+// Platform views first, in the order operations consoles use (overview → what runs →
+// where it runs → what it costs); the stage demo is a separate group after them.
+const PLATFORM_TABS = [["floor", "Overview"], ["catalogue", "Models"], ["fleet", "GPU fleet"], ["usage", "Usage"]];
+const DEMO_TABS = [["act1", "1 · Private by design"], ["act2", "2 · Incident at scale"], ["act3", "3 · Secure the AI supply chain"], ["act4", "4 · Modernise at GPU speed"], ["score", "Scorecard"]];
+
+// "Dell PowerEdge · 4× NVIDIA H100 · OpenShift AI" → chips, each with its vendor's accent.
+const VENDOR = [[/^dell\b/i, "dell"], [/nvidia|\b[HABL]\d{2,3}\b/i, "nvidia"], [/openshift|red hat/i, "redhat"]];
+const vendorOf = (t) => (VENDOR.find(([re]) => re.test(t)) || [null, ""])[1];
+
+const Icon = ({ d }) => <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
 
 const fmtClock = (sec) => (sec == null ? "--:--" : `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`);
 const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
@@ -74,6 +83,19 @@ export function CommandCenter({ open, onClose }) {
   const [act, setAct] = useState("floor");
   const [stage, setStage] = useState(() => { try { return localStorage.getItem("cc-stage") === "1"; } catch { return false; } });
   const toggleStage = () => setStage((v) => { try { localStorage.setItem("cc-stage", v ? "0" : "1"); } catch { /* private window */ } return !v; });
+  const shellRef = useRef(null);
+  // Present: full screen with larger type for a projector; leaving full screen (Esc) ends it.
+  const present = () => {
+    const el = shellRef.current;
+    if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+    if (!stage) toggleStage();
+    el?.requestFullscreen?.().catch(() => {});
+  };
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setStage((v) => { if (v) { try { localStorage.setItem("cc-stage", "0"); } catch { /* private window */ } } return false; }); };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
   const consoleTheme = useThemeStore((s) => s.theme);
   const [ccTheme, setCcTheme] = useState(() => { try { return localStorage.getItem("cc-theme") || "auto"; } catch { return "auto"; } });
   const look = ccTheme === "auto" ? (consoleTheme === "light" ? "light" : "dark") : ccTheme;
@@ -137,9 +159,9 @@ export function CommandCenter({ open, onClose }) {
     <>
       {minimized && <DockChip label="Private AI Factory" onRestore={() => setMinimized(false)} />}
       <div className="vc-overlay cc-overlay" style={{ display: minimized ? "none" : "flex" }} onClick={onClose}>
-        <div className={"vc-shell cc-shell" + (maximized ? " max" : "") + (stage ? " cc-stage" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Factory">
-          <div className="ah-head vc-head" onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
-            <div className="ah-lockup" style={{ flex: 1, minWidth: 0 }}>
+        <div ref={shellRef} className={"vc-shell cc-shell" + (maximized ? " max" : "") + (stage ? " cc-stage" : "")} data-cc-theme={look} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Private AI Factory">
+          <div className="ah-head vc-head cc-head" onDoubleClick={(e) => { if (!e.target.closest("button")) setMaximized((v) => !v); }}>
+            <div className="ah-lockup cc-lockup">
               <span className="tcs-lock">
                 <img className="tcs-lock-logo" src="/brand/tcs-logo-white.png" alt="Tata Consultancy Services" width="1000" height="238" />
                 <span className="tcs-lock-rule" aria-hidden="true" />
@@ -148,12 +170,37 @@ export function CommandCenter({ open, onClose }) {
               <span className="ah-lockup-rule" aria-hidden="true" />
               <span className="ah-lockup-mod"><span className="ah-lockup-module cc-title">Private AI Factory</span></span>
             </div>
+            <div className="cc-tools" role="toolbar" aria-label="Private AI Factory actions">
+              <button className={"cc-tool" + (stage ? " on" : "")} onClick={present} title={stage ? "Presenting — Esc to leave full screen" : "Present: full screen with larger type for a projector"} aria-label="Present">
+                <Icon d={<><path d="M3 4h18v12H3z" /><path d="M8 20h8M12 16v4" /></>} /><span>Present</span></button>
+              {d?.enabled && <button className="cc-tool" onClick={() => window.open(scoped("/api/command-center/evidence"), "_blank", "noopener")} title="Export a printable report of this session: models, GPUs, guardrails, AI traffic (Save as PDF)" aria-label="Export report">
+                <Icon d={<><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 19h14" /></>} /><span>Export</span></button>}
+              <button className="cc-tool" onClick={cycleTheme} title={`Theme: ${ccTheme}${ccTheme === "auto" ? ` (following the console: ${look})` : ""} — click to change`} aria-label="Theme">
+                <Icon d={look === "dark" ? <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" /> : <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>} />
+                <span>{CC_THEMES[ccTheme] || CC_THEMES.auto}</span></button>
+              <button className="cc-tool" disabled={!!busy} title={d?.session?.since ? `Reset the session counters (current session since ${fmtTime(d.session.since)}). The usage record is kept.` : "Reset the session counters"} aria-label="Reset session"
+                onClick={() => { if (window.confirm("Start a new session? The session counters, AI traffic and trend lines reset; the usage record is kept.")) act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset"); }}>
+                <Icon d={<><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></>} /><span>Reset</span></button>
+            </div>
+            <div className="ah-winbtns">
+              <button className="ah-winbtn" onClick={() => setMinimized(true)} title="Minimise" aria-label="Minimise"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg></button>
+              <button className="ah-winbtn" onClick={() => setMaximized((v) => !v)} title={maximized ? "Restore down" : "Maximise"} aria-label={maximized ? "Restore down" : "Maximise"}>
+                {maximized ? <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" strokeWidth="1" /></svg> : <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" /></svg>}
+              </button>
+              <button className="ah-winbtn close" onClick={onClose} title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" strokeWidth="1" /></svg></button>
+            </div>
+          </div>
+
+          <div className="cc-ctx" aria-label="GPU cluster">
+            <span className="cc-ctx-lbl">GPU cluster</span>
             {fleet?.clusters?.length > 1 ? (
               <select className="cc-cluster" value={view || fleet.preferred || ""} onChange={(e) => chooseCluster(e.target.value === fleet.preferred ? null : e.target.value)}
                 title="GPU cluster shown in the Private AI Factory" aria-label="GPU cluster">
                 {fleet.clusters.map((c) => <option key={c.cluster} value={c.cluster}>{c.label}{c.cards ? ` · ${c.cards}× ${c.gpuModel || "GPU"}` : ""}{c.preferred ? " · selected" : ""}</option>)}
               </select>
-            ) : d?.hardware && <span className="cc-hw">{d.hardware}</span>}
+            ) : <b className="cc-ctx-name">{fleet?.clusters?.[0]?.label || d?.cluster || "—"}</b>}
+            {d?.hardware && <span className="cc-hwbar">{String(d.hardware).split("·").map((t) => t.trim()).filter(Boolean).map((t) => <span key={t} className={"cc-hwchip " + vendorOf(t)}>{t}</span>)}</span>}
+            <span className="cc-ctx-sp" />
             {(d?.access?.expired || d?.access?.expiringSoon) && (
               <span className={"cc-access" + (d.access.expired ? " bad" : "")} title={`Direct access to ${d.cluster}: renew it in Settings → Private AI → Cluster access`}>
                 {`Access to ${d.cluster} ${d.access.expiry}`}
@@ -164,23 +211,15 @@ export function CommandCenter({ open, onClose }) {
                 ● {d.act1.egress.blocked ? `Internet egress blocked · since ${fmtTime(d.act1.egress.since)}` : "Internet egress open"}
               </span>
             )}
+            {d?.enabled && <span className="cc-since">Session since {fmtTime(d.session.since)}</span>}
             <span className="cc-clock">{new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-            <div className="ah-winbtns">
-              <button className="ah-winbtn" onClick={() => setMinimized(true)} title="Minimise" aria-label="Minimise"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" strokeWidth="1" /></svg></button>
-              <button className="ah-winbtn" onClick={() => setMaximized((v) => !v)} title={maximized ? "Restore down" : "Maximise"} aria-label={maximized ? "Restore down" : "Maximise"}>
-                {maximized ? <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M2.5 2.5V.5h7v7h-2M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" strokeWidth="1" /></svg> : <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" /></svg>}
-              </button>
-              <button className="ah-winbtn close" onClick={onClose} title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M.5.5l9 9M9.5.5l-9 9" stroke="currentColor" strokeWidth="1" /></svg></button>
-            </div>
           </div>
 
-          <nav className="cc-nav" aria-label="Acts">
-            {ACTS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
-            <div style={{ flex: 1 }} />
-            <button className={"vc-btn ghost sm" + (stage ? " on" : "")} onClick={toggleStage} title={stage ? "Stage mode is on: larger type for a projector. Click to turn off" : "Stage mode: larger type and figures for a projector"}>{stage ? "Stage ✓" : "Stage"}</button>
-            {d?.enabled && <button className="vc-btn ghost sm" onClick={() => window.open("/api/command-center/evidence", "_blank", "noopener")} title="Evidence pack: a printable report of this session (models, GPUs, guardrails, AI traffic)">Evidence</button>}
-            <button className="vc-btn ghost sm" onClick={cycleTheme} title={ccTheme === "auto" ? `Following the console (${look}); click to force dark, then light` : `Forced ${ccTheme}; click to change`}>{CC_THEMES[ccTheme] || CC_THEMES.auto}</button>
-            <button className="vc-btn ghost sm" disabled={!!busy} title={d?.session?.since ? `Current session since ${fmtTime(d.session.since)} — start a new one to reset the counters` : "Reset the counters"} onClick={() => act$("session", () => post("/api/command-center/session/start"), "New session started — counters reset")}>New session</button>
+          <nav className="cc-nav" aria-label="Private AI Factory views">
+            {PLATFORM_TABS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
+            <span className="cc-nav-div" aria-hidden="true" />
+            <span className="cc-nav-lbl">Live demo</span>
+            {DEMO_TABS.map(([k, l]) => <button key={k} className={"cc-act demo" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
           </nav>
 
           <div className="cc-body">
