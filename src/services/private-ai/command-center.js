@@ -15,6 +15,7 @@ import { scenarioStatus } from "./scenario.js";
 import { batchStatus } from "./vm-batch.js";
 import { effectiveSettings, clusterAccessSummary } from "./settings.js";
 import { expiryText } from "./access.js";
+import { registerPart, changed } from "./persist.js";
 
 const EGRESS_POLICY = "tcs-private-ai-no-internet";
 const ns = () => process.env.MCP_NAMESPACE || process.env.NAMESPACE || "openshift-mcp";
@@ -27,10 +28,12 @@ export function configureCommandCenter(deps) { _deps = { ..._deps, ...deps }; }
 export function commandCenterEnabled() { return effectiveSettings().commandCenter; }
 
 export function sessionSince() { return _session.since; }
+registerPart("session", { exportState: () => ({ ..._session }), importState: (st) => { if (st.since) _session = { since: st.since, egressBlockedAt: st.egressBlockedAt || null }; } });
 
 export function startSession() {
   router.resetTraffic();
   _session = { since: new Date().toISOString(), egressBlockedAt: _session.egressBlockedAt };
+  changed();
   return _session;
 }
 
@@ -68,11 +71,11 @@ export async function setEgress(block) {
   if (block) {
     try { await O().post(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies`, egressPolicy()); }
     catch (e) { if (!/409/.test(e.message)) throw e; }
-    _session.egressBlockedAt = new Date().toISOString();
+    _session.egressBlockedAt = new Date().toISOString(); changed();
   } else {
     try { await O().del(`/apis/networking.k8s.io/v1/namespaces/${ns()}/networkpolicies/${EGRESS_POLICY}`); }
     catch (e) { if (!/404/.test(e.message)) throw e; }
-    _session.egressBlockedAt = null;
+    _session.egressBlockedAt = null; changed();
   }
   return egressStatus();
 }

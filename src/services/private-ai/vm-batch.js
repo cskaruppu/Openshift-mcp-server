@@ -10,6 +10,7 @@
 // machine-csv.js) or a SYNTHETIC sample estate for rehearsal, which is always
 // labelled as such on screen.
 
+import { registerPart, changed } from "./persist.js";
 import { analyseFleet, adviseMigration, normaliseInventoryVM } from "../vm-migration.js";
 
 const CHUNK = 40;
@@ -54,7 +55,7 @@ export function sampleEstate(count = 2000, seed = 2026) {
 /* ─────────────────────────── the run ─────────────────────────── */
 
 export function batchStatus() {
-  if (!_run) return { state: "idle" };
+  if (!_run) return _restored ? { ..._restored, total: _restored.savedTotal ?? _restored.total } : { state: "idle" };
   const { vms, ...rest } = _run;
   const elapsedMs = (_run.finishedAt ? new Date(_run.finishedAt) : new Date()) - new Date(_run.startedAt);
   return { ...rest, total: vms.length, elapsedMs, vmsPerMinute: _run.done ? Math.round(_run.done / Math.max(elapsedMs / 60000, 1 / 60)) : 0 };
@@ -74,7 +75,8 @@ export function startBatch({ vms = null, sample = false, count = 2000, actor = "
     vms: list, done: 0, aiCalls: 0, aiSource: { ai: 0, heuristic: 0 }, errors: 0,
     analysis: null, decisions: null, waves: null, unsupported: null,
   };
-  run(_run).catch((e) => { _run.state = "failed"; _run.error = e.message; _run.finishedAt = new Date().toISOString(); });
+  run(_run).catch((e) => { _run.state = "failed"; _run.error = e.message; _run.finishedAt = new Date().toISOString(); changed(); });
+  changed();
   return batchStatus();
 }
 
@@ -132,6 +134,19 @@ async function run(r) {
   ];
   r.state = "done";
   r.finishedAt = new Date().toISOString();
+  changed();
 }
 
-export function _resetBatch() { _run = null; }
+// The last assessment's result survives a restart (persist.js), without the VM list itself.
+// One still running when the platform stopped is shown as interrupted.
+let _restored = null;
+registerPart("vmBatch", {
+  exportState: () => (_run ? { ...batchStatus(), savedTotal: _run.vms.length } : _restored),
+  importState: (st) => {
+    if (!st || !st.state) return;
+    _restored = st.state === "running" ? { ...st, state: "failed", error: "Interrupted by a platform restart — run it again", finishedAt: st.finishedAt || new Date().toISOString() } : st;
+  },
+});
+export function restoredBatch() { return _run ? null : _restored; }
+
+export function _resetBatch() { _run = null; _restored = null; }

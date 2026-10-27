@@ -15,6 +15,7 @@
 import { lanFetch } from "../../utils/lan-dns.js";
 import * as router from "./router.js";
 import { embeddingModel } from "./embeddings.js";
+import { registerPart, changed } from "./persist.js";
 
 const MODELS_NS = () => process.env.PRIVATE_AI_MODELS_NAMESPACE || "openshift-mcp";
 const PRICE = () => { const n = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK); return Number.isFinite(n) && n > 0 ? n : 5; };
@@ -176,7 +177,7 @@ async function energyNow(since) {
   const rows = await _deps.prom("sum(DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION)").catch(() => []);
   const mj = Number(rows?.[0]?.value?.[1]);
   if (!Number.isFinite(mj)) return null;
-  if (!_energyStart || _energyStart.since !== since) _energyStart = { since, mj };
+  if (!_energyStart || _energyStart.since !== since) { _energyStart = { since, mj }; changed(); }
   const kwh = Math.max(0, mj - _energyStart.mj) / 3.6e9; // millijoules → kWh
   return { kwh: Math.round(kwh * 1000) / 1000, co2Kg: Math.round(kwh * GRID() * 100) / 100, gridKgPerKwh: GRID() };
 }
@@ -277,8 +278,14 @@ function sample(k) {
   _lastSample = Date.now();
   _hist.push({ at: new Date().toISOString(), onPrem: k.onPrem, saved: k.savedUsd, ttft: k.ttftMs, tps: k.tokensPerSec, guard: k.guardrailStops, kwh: k.energy?.kwh ?? null });
   if (_hist.length > HISTORY) _hist.shift();
+  changed();
 }
-export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); _gpuHist.clear(); }
+export function resetFactory() { _hist.length = 0; _lastSample = 0; _energyStart = null; _prev.clear(); _gpuHist.clear(); changed(); }
+// Trend lines and the session's energy baseline survive a restart (persist.js).
+registerPart("factory", {
+  exportState: () => ({ hist: _hist.slice(), energyStart: _energyStart }),
+  importState: (st) => { if (Array.isArray(st.hist)) { _hist.length = 0; _hist.push(...st.hist.slice(-HISTORY)); } if (st.energyStart) _energyStart = st.energyStart; },
+});
 
 /* ─────────────────────────── the read ─────────────────────────── */
 

@@ -2167,6 +2167,13 @@ async function startSSE() {
         label: (c) => CLB.clusterLabels()[c] || c,
       });
       await FL.restoreFleet();
+      // AI traffic, guardrail events, session, trend lines: back as they were before the restart.
+      for (const m of ["router", "command-center", "factory", "scenario", "vm-batch"]) await import(`./services/private-ai/${m}.js`);
+      const PST = await import("./services/private-ai/persist.js");
+      const rs = await PST.restore();
+      if (rs.restored) console.log(`[private-ai] Restored AI traffic and Factory state from ${rs.storage} (saved ${rs.savedAt})`);
+      const flush = () => { PST.save().catch(() => {}); };
+      process.once("SIGTERM", flush); process.once("SIGINT", flush);
       RT.setFleetProvider({ models: FL.fleetModels, mode: FL.routingMode, preferred: FL.preferredCluster });
       (await import("./services/llm.js")).setPrivateDefault(() => PS.effectiveSettings().routeChat && RT.models().length > 0);
       EM.setEmbedProvider(() => {

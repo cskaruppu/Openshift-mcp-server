@@ -25,6 +25,7 @@
 
 import { randomBytes } from "node:crypto";
 import { lanFetch } from "../../utils/lan-dns.js";
+import { registerPart, changed } from "./persist.js";
 
 export const ROLES = ["large", "small", "vision", "coder"];
 const ROLE_LABEL = { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML" };
@@ -141,6 +142,7 @@ const _guard = { injectionsBlocked: 0, events: [] };
 function guardEvent(kind, what, question) {
   _guard.events.push({ at: new Date().toISOString(), kind, what, question: preview(question) });
   if (_guard.events.length > MAX_EVENTS) _guard.events.shift();
+  changed();
 }
 /** Counters and the latest events for the guardrails panel (questions masked). */
 export function guardrails() {
@@ -226,7 +228,19 @@ export function trafficCounts() { return { ..._counts, byRole: { ..._counts.byRo
 export function resetTraffic() {
   _log.length = 0; Object.assign(_counts, { total: 0, byRole: {}, sensitiveKeptOnPrem: 0, cloudCalls: 0, failures: 0, tokens: 0, masked: 0 });
   _guard.injectionsBlocked = 0; _guard.events.length = 0; _since = new Date().toISOString();
+  changed();
 }
+
+// Saved across restarts (persist.js). The log holds masked questions only.
+registerPart("traffic", {
+  exportState: () => ({ since: _since, counts: { ..._counts, byRole: { ..._counts.byRole } }, log: _log.slice(-MAX_LOG), guard: { injectionsBlocked: _guard.injectionsBlocked, events: _guard.events.slice() } }),
+  importState: (st) => {
+    if (st.since) _since = st.since;
+    if (st.counts) Object.assign(_counts, st.counts, { byRole: { ...(st.counts.byRole || {}) } });
+    if (Array.isArray(st.log)) { _log.length = 0; _log.push(...st.log.slice(-MAX_LOG)); }
+    if (st.guard) { _guard.injectionsBlocked = st.guard.injectionsBlocked || 0; _guard.events.length = 0; _guard.events.push(...(st.guard.events || []).slice(-MAX_EVENTS)); }
+  },
+});
 
 /* ─────────────────────────── routing ─────────────────────────── */
 
@@ -303,10 +317,11 @@ function record(decision) {
   _counts.byRole[decision.role || "none"] = (_counts.byRole[decision.role || "none"] || 0) + 1;
   if (decision.sensitive.length && decision.onPrem) { _counts.sensitiveKeptOnPrem++; _counts.masked += decision.sensitive.length; }
   if (!decision.onPrem) _counts.cloudCalls++;
+  changed();
 }
 
 /** Log a call made outside llm.js (e.g. the side-by-side comparison) like any routed answer. */
-export function logDirect(decision) { record(decision); return decision; }
+export function logDirect(decision) { decision.question = preview(decision.question); record(decision); return decision; }
 
 /** Called by llm.js when the call finishes. */
 export function complete(decision, { ms, ok, usage, firstTokenMs = null, toolCalls = null, text = null, error = null }) {
@@ -322,4 +337,5 @@ export function complete(decision, { ms, ok, usage, firstTokenMs = null, toolCal
   decision.tokens = t || null;
   if (t) _counts.tokens += t;
   if (!ok) _counts.failures++;
+  changed();
 }

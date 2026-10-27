@@ -11,6 +11,7 @@
 //
 // Reset restores revision-1's config whatever state the incident is in.
 
+import { registerPart, changed } from "./persist.js";
 import { ocpFetch, ocpPatch } from "../../utils/openshift-client.js";
 
 export const NS = process.env.PRIVATE_AI_SCENARIO_NS || "tcs-demo-payments";
@@ -30,6 +31,7 @@ export function configureScenario(deps) { _deps = { ..._deps, ...deps }; }
 function note(text) {
   _state.log.push({ at: new Date().toISOString(), text });
   if (_state.log.length > 40) _state.log.shift();
+  changed();
 }
 
 async function readDeployment() {
@@ -86,7 +88,7 @@ export async function injectFault({ cluster = "local", actor = "presenter" } = {
       } },
     });
   });
-  _state = { phase: "faulted", faultAt: new Date().toISOString(), sessionId: null, detectedAt: null, resolvedAt: null, by: actor, log: [] };
+  _state = { phase: "faulted", faultAt: new Date().toISOString(), sessionId: null, detectedAt: null, resolvedAt: null, by: actor, log: [], cluster };
   note(`Release 2026.10.2 rolled out by ${actor} — the new pods will fail to start`);
   startWatch(cluster);
   return scenarioStatus({ cluster });
@@ -131,5 +133,16 @@ function startWatch(cluster) {
   if (_timer.unref) _timer.unref();
 }
 function stopWatch() { if (_timer) clearInterval(_timer); _timer = null; }
+
+// Survives a restart (persist.js); a fault still in progress picks up watching again.
+registerPart("scenario", {
+  exportState: () => ({ ..._state, log: _state.log.slice() }),
+  importState: (st) => {
+    if (!st || !st.phase) return;
+    _state = { phase: st.phase, faultAt: st.faultAt || null, sessionId: st.sessionId || null, detectedAt: st.detectedAt || null,
+      resolvedAt: st.resolvedAt || null, by: st.by || null, log: Array.isArray(st.log) ? st.log.slice(-40) : [], cluster: st.cluster || "local" };
+    if (["faulted", "responding"].includes(_state.phase)) startWatch(_state.cluster);
+  },
+});
 
 export function _resetScenarioForTest() { stopWatch(); _state = { phase: "idle", faultAt: null, sessionId: null, detectedAt: null, resolvedAt: null, by: null, log: [] }; }
