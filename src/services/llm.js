@@ -41,6 +41,15 @@ export function setLLMDefaults({ provider, apiUrl, apiKey, model, azureDeploymen
   console.log(`[llm] Runtime defaults hydrated: provider=${DEFAULT_PROVIDER}, url=${DEFAULT_API_URL ? DEFAULT_API_URL.replace(/\/+$/, "") : "(unset)"}, model=${DEFAULT_AZURE_DEPLOYMENT || DEFAULT_MODEL}`);
 }
 
+// "Route platform AI to the on-prem models" (Settings → Private AI): when on and an
+// on-prem model is connected, every call that does not name a provider — AI Chat,
+// incident analysis, VM assessment, background insights — goes to Private AI.
+let _privateDefault = () => false;
+export function setPrivateDefault(fn) { _privateDefault = typeof fn === "function" ? fn : () => false; }
+/** Whether platform AI currently defaults to the on-prem models. */
+export function privateDefaultActive() { try { return !!_privateDefault(); } catch { return false; } }
+function defaultProvider() { try { if (_privateDefault()) return "private"; } catch { /* fall back */ } return DEFAULT_PROVIDER; }
+
 const AZURE_USE_MANAGED_IDENTITY = process.env.AZURE_USE_MANAGED_IDENTITY === "true";
 const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || "";
 const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
@@ -145,7 +154,7 @@ async function llmFetch(url, opts, retries = MAX_RETRIES) {
 }
 
 export function llmEnabled(opts = {}) {
-  const p = opts.provider || DEFAULT_PROVIDER;
+  const p = opts.provider || defaultProvider();
   return p && p !== "none";
 }
 
@@ -155,7 +164,7 @@ export function getSupportedProviders() {
 
 function resolveOpts(opts = {}) {
   const resolved = {
-    provider: opts.provider || DEFAULT_PROVIDER,
+    provider: opts.provider || defaultProvider(),
     apiUrl: opts.apiUrl || DEFAULT_API_URL,
     apiKey: opts.apiKey || DEFAULT_API_KEY,
     model: opts.model || DEFAULT_MODEL,

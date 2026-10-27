@@ -825,7 +825,7 @@ function summariseLatestScan() {
   const ranked = rows.filter((r) => r.priority).sort((a, b) => (b.priority.score || 0) - (a.priority.score || 0));
   const top = ranked[0];
   return {
-    timestamp: rec.timestamp, images: rows.length, live: rows.filter((r) => r.source !== "static").length,
+    timestamp: rec.timestamp, namespace: rec.namespace || null, images: rows.length, live: rows.filter((r) => r.source !== "static").length,
     fixNow: rows.filter((r) => r.priority?.tier === "fix-now").length, kevCves: kev.size,
     top: top ? { image: top.image, namespace: top.namespace, tier: top.priority.tier, score: top.priority.score, critical: top.critical, high: top.high,
       kev: (top.vulnerabilities || []).filter((v) => v.kev).map((v) => v.id).slice(0, 6) } : null,
@@ -2168,6 +2168,7 @@ async function startSSE() {
       });
       await FL.restoreFleet();
       RT.setFleetProvider({ models: FL.fleetModels, mode: FL.routingMode, preferred: FL.preferredCluster });
+      (await import("./services/llm.js")).setPrivateDefault(() => PS.effectiveSettings().routeChat && RT.models().length > 0);
       EM.setEmbedProvider(() => {
         const em = FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false);
         return em.find((m) => m.cluster === FL.preferredCluster()) || em[0] || null;

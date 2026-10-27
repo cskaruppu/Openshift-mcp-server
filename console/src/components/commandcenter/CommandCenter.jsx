@@ -345,7 +345,7 @@ function Act3({ d }) {
   return (
     <div className="cc-grid2">
       <section className="cc-card">
-        <header><h3>Image security, this cluster</h3>{sc && <span>scan {fmtTime(sc.timestamp)}</span>}</header>
+        <header><h3>Image security · latest scan</h3>{sc && <span>{sc.namespace && sc.namespace !== "all" ? `${sc.namespace} · ` : ""}{fmtTime(sc.timestamp)}</span>}</header>
         {!sc ? <p className="cc-note">No scan yet — open the Image Vulnerabilities card and press Rescan.</p> : (
           <>
             <div className="cc-kpis small">
@@ -451,7 +451,7 @@ function Scorecard({ d }) {
     ["VMs assessed", fmtNum(s.vmsAssessed), s.vmsElapsedMs ? `in ${fmtClock(Math.round(s.vmsElapsedMs / 1000))}${s.vmsSynthetic ? " · sample estate" : ""}` : "this session"],
     ["AI answers on-prem", fmtNum(s.aiOnPrem), `${fmtNum(s.sensitiveKept)} sensitive kept on-prem · ${fmtNum(s.cloudCalls)} cloud calls`],
     ["Internet egress", s.egressBlockedSince ? "blocked" : "open", s.egressBlockedSince ? `since ${fmtTime(s.egressBlockedSince)}` : "not blocked this session"],
-    ["Cloud AI cost avoided", s.costAvoided != null ? `$${s.costAvoided.toLocaleString()}` : "—", s.costAvoided != null ? `${fmtNum(s.tokens)} tokens at your cloud price` : "set PRIVATE_AI_CLOUD_PRICE_PER_MTOK"],
+    ["Cloud AI cost avoided", s.costAvoided != null ? `$${s.costAvoided.toLocaleString()}` : "—", s.costAvoided != null ? `${fmtNum(s.tokens)} tokens at $${s.pricePerMTok ?? 5} per million` : "—"],
   ];
   return (
     <div className="cc-score">

@@ -107,7 +107,8 @@ export async function commandCenterState({ cluster = "local" } = {}) {
   const resolved = recent.filter((r) => r.state === "resolved");
   const kevFixed = new Set();
   for (const r of resolved) for (const id of (r.verify?.fixed || [])) if ((r.plan?.items || []).find((i) => i.id === id)?.kev) kevFixed.add(id);
-  const price = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK);
+  // Same price as the Factory floor's "Saved vs cloud AI": the configured one, else $5 per million tokens.
+  const price = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) > 0 ? Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) : 5;
   const incidentChange = scenario.session && ["resolved", "closed"].includes(scenario.session.state) ? 1 : 0;
   const changes = resolved.length + incidentChange;
   const approved = resolved.filter((r) => r.approval).length + (incidentChange && (scenario.session.history || []).some((h) => h.to === "approved") ? 1 : 0);
@@ -132,7 +133,7 @@ export async function commandCenterState({ cluster = "local" } = {}) {
       kevFixed: kevFixed.size,
       vmsAssessed: batch.state === "done" ? batch.total : batch.done || 0, vmsElapsedMs: batch.elapsedMs || null, vmsSynthetic: !!batch.synthetic,
       aiOnPrem: traffic.total - traffic.cloudCalls, cloudCalls: traffic.cloudCalls, sensitiveKept: traffic.sensitiveKeptOnPrem,
-      tokens: traffic.tokens, costAvoided: Number.isFinite(price) && price > 0 ? Math.round((traffic.tokens / 1e6) * price * 100) / 100 : null,
+      tokens: traffic.tokens, pricePerMTok: price, costAvoided: Number.isFinite(price) && price > 0 ? Math.round((traffic.tokens / 1e6) * price * 100) / 100 : null,
       egressBlockedSince: egress.blocked ? egress.since : null,
       gpuAvgUtil: gpu?.summary?.avgUtilPct ?? null,
     },

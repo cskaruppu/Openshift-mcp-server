@@ -1351,7 +1351,7 @@ function PrivateAITab() {
       needs: "Nothing. Acts whose prerequisites are missing show “not ready”.", disabled: false },
     { key: "banner", label: "Dashboard banner", desc: "The launch banner at the top of every cluster dashboard",
       needs: st.commandCenter ? "Private AI Factory on ✓" : "Turn the Private AI Factory on first", disabled: !st.commandCenter },
-    { key: "routeChat", label: "Route AI Chat to the on-prem models", desc: "AI Chat defaults to Private AI: each question answered by the right model on your GPUs",
+    { key: "routeChat", label: "Route platform AI to the on-prem models", desc: "AI Chat, incident root cause, VM assessment and background analysis use Private AI: each request answered by the right model on your GPUs",
       needs: chatReady ? "A chat model is answering ✓" : "A reasoning or fast-answer model must be answering", disabled: !st.routeChat && !chatReady },
   ];
   const sourceLabel = { settings: "set here", environment: "from the deployment", deployment: "locked by the deployment" };

@@ -163,6 +163,10 @@ export async function hydrateLLMDefaults() {
  */
 export async function getActiveLLMConfig() {
   try {
+    // Platform AI routed on-prem: agents default to Private AI too, and their
+    // calls reach the hub through the LLM relay, where the models are.
+    const { privateDefaultActive } = await import("./llm.js");
+    if (privateDefaultActive()) return { provider: "private", apiUrl: "", apiKey: "", model: "auto-routed", azureDeployment: "", azureApiVersion: "" };
     const stored = await loadStoredLLMSettings();
     const provider = stored?.defaults?.provider;
     if (!provider || provider === "none") return null;
