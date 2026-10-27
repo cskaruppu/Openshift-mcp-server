@@ -53,7 +53,12 @@ echo "▶ Pointing the platform at the models in $MODELS_NS${MCTX:+ on $MCTX}"
 ENV=(PRIVATE_AI_OPS=true "PRIVATE_AI_HARDWARE=$HARDWARE")
 # Connect only the models that are deployed; a model added later is picked up by running this again.
 connect() { # ROLE model gpu-label
-  if moc -n "$MODELS_NS" get svc "$2-predictor" >/dev/null 2>&1; then
+  local stopped
+  stopped=$(moc -n "$MODELS_NS" get inferenceservice "$2" -o jsonpath='{.metadata.annotations.serving\.kserve\.io/stop}' 2>/dev/null || true)
+  if [[ "$stopped" == "true" ]]; then
+    ENV+=("PRIVATE_AI_$1_URL-" "PRIVATE_AI_$1_MODEL-" "PRIVATE_AI_$1_GPU-")
+    echo "  – $2 (stopped in OpenShift AI, skipped; start it with rhoai/models.sh start $2, then run this again)"
+  elif moc -n "$MODELS_NS" get svc "$2-predictor" >/dev/null 2>&1; then
     ENV+=("PRIVATE_AI_$1_URL=$(url "$2")" "PRIVATE_AI_$1_MODEL=$2" "PRIVATE_AI_$1_GPU=$3")
     echo "  ✓ $2"
   else

@@ -8,8 +8,9 @@
 #   ./models.sh remove [--kubeconfig <file>] --yes          delete models, weights and runtimes
 #
 # Models: bge-m3 llama-3-1-8b qwen2-5-vl-7b gpt-oss-120b (default: all four).
-# While the models are stopped, switch off "Route AI Chat to the on-prem models" in
-# Settings → Private AI, so AI Chat uses the regular AI provider.
+# Stopped models stay in OpenShift AI (shown as Stopped). enable.sh skips stopped models, so
+# the platform uses only the running ones. If ALL are stopped, switch off "Route AI Chat to
+# the on-prem models" in Settings → Private AI so AI Chat uses the regular AI provider.
 set -euo pipefail
 NS=openshift-mcp
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -54,20 +55,21 @@ stop() {
     o -n "$NS" annotate inferenceservice "$m" serving.kserve.io/stop=true --overwrite >/dev/null
     echo "  … stopping $m"
   done
-  # OpenShift AI versions without the stop setting keep the pods: remove those models instead
-  # (the weights stay in the claims; "start" re-creates them).
+  # The model stays in OpenShift AI (shown as Stopped). If this OpenShift AI version ignores the
+  # stop setting, its pods remain: say so, and how to free the GPU, but never remove a model unasked.
   for _ in $(seq 1 24); do
     local left=0; for m in "${SEL[@]}"; do exists "$m" && left=$((left + $(pods_of "$m"))); done
     [[ $left -eq 0 ]] && break; sleep 5
   done
   for m in "${SEL[@]}"; do
     if exists "$m" && [[ $(pods_of "$m") -gt 0 ]]; then
-      echo "  ! $m still running after 2 min (this OpenShift AI has no stop setting): removing it, weights kept"
-      o -n "$NS" delete inferenceservice "$m" --wait=false >/dev/null
+      echo "  ! $m still has pods after 2 min — this OpenShift AI may not support the stop setting."
+      echo "    To free its GPU anyway (weights kept): oc -n $NS delete inferenceservice $m"
     fi
   done
   echo "✓ Stopped. GPU memory is released as the pods end (oc -n $NS get pods -l tcs.com/demo=private-ai-ops)."
-  echo "  In Settings → Private AI, switch off \"Route AI Chat to the on-prem models\" while they are stopped."
+  echo "  Run enable.sh again so the platform stops calling the stopped model(s). If all are stopped,"
+  echo "  switch off \"Route AI Chat to the on-prem models\" in Settings → Private AI."
 }
 
 start() {
