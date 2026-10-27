@@ -258,7 +258,8 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
             {f.models.map((m) => (
               <div key={m.model} className={"ff-trw" + (m.notConnected ? " off" : "")}><div className="ff-tr">
                 <span><i className="ff-dot" style={{ background: ROLE_COLOR[m.role] || OTHER }} /><b>{m.model}</b></span>
-                <span className={m.ready ? "ff-ok" : m.control?.stopped ? "ff-muted" : "ff-bad"} title={m.error || ""}>{m.control?.stopped ? "■ Stopped" : m.ready ? "● Ready" : m.notConnected ? "● Not connected" : "● Down"}</span>
+                <span className={m.ready ? "ff-ok" : m.control?.stopped ? "ff-muted" : "ff-bad"} title={m.error || ""}>{m.control?.stopped ? "■ Stopped" : m.ready ? "● Ready" : m.notConnected ? "● Not connected" : "● Down"}
+                  {!m.ready && !m.notConnected && !m.control?.stopped && m.error && <em className="ff-why">{m.error}</em>}</span>
                 <span className="mono">{m.stats?.ttftMs != null ? `${num(m.stats.ttftMs)} ms` : "—"}</span>
                 <span className="mono">{m.stats?.tokensPerSec != null ? num(m.stats.tokensPerSec) : "—"}</span>
                 <span className="mono" title={m.stats?.kvCachePct != null ? `KV cache ${m.stats.kvCachePct}%` : ""}>{m.stats?.running != null ? `${m.stats.running}${m.stats.waiting ? ` +${m.stats.waiting}` : ""}` : "—"}</span>

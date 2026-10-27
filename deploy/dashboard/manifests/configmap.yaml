@@ -29,6 +29,10 @@ data:
   # CoreDNS zone (e.g. *.apps.ocp.caaslab.local). Set to a DNS IP reachable
   # from the hub pod that can resolve spoke Route hostnames.
   SPOKE_DNS_SERVER: "10.131.19.154"
+  # Names no DNS server here knows, as name=IP (wildcards allowed). Kept in this
+  # file so a redeploy does not drop it: without it the hub cannot reach the GPU
+  # cluster's model Routes and every Private AI model shows Down.
+  LAN_HOSTS: "*.apps.aiinfra.tcs.local=10.131.74.6"
   # LLM Provider: "azure", "openai", "anthropic", "ollama", or "none" (built-in analysis)
   LLM_PROVIDER: "azure"
   # LLM_API_URL: Azure OpenAI endpoint (e.g. https://<resource>.openai.azure.com)
