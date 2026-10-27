@@ -17,6 +17,7 @@
  *   - "none"       — Built-in rule-based analysis (no external LLM)
  */
 
+import { withProviderChoice } from "./chat-provider.js";
 import { gzipSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
@@ -1111,7 +1112,7 @@ function readBody(req) {
       // "Unexpected end of JSON input" instead of running the analysis.
       const text = Buffer.concat(chunks).toString().trim();
       if (!text) return resolve({});
-      try { resolve(JSON.parse(text)); }
+      try { resolve(withProviderChoice(JSON.parse(text))); }
       catch (e) { reject(Object.assign(new Error("Request body is not valid JSON"), { status: 400 })); }
     });
     req.on("error", reject);
@@ -20045,6 +20046,7 @@ Return ONLY valid JSON (no markdown):
       maxTokens: 1800, temperature: 0.2,
       provider: llmOpts.provider, apiUrl: llmOpts.apiUrl, apiKey: llmOpts.apiKey,
       model: llmOpts.model, azureDeployment: llmOpts.azureDeployment, azureApiVersion: llmOpts.azureApiVersion,
+      userId: req.user?.name || null, metadata: { useCase: "image-analysis" },
     });
 
     const { json: jsonStr, truncated } = extractJsonObject(r.text);

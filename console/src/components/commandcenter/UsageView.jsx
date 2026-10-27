@@ -7,7 +7,7 @@ import { RequestDetail, SavedNote } from "./FactoryFloor";
 // across restarts — and exportable as CSV. Questions are masked by the server.
 
 const ROLE_COLOR = { large: "#3b6fd8", small: "#18a0a6", vision: "#8a5cd6", coder: "#2f9e8f", embed: "#d08a1e" };
-const FEATURE = { "ai-chat": "AI Chat", "incident-memory": "Incident memory", "model-test": "Model test", "side-by-side": "Side by side", "UC-10": "VM assessment" };
+const FEATURE = { "ai-chat": "AI Chat", "incident-memory": "Incident memory", "model-test": "Model test", "side-by-side": "Side by side", "UC-10": "VM assessment", "image-analysis": "Screenshot analysis" };
 const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const ms = (v) => (v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`);
 const usd = (tokens, price) => `$${((tokens / 1e6) * price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
