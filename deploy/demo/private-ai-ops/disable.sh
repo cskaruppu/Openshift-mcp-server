@@ -11,12 +11,17 @@ REMOVE_DEMO=false; MCTX=""; MKCFG=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --remove-demo) REMOVE_DEMO=true; shift ;;
-    --models-context) MCTX="$2"; shift 2 ;;
-    --models-kubeconfig) MKCFG="$2"; shift 2 ;;
+    --models-context)
+      [[ -n "${2:-}" ]] || { echo "--models-context needs a context name" >&2; exit 2; }
+      MCTX="$2"; shift 2 ;;
+    --models-kubeconfig)
+      [[ -n "${2:-}" ]] || { echo "--models-kubeconfig needs a file (is \$GPU_KC set in this shell?)" >&2; exit 2; }
+      MKCFG="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
+[[ -z "$MKCFG" || -r "$MKCFG" ]] || { echo "Cannot read kubeconfig: $MKCFG" >&2; exit 2; }
 echo "▶ Restoring internet egress for the platform (if it was cut)"
 oc -n "$NS" delete networkpolicy tcs-private-ai-no-internet --ignore-not-found
 

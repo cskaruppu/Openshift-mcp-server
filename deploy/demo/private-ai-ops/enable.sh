@@ -19,8 +19,12 @@ HARDWARE="${PRIVATE_AI_HARDWARE:-Dell PowerEdge · 4× NVIDIA H100 · OpenShift 
 MCTX=""; MKCFG=""; ROUTE_CHAT=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --models-context) MCTX="$2"; shift 2 ;;
-    --models-kubeconfig) MKCFG="$2"; shift 2 ;;
+    --models-context)
+      [[ -n "${2:-}" ]] || { echo "--models-context needs a context name" >&2; exit 2; }
+      MCTX="$2"; shift 2 ;;
+    --models-kubeconfig)
+      [[ -n "${2:-}" ]] || { echo "--models-kubeconfig needs a file (is \$GPU_KC set in this shell?)" >&2; exit 2; }
+      MKCFG="$2"; shift 2 ;;
     --route-chat) ROUTE_CHAT=true; shift ;;
     --keep-llm) shift ;;   # kept for compatibility: AI Chat routing is now a switch in Settings
     *) echo "Unknown option: $1" >&2; exit 2 ;;
