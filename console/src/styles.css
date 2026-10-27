@@ -10121,3 +10121,5 @@ code.new { color: #22a06b; }
 .ct-card.pick { border-color: var(--cc-ok); background: rgba(43,182,115,.07); }
 .ct-card-h { display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--cc-ink2); } .ct-card-h b { color: var(--cc-fg); }
 @media (max-width: 1300px) { .ct-grid.with-side { grid-template-columns: 1fr; } .ct-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ff-saved { font-size: 0.72rem; color: var(--cc-ink3); }
+.ff-saved.ok { color: var(--cc-ok-t); } .ff-saved.warn { color: var(--cc-warn-t); } .ff-saved.bad { color: var(--cc-crit-t); }

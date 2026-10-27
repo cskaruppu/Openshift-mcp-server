@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { RequestDetail } from "./FactoryFloor";
+import { RequestDetail, SavedNote } from "./FactoryFloor";
 
 // Private AI Factory — Usage: tokens and requests per model, user and feature, by
 // day, and every request (who asked, which model answered, tokens in and out,
@@ -107,6 +107,7 @@ export default function UsageView({ act$, busy }) {
         <div><span className="cc-lbl">Users</span><b>{num(users.filter((r) => r.key !== "platform (background)").length)}</b><span className="cc-muted">plus platform background work</span></div>
         <div className="fl-mode">
           <span className="cc-lbl">Record since {new Date(u.since).toLocaleString()}</span>
+          <SavedNote p={u.persist} />
           <div className="cc-actions">
             <button className="vc-btn ghost sm" onClick={download} disabled={!list.length}>Export CSV</button>
             {u.you?.canManage && <button className="vc-btn ghost sm" disabled={!!busy}

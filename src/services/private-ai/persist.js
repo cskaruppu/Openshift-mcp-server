@@ -15,7 +15,13 @@ const DB_KEY = "private_ai_factory_state";
 const FILE_PATH = process.env.PRIVATE_AI_STATE_PATH || "/data/mcp-private-ai-state.json";
 const DELAY_MS = Number(process.env.PRIVATE_AI_STATE_SAVE_MS) || 3000;
 
+// Only the control plane owns this record. Agents (MCP_MODE=spoke) run the same
+// code and reach the hub's database through the DB relay: if they saved too, their
+// near-empty copy would overwrite the control plane's under the same key.
+const OWNER = (process.env.MCP_MODE || "hub").toLowerCase() !== "spoke" || process.env.PRIVATE_AI_PERSIST === "true";
+
 let _parts = {};          // name → { exportState, importState }
+let _lastError = null;
 let _timer = null;
 let _lastSaved = null;
 let _storage = "memory";
@@ -25,20 +31,25 @@ export function registerPart(name, part) { _parts[name] = part; }
 
 /** Called by a module whenever its state changed. */
 export function changed() {
-  if (_timer) return;
+  if (!OWNER || _timer) return;
   _timer = setTimeout(() => { _timer = null; save().catch(() => {}); }, DELAY_MS);
   if (_timer.unref) _timer.unref();
 }
 
 export async function save() {
+  if (!OWNER) return "not saved (agent)";
   const state = { savedAt: new Date().toISOString() };
   for (const [name, p] of Object.entries(_parts)) { try { state[name] = p.exportState(); } catch { /* skip that part */ } }
   try {
     if (await dbEnabled()) {
-      await dbQuery(`INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`, [DB_KEY, JSON.stringify(state)]);
-      _storage = "database"; _lastSaved = state.savedAt; return _storage;
+      // PostgreSQL JSONB refuses the NUL character; a model answer can contain one.
+      await dbQuery(`INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`, [DB_KEY, JSON.stringify(state).replace(/\\u0000/g, "")]);
+      _storage = "database"; _lastSaved = state.savedAt; _lastError = null; return _storage;
     }
-  } catch { /* fall back to the file */ }
+  } catch (e) {
+    _lastError = e.message;
+    console.warn(`[private-ai] Could not save the Factory state to the database: ${e.message}`);
+  }
   try {
     await mkdir(dirname(FILE_PATH), { recursive: true }).catch(() => {});
     await writeFile(FILE_PATH, JSON.stringify(state), "utf8");
@@ -50,6 +61,7 @@ export async function save() {
 
 /** Load the saved state into every registered module. Called once at startup; never throws. */
 export async function restore() {
+  if (!OWNER) return { restored: false, reason: "agent: the control plane keeps this record" };
   let state = null;
   try {
     if (await dbEnabled()) {
@@ -68,5 +80,5 @@ export async function restore() {
   return { restored: true, savedAt: _lastSaved, storage: _storage };
 }
 
-export function persistStatus() { return { storage: _storage, lastSaved: _lastSaved }; }
+export function persistStatus() { return { storage: _storage, lastSaved: _lastSaved, error: _lastError, owner: OWNER }; }
 export function _resetPersist() { _parts = {}; if (_timer) clearTimeout(_timer); _timer = null; _lastSaved = null; _storage = "memory"; }

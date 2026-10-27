@@ -2176,7 +2176,7 @@ async function startSSE() {
       for (const m of ["router", "command-center", "factory", "scenario", "vm-batch", "catalogue"]) await import(`./services/private-ai/${m}.js`);
       const PST = await import("./services/private-ai/persist.js");
       const rs = await PST.restore();
-      if (rs.restored) console.log(`[private-ai] Restored AI traffic and Factory state from ${rs.storage} (saved ${rs.savedAt})`);
+      console.log(rs.restored ? `[private-ai] Restored AI traffic and Factory state from ${rs.storage} (saved ${rs.savedAt})` : `[private-ai] No saved Factory state restored${rs.reason ? ` (${rs.reason})` : ""}`);
       const flush = () => { PST.save().catch(() => {}); };
       process.once("SIGTERM", flush); process.once("SIGINT", flush);
       RT.setFleetProvider({ models: FL.fleetModels, mode: FL.routingMode, preferred: FL.preferredCluster });
@@ -9333,7 +9333,10 @@ spec:
           if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
           const FY = await import("./services/private-ai/factory.js");
           const since = CC.sessionSince();
-          if (url.pathname === "/api/command-center/factory") return sendJson(res, 200, await FY.factoryState({ cluster, since }));
+          if (url.pathname === "/api/command-center/factory") {
+            const PST = await import("./services/private-ai/persist.js");
+            return sendJson(res, 200, { ...(await FY.factoryState({ cluster, since })), persist: PST.persistStatus() });
+          }
           const FL = await import("./services/private-ai/fleet.js");
           const [state, factory, fleet] = await Promise.all([CC.commandCenterState({ cluster }), FY.factoryState({ cluster, since }), FY.fleetWithHealth(FL).catch(() => null)]);
           logAuditTrailEvent({ type: "action_taken", severity: "info", title: "Private AI Factory evidence pack exported", details: { cluster }, username: actor, source: "command-center" }).catch(() => {});
@@ -9350,7 +9353,8 @@ spec:
           const R = await import("./services/private-ai/router.js");
           const price = Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) > 0 ? Number(process.env.PRIVATE_AI_CLOUD_PRICE_PER_MTOK) : 5;
           // Questions in the request list are masked by the router before they are kept.
-          return sendJson(res, 200, { ...R.usage(), pricePerMTok: price, requests: R.trafficLog(300).map(({ _counted, ...d }) => d), you: { canManage: checkPermission(req, "manage") } });
+          const PST = await import("./services/private-ai/persist.js");
+          return sendJson(res, 200, { ...R.usage(), pricePerMTok: price, requests: R.trafficLog(300).map(({ _counted, ...d }) => d), persist: PST.persistStatus(), you: { canManage: checkPermission(req, "manage") } });
         }
         if (req.method === "GET" && url.pathname === "/api/command-center/fleet") {
           if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });

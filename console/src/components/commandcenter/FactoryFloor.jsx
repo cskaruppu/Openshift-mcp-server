@@ -140,6 +140,16 @@ export function RequestDetail({ r, onClose }) {
   );
 }
 
+/** Where the Factory's records are kept, so a restart is never a surprise. */
+export function SavedNote({ p }) {
+  if (!p) return null;
+  const t = p.lastSaved ? new Date(p.lastSaved).toLocaleTimeString([], { hour12: false }) : null;
+  if (p.storage === "database") return <span className="ff-saved ok">✓ Kept in the database{t ? ` · saved ${t}` : ""} — survives restarts</span>;
+  if (p.error) return <span className="ff-saved bad">Not saved to the database ({p.error}) — will be lost on restart</span>;
+  if (p.storage === "file") return <span className="ff-saved warn">Kept in the pod's /data only — lost when the pod restarts (no database connected)</span>;
+  return <span className="ff-saved">{t ? `Saved ${t}` : "Saved after the first change"}</span>;
+}
+
 export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
   _cluster = cluster;
   const [f, setF] = useState(null);
@@ -328,6 +338,7 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null }) {
           ))}
           {!(f.log || []).length && <p className="cc-note">Ask something in AI Chat with "Private AI" selected — each answer appears here.</p>}
           {(f.log || []).length > 0 && <span className="cc-muted">Click a request to see it in full.</span>}
+          <SavedNote p={f.persist} />
         </section>
       </div>
       {detail && <RequestDetail r={detail} onClose={() => setDetail(null)} />}
