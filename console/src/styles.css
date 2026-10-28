@@ -10215,3 +10215,4 @@ code.new { color: #22a06b; }
 .ff-kpis.ff-kpis2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .fl-totals.ct-totals.ct-totals3 { grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.7fr); }
 @media (max-width: 760px) { .ff-kpis.ff-kpis2, .fl-totals.ct-totals.ct-totals3 { grid-template-columns: 1fr; } }
+.ff-sub { display: block; font-style: normal; font-family: var(--tcs-font); font-size: 0.68rem; color: var(--cc-ink2); margin-top: 2px; }

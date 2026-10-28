@@ -22,6 +22,23 @@ test("tokens/s and first-token time come from the change between two reads", () 
   assert.equal(second.stats.kvCachePct, 25);
 });
 
+test("an idle model still shows its writing speed and its totals", () => {
+  // vLLM v1 names: 400 output-token gaps took 8 s → 50 tokens/s per answer.
+  const a = parseMetrics("vllm:generation_tokens_total 2000\nvllm:prompt_tokens_total 5000\nvllm:inter_token_latency_seconds_sum 8\nvllm:inter_token_latency_seconds_count 400\nvllm:time_to_first_token_seconds_count 12\nvllm:time_to_first_token_seconds_sum 1.2\nvllm:num_requests_running 0");
+  const first = modelStats(a, null, 0);
+  const idle = modelStats(a, first.cur, 5000);
+  assert.equal(idle.stats.tokensPerSec, 0, "nothing written in the last 5 s");
+  assert.equal(idle.stats.answerTps, 50);
+  assert.equal(idle.stats.running, 0);
+  assert.equal(idle.stats.requestsTotal, 12);
+  assert.equal(idle.stats.tokensTotal, 2000);
+  assert.equal(idle.stats.promptTotal, 5000);
+  // v0 name, and a busy interval: 100 gaps in 1 s → 100 tokens/s.
+  const b = parseMetrics("vllm:time_per_output_token_seconds_sum 9\nvllm:time_per_output_token_seconds_count 500");
+  const c = modelStats(b, modelStats(parseMetrics("vllm:time_per_output_token_seconds_sum 8\nvllm:time_per_output_token_seconds_count 400"), null, 0).cur, 5000);
+  assert.equal(c.stats.answerTps, 100);
+});
+
 test("HAMi slices map pods to cards; plain GPU pods are listed as unplaced", () => {
   assert.deepEqual(hamiSlices("GPU-aa11-bb22,NVIDIA,24576,0:;"), [{ uuid: "GPU-aa11-bb22", mib: 24576, cores: 0 }]);
   const pods = [

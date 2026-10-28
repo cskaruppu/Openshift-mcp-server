@@ -207,15 +207,19 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null, vie
         <section className="cc-card" id="ff-models">
           <header><h3>Model performance</h3><span>OpenShift AI · vLLM · total throughput under Infrastructure</span></header>
           <div className="ff-table">
-            <div className="ff-tr ff-th"><span>Model</span><span>Status</span><span title="Time to first token">Starts answering in</span><span>Tokens/s</span><span>Load</span><span>Actions</span></div>
+            <div className="ff-tr ff-th"><span>Model</span><span>Status</span><span title="Time to first token">Starts answering in</span><span title="Writing speed of one answer">Tokens/s per answer</span><span title="Requests being answered now; below, totals since the model started">Load</span><span>Actions</span></div>
             {f.models.map((m) => (
               <div key={m.model} className={"ff-trw" + (m.notConnected ? " off" : "")}><div className="ff-tr">
                 <span><i className="ff-dot" style={{ background: ROLE_COLOR[m.role] || OTHER }} /><b>{m.model}</b></span>
                 <span className={m.ready ? "ff-ok" : m.control?.stopped ? "ff-muted" : "ff-bad"} title={m.error || ""}>{m.control?.stopped ? "■ Stopped" : m.ready ? "● Ready" : m.notConnected ? "● Not connected" : "● Down"}
                   {!m.ready && !m.notConnected && !m.control?.stopped && m.error && <em className="ff-why">{m.error}</em>}</span>
                 <span className="mono">{m.stats?.ttftMs != null ? `${num(m.stats.ttftMs)} ms` : "—"}</span>
-                <span className="mono">{m.stats?.tokensPerSec != null ? num(m.stats.tokensPerSec) : "—"}</span>
-                <span className="mono" title={m.stats?.kvCachePct != null ? `KV cache ${m.stats.kvCachePct}%` : ""}>{m.stats?.running != null ? `${m.stats.running}${m.stats.waiting ? ` +${m.stats.waiting}` : ""}` : "—"}</span>
+                <span className="mono" title={`Writing speed of one answer, from the model's own metrics.${m.stats?.tokensPerSec != null ? ` Right now, all answers together: ${num(m.stats.tokensPerSec)} tokens/s.` : ""}`}>
+                  {m.stats?.answerTps != null ? num(m.stats.answerTps) : m.stats?.tokensPerSec != null ? num(m.stats.tokensPerSec) : "—"}
+                  {m.stats?.tokensPerSec > 0 && <em className="ff-sub">{num(m.stats.tokensPerSec)} now</em>}</span>
+                <span className="mono" title={`Requests being answered now${m.stats?.waiting ? ` (+ waiting)` : ""}${m.stats?.kvCachePct != null ? ` · KV cache ${m.stats.kvCachePct}%` : ""}`}>
+                  {m.stats?.running != null ? `${m.stats.running}${m.stats.waiting ? ` +${m.stats.waiting}` : ""} now` : "—"}
+                  {(m.stats?.tokensTotal != null || m.stats?.requestsTotal != null) && <em className="ff-sub">{m.stats.requestsTotal != null ? `${num(Math.round(m.stats.requestsTotal))} answered` : ""}{m.stats.tokensTotal != null ? `${m.stats.requestsTotal != null ? " · " : ""}${num(Math.round(m.stats.tokensTotal))} tokens out` : ""}</em>}</span>
                 <span className="ff-acts">
                   {!m.notConnected && <button className="vc-btn ghost sm" disabled={tests[m.model]?.busy} title="Send a tiny real request and time the answer"
                     onClick={() => testModel(m.model)}>{tests[m.model]?.busy ? "Testing…" : "Test"}</button>}
@@ -234,7 +238,7 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null, vie
               </div>
             ))}
             {!f.models.length && <p className="cc-note">No models connected yet.</p>}
-            {f.models.length > 0 && <span className="cc-muted">Test sends a tiny real request to the model and times the answer; it is listed under Governance → Requests (with model tests shown).</span>}
+            {f.models.length > 0 && <span className="cc-muted">Figures come from each model's own metrics (vLLM / TEI), read every 5 seconds. Tokens/s per answer = how fast a model writes once it starts; "now" appears while answers are being written. Load = requests being answered right now, with totals since the model started. Test sends a tiny real request and times the answer; it is listed under Governance → Requests (with model tests shown).</span>}
           </div>
         </section>
       </div>

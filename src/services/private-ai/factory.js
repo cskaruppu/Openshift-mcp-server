@@ -84,11 +84,17 @@ export function modelStats(ms, prev, now = Date.now()) {
     gen: sum(ms, "vllm:generation_tokens_total", "vllm:generation_tokens"),
     ttftSum: sum(ms, "vllm:time_to_first_token_seconds_sum"), ttftCount: sum(ms, "vllm:time_to_first_token_seconds_count"),
     reqSum: sum(ms, "te_request_duration_sum", "te_request_inference_duration_sum"), reqCount: sum(ms, "te_request_duration_count", "te_request_count"),
+    // Seconds between output tokens of one answer (vLLM v1 name first, then v0's).
+    itlSum: sum(ms, "vllm:inter_token_latency_seconds_sum", "vllm:time_per_output_token_seconds_sum"),
+    itlCount: sum(ms, "vllm:inter_token_latency_seconds_count", "vllm:time_per_output_token_seconds_count"),
+    prompt: sum(ms, "vllm:prompt_tokens_total", "vllm:prompt_tokens"),
   };
   const dt = prev ? (now - prev.at) / 1000 : 0;
   const d = (k) => (prev && cur[k] != null && prev[k] != null && cur[k] >= prev[k] ? cur[k] - prev[k] : null);
   const ttft = d("ttftCount") ? d("ttftSum") / d("ttftCount") : (cur.ttftCount ? cur.ttftSum / cur.ttftCount : null);
   const req = d("reqCount") ? d("reqSum") / d("reqCount") : (cur.reqCount ? cur.reqSum / cur.reqCount : null);
+  // Writing speed of one answer: the recent interval when it had answers, else since the model started.
+  const itl = d("itlCount") ? d("itlSum") / d("itlCount") : (cur.itlCount ? cur.itlSum / cur.itlCount : null);
   const cache = sum(ms, "vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc");
   return {
     cur,
@@ -99,6 +105,9 @@ export function modelStats(ms, prev, now = Date.now()) {
       waiting: sum(ms, "vllm:num_requests_waiting"),
       kvCachePct: cache != null ? Math.round(cache * (cache <= 1 ? 100 : 1)) : null,
       tokensTotal: cur.gen,
+      promptTotal: cur.prompt,
+      answerTps: itl > 0 ? Math.round(1 / itl) : null,
+      requestsTotal: cur.ttftCount ?? cur.reqCount,
     },
   };
 }
