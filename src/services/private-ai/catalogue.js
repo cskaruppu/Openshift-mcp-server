@@ -300,7 +300,7 @@ export async function deployModel({ cluster = "local", id, node = null, actor = 
       step("Model ready in OpenShift AI");
     });
     if (dep.cancelled) return;
-    if (_deps.discover) { await _deps.discover(cluster, actor); step("Connected to the AI router (GPU fleet → Discover models)"); }
+    if (_deps.discover) { await _deps.discover(cluster, actor); step("Connected to the AI router (Infrastructure → Discover models)"); }
     dep.phase = "ready"; dep.readyAt = new Date().toISOString(); changed();
   }
 }

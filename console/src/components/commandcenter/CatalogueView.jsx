@@ -113,11 +113,9 @@ export default function CatalogueView({ busy, act$, scoped, onTab }) {
 
   return (
     <>
-      <div className="fl-totals ct-totals">
+      <div className="fl-totals ct-totals ct-totals3">
         <div><span className="cc-lbl">Approved models</span><b>{t.approved}</b><span className="cc-muted">{t.validated} Red Hat validated · {t.catalogImages} from the OpenShift AI catalog</span></div>
-        <div><span className="cc-lbl">Running</span><b>{t.running}</b><span className="cc-muted">{c.items.filter((i) => i.status === "running").map((i) => i.id).join(" · ") || "none"}</span></div>
-        <div><span className="cc-lbl">GPU memory free</span><b>{gb(t.freeMiB)}</b><span className="cc-muted">largest free on one card: {gb(t.largestFreeMiB)}</span></div>
-        <div><span className="cc-lbl">Fit now</span><b>{t.fitsNow} of {c.items.filter((i) => i.fit).length}</b><span className="cc-muted">not running, can start without moving anything</span></div>
+        <div><span className="cc-lbl">Fit now</span><b>{t.fitsNow} of {c.items.filter((i) => i.fit).length}</b><span className="cc-muted">not running, can start without moving anything · largest free on one card: {gb(t.largestFreeMiB)}</span></div>
         <div className="fl-mode"><span className="cc-lbl">Show</span>
           <div className="ct-filters">{FILTERS.map(([k, l]) => <button key={k} className={"ct-f" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{l}</button>)}</div>
         </div>
@@ -144,7 +142,7 @@ export default function CatalogueView({ busy, act$, scoped, onTab }) {
                     </div>
                   )}
                   <div className="ct-acts">
-                    {it.status === "running" && <button className="vc-btn ghost sm" onClick={() => onTab("floor")}>Test on Factory floor</button>}
+                    {it.status === "running" && <button className="vc-btn ghost sm" onClick={() => document.getElementById("ff-models")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Test (Model performance)</button>}
                     {["running", "starting", "down", "not-connected"].includes(it.status) && it.model?.control && admin && (
                       <button className="vc-btn ghost sm" disabled={!!busy} title={it.status === "running" ? "Stop the model and release its GPU memory" : "Stop it starting and release its GPU memory (the model stays, shown as Stopped)"}
                         onClick={() => startStop(it, false)}>Stop</button>)}
@@ -153,7 +151,7 @@ export default function CatalogueView({ busy, act$, scoped, onTab }) {
                         onClick={() => { if (window.confirm(`Cancel deploying ${it.name}? Downloaded weights are kept, so deploying again resumes.`)) act$(`cancel-${it.id}`, async () => { await post(scoped("/api/command-center/catalogue/cancel"), { id: it.id }); await load(); }, "Deploy cancelled"); }}>Cancel</button>)}
                     {it.status === "stopped" && admin && <button className="vc-btn primary sm" disabled={!!busy || it.fit?.status === "no-fit"} title={it.fit?.status === "no-fit" ? "Not enough free GPU memory on any card" : ""} onClick={() => startStop(it, true)}>Start{it.fit?.node ? ` on ${short(it.fit.node)}` : ""}</button>}
                     {it.status === "not-deployed" && <button className={"vc-btn sm " + (it.fit?.status === "fits" ? "primary" : "ghost")} disabled={!!busy || !it.fit || it.fit.status === "no-fit" || it.fit.status === "unknown"} onClick={() => setSel(it.id)}>Deploy…</button>}
-                    {it.status === "not-connected" && <button className="vc-btn ghost sm" onClick={() => onTab("fleet")}>Connect (GPU fleet)</button>}
+                    {it.status === "not-connected" && <button className="vc-btn ghost sm" onClick={() => onTab("fleet")}>Connect (Infrastructure)</button>}
                   </div>
                 </div>
               );

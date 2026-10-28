@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-// Private AI Factory — GPU fleet tab: every GPU cluster side by side, the
+// Private AI Factory — the fleet part of the Infrastructure tab: every GPU cluster side by side, the
 // fleet totals, and how the AI router uses each cluster (answers on/off,
 // sensitive data allowed, region, preferred vs least-loaded).
 // Data: /api/command-center/fleet (read by the parent and passed in).
@@ -90,7 +90,7 @@ export default function FleetView({ fleet, busy, act$, onOpen, viewCluster, relo
                 onSave={(v) => run(`pol-${c.cluster}`, () => post("/api/command-center/fleet/policy", { cluster: c.cluster, region: v }), "Region saved")} />
             </div>
             <div className="cc-actions">
-              <button className="vc-btn primary sm" onClick={() => onOpen(c.cluster)}>Open factory floor</button>
+              <button className="vc-btn primary sm" onClick={() => onOpen(c.cluster)}>Show this cluster</button>
               <button className="vc-btn ghost sm" disabled={!admin || !!busy} title="Find the OpenShift AI models on this cluster and connect them"
                 onClick={() => run(`disc-${c.cluster}`, () => post("/api/command-center/fleet/discover", { cluster: c.cluster }), `Models on ${c.label} connected`)}>Discover models</button>
             </div>

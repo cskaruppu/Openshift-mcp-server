@@ -24,7 +24,7 @@ const KEYS = ["commandCenter", "banner", "routeChat"];
 // demoTabs: how the stage demo appears in the Private AI Factory —
 //   "event" numbered acts under "Live demo" (the presenter's running order)
 //   "product" the same views under feature names, no numbers
-//   "hidden" not shown (customers see Overview, Models, GPU fleet, Usage only)
+//   "hidden" not shown (customers see Overview, Models, Infrastructure, Usage & cost, Governance only)
 export const DEMO_TABS = ["event", "product", "hidden"];
 const EMPTY = { commandCenter: null, banner: null, routeChat: null, cluster: null, demoTabs: null, updatedBy: null, updatedAt: null };
 let _saved = { ...EMPTY };

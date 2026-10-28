@@ -1,10 +1,18 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { RequestDetail, SavedNote } from "./FactoryFloor";
 
-// Private AI Factory — Usage: tokens and requests per model, user and feature, by
-// day, and every request (who asked, which model answered, tokens in and out,
-// time). Read from /api/command-center/usage — the router's running totals, kept
-// across restarts — and exportable as CSV. Questions are masked by the server.
+function saveCsv(list) {
+  const blob = new Blob([csv(list)], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = `private-ai-requests-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// Private AI Factory — Usage & cost: tokens and requests per model, user and
+// feature, by day, and what they would have cost in the cloud. RequestsLog (every
+// request: who asked, which model answered, tokens, time) is shown under
+// Governance. Read from /api/command-center/usage — the router's running totals,
+// kept across restarts — and exportable as CSV. Questions are masked by the server.
 
 const ROLE_COLOR = { large: "#3b6fd8", small: "#18a0a6", vision: "#8a5cd6", coder: "#2f9e8f", embed: "#d08a1e" };
 const FEATURE = { "ai-chat": "AI Chat", "incident-memory": "Incident memory", "model-test": "Model test", "side-by-side": "Side by side", "UC-10": "VM assessment", "image-analysis": "Screenshot analysis" };
@@ -23,7 +31,7 @@ function Table({ title, sub, data, label, price, color }) {
     <section className="cc-card">
       <header><h3>{title}</h3><span>{sub}</span></header>
       <div className="us-t">
-        <div className="us-tr us-th"><span>{label}</span><span>Requests</span><span>Tokens in</span><span>Tokens out</span><span>Total</span><span>Avg time</span><span>Cloud equiv.</span></div>
+        <div className="us-tr us-th"><span>{label}</span><span>Requests</span><span>Tokens in</span><span>Tokens out</span><span>Total</span><span>Avg time</span><span>Cost avoided</span></div>
         {data.map((r) => (
           <div key={r.key} className="us-tr">
             <span className="us-name">{color && <i className="ff-dot" style={{ background: color(r.key) }} />}<b title={r.key}>{label === "Feature" ? feature(r.key) : r.key}</b>
@@ -72,9 +80,6 @@ function csv(requests) {
 export default function UsageView({ act$, busy }) {
   const [u, setU] = useState(null);
   const [err, setErr] = useState(null);
-  const [fModel, setFModel] = useState("");
-  const [fUser, setFUser] = useState("");
-  const [detail, setDetail] = useState(null);
   const load = useCallback(async () => {
     try { const r = await fetch("/api/command-center/usage"); const j = await r.json(); if (!r.ok) throw new Error(j.error || "Usage unavailable"); setU(j); setErr(null); }
     catch (e) { setErr(e.message); }
@@ -88,13 +93,8 @@ export default function UsageView({ act$, busy }) {
   const models = rows(u.byModel), users = rows(u.byUser), features = rows(u.byFeature);
   const tot = models.reduce((a, r) => ({ requests: a.requests + r.requests, tokens: a.tokens + r.tokens, tokensIn: a.tokensIn + r.tokensIn, tokensOut: a.tokensOut + r.tokensOut, failed: a.failed + r.failed, blocked: a.blocked + r.blocked }),
     { requests: 0, tokens: 0, tokensIn: 0, tokensOut: 0, failed: 0, blocked: 0 });
-  const list = (u.requests || []).filter((r) => (!fModel || r.model === fModel) && (!fUser || (r.user || "platform (background)") === fUser));
-  const download = () => {
-    const blob = new Blob([csv(list)], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = `private-ai-usage-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  };
+  const list = u.requests || [];
+  const download = () => saveCsv(list);
   const color = (m) => ROLE_COLOR[roleOf[m]] || "#9aa9bb";
 
   return (
@@ -103,7 +103,7 @@ export default function UsageView({ act$, busy }) {
         <div><span className="cc-lbl">Requests</span><b>{num(tot.requests)}</b><span className="cc-muted">{tot.failed ? `${num(tot.failed)} failed · ` : ""}{tot.blocked ? `${num(tot.blocked)} blocked` : "since " + new Date(u.since).toLocaleDateString()}</span></div>
         <div><span className="cc-lbl">Tokens</span><b>{num(tot.tokens)}</b><span className="cc-muted">{num(tot.tokensIn)} in · {num(tot.tokensOut)} out</span></div>
         <div><span className="cc-lbl">Per request</span><b>{tot.requests ? num(Math.round(tot.tokens / Math.max(1, tot.requests - tot.blocked))) : "—"}</b><span className="cc-muted">tokens on average</span></div>
-        <div><span className="cc-lbl">Cloud equivalent</span><b>{usd(tot.tokens, u.pricePerMTok)}</b><span className="cc-muted">at ${u.pricePerMTok} per million tokens</span></div>
+        <div><span className="cc-lbl">Cloud cost avoided</span><b>{usd(tot.tokens, u.pricePerMTok)}</b><span className="cc-muted">at ${u.pricePerMTok} per million tokens</span></div>
         <div><span className="cc-lbl">Users</span><b>{num(users.filter((r) => r.key !== "platform (background)").length)}</b><span className="cc-muted">plus platform background work</span></div>
         <div className="fl-mode">
           <span className="cc-lbl">Record since {new Date(u.since).toLocaleString()}</span>
@@ -125,11 +125,41 @@ export default function UsageView({ act$, busy }) {
         <Table title="By feature" sub="where the tokens went" data={features} label="Feature" price={u.pricePerMTok} />
       </div>
 
+      <p className="cc-note">Every request, with who asked and which model answered, is under Governance → Requests.</p>
+    </>
+  );
+}
+
+/** Every AI request (Governance → Requests): filter by model and user, model tests hidden
+    unless asked for, CSV of what is shown, click for the full detail. */
+export function RequestsLog() {
+  const [u, setU] = useState(null);
+  const [err, setErr] = useState(null);
+  const [fModel, setFModel] = useState("");
+  const [fUser, setFUser] = useState("");
+  const [tests, setTests] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const load = useCallback(async () => {
+    try { const r = await fetch("/api/command-center/usage"); const j = await r.json(); if (!r.ok) throw new Error(j.error || "Requests unavailable"); setU(j); setErr(null); }
+    catch (e) { setErr(e.message); }
+  }, []);
+  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t); }, [load]);
+  if (err && !u) return <div className="vc-alert">{err}</div>;
+  if (!u) return <div className="cc-empty">Reading the requests…</div>;
+  const all = u.requests || [];
+  const nTests = all.filter((r) => r.useCase === "model-test").length;
+  const models = [...new Set(all.map((r) => r.model).filter(Boolean))].sort();
+  const users = [...new Set(all.map((r) => r.user || "platform (background)"))].sort();
+  const list = all.filter((r) => (tests || r.useCase !== "model-test") && (!fModel || r.model === fModel) && (!fUser || (r.user || "platform (background)") === fUser));
+  return (
+    <>
       <section className="cc-card">
-        <header><h3>Requests</h3><span>latest {num(list.length)} · click one for the full detail</span>
+        <header><h3>Requests</h3><span>every AI request · latest {num(list.length)} · click one for the full detail</span>
           <div className="us-filters">
-            <select value={fModel} onChange={(e) => setFModel(e.target.value)} aria-label="Filter by model"><option value="">All models</option>{models.map((m) => <option key={m.key} value={m.key}>{m.key}</option>)}</select>
-            <select value={fUser} onChange={(e) => setFUser(e.target.value)} aria-label="Filter by user"><option value="">All users</option>{users.map((m) => <option key={m.key} value={m.key}>{m.key}</option>)}</select>
+            <label className="us-tests"><input type="checkbox" checked={tests} onChange={(e) => setTests(e.target.checked)} /> Show model tests{nTests ? ` (${nTests})` : ""}</label>
+            <select value={fModel} onChange={(e) => setFModel(e.target.value)} aria-label="Filter by model"><option value="">All models</option>{models.map((m) => <option key={m} value={m}>{m}</option>)}</select>
+            <select value={fUser} onChange={(e) => setFUser(e.target.value)} aria-label="Filter by user"><option value="">All users</option>{users.map((m) => <option key={m} value={m}>{m}</option>)}
+            <button className="vc-btn ghost sm" onClick={() => saveCsv(list)} disabled={!list.length}>Export CSV</button></select>
           </div>
         </header>
         <div className="us-t">
@@ -138,7 +168,7 @@ export default function UsageView({ act$, busy }) {
             <div key={r.id} className="us-tr us-req click" role="button" tabIndex={0} onClick={() => setDetail(r)} onKeyDown={(e) => { if (e.key === "Enter") setDetail(r); }}>
               <span className="mono cc-muted">{new Date(r.at).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</span>
               <span className="us-ell">{r.user || "platform"}</span>
-              <span className="us-ell">{r.question || "—"}</span>
+              <span className="us-ell">{r.question || "—"}{r.sensitive?.length ? <span className="cc-pill ok"> sensitive</span> : null}</span>
               <span className="us-ell">{r.blocked ? <span className="cc-pill crit">blocked</span> : <><i className="ff-dot" style={{ background: ROLE_COLOR[r.role] || "#9aa9bb" }} />{r.model || "—"}{r.ok === false ? <em className="us-bad"> · failed</em> : null}</>}</span>
               <span className="us-ell cc-muted">{feature(r.useCase)}</span>
               <span className="mono">{num(r.promptTokens)}</span>

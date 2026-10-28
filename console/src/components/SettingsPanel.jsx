@@ -1417,7 +1417,7 @@ function PrivateAITab() {
       <div style={{ ...S.card, ...S.flexBetween, gap: 12 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>Demo tabs</div>
-          <div style={S.muted}>How the stage demo appears in the Private AI Factory, after Overview · Models · GPU fleet · Usage.</div>
+          <div style={S.muted}>How the stage demo appears in the Private AI Factory, after Overview · Models · Infrastructure · Usage & cost · Governance, in the Live demo menu.</div>
           <div style={{ ...S.muted, marginTop: 4 }}>
             {{ event: "Event: numbered acts under “Live demo” — the presenter’s running order",
                product: "Product: the same views as features — Private AI, Incident response, Supply chain security, VM modernisation, Scorecard",

@@ -5,7 +5,7 @@ import { showToast } from "../../store/toastStore";
 import { useThemeStore } from "../../store/themeStore";
 import FactoryFloor from "./FactoryFloor";
 import FleetView from "./FleetView";
-import UsageView from "./UsageView";
+import UsageView, { RequestsLog } from "./UsageView";
 import CatalogueView from "./CatalogueView";
 
 // Private AI Factory — the stage and booth view.
@@ -20,7 +20,16 @@ import CatalogueView from "./CatalogueView";
 
 // Platform views first, in the order operations consoles use (overview → what runs →
 // where it runs → what it costs); the stage demo is a separate group after them.
-const PLATFORM_TABS = [["floor", "Overview"], ["catalogue", "Models"], ["fleet", "GPU fleet"], ["usage", "Usage"]];
+// Each fact has one home: Overview summarises and links to the tab that owns the detail.
+const PLATFORM_TABS = [["floor", "Overview"], ["catalogue", "Models"], ["fleet", "Infrastructure"], ["usage", "Usage & cost"], ["governance", "Governance"]];
+const TAB_SUB = {
+  floor: "Is everything OK? The numbers that matter, what needs attention, and the latest requests.",
+  catalogue: "Every model: how the running ones perform, test, stop or start them, and deploy approved ones.",
+  fleet: "The GPUs: which model uses which card, headroom, the last 24 hours, and every GPU cluster in the fleet.",
+  usage: "Who used Private AI, how many tokens each model processed, and what it would have cost in the cloud.",
+  governance: "Proof for security and audit: data kept on-prem, risky requests stopped, and every AI request.",
+};
+const DEMO_KEYS = ["act1", "act2", "act3", "act4", "score"];
 // The stage demo (Settings → Private AI → Demo tabs): "event" = the presenter's
 // numbered running order; "product" = the same views as feature names; "hidden".
 const DEMO_TABS = {
@@ -87,7 +96,9 @@ const CC_THEMES = { auto: "Auto", dark: "Dark", light: "Light" };
 const CC_NEXT = { auto: "dark", dark: "light", light: "auto" };
 
 export function CommandCenter({ open, onClose }) {
-  const [act, setAct] = useState("floor");
+  const [act, setActRaw] = useState(() => { try { const t = localStorage.getItem("cc-tab"); return t && (PLATFORM_TABS.some(([k]) => k === t) || DEMO_KEYS.includes(t)) ? t : "floor"; } catch { return "floor"; } });
+  const setAct = (t) => { setActRaw(t); setDemoOpen(false); try { localStorage.setItem("cc-tab", t); } catch { /* private window */ } };
+  const [demoOpen, setDemoOpen] = useState(false);
   const [stage, setStage] = useState(() => { try { return localStorage.getItem("cc-stage") === "1"; } catch { return false; } });
   const toggleStage = () => setStage((v) => { try { localStorage.setItem("cc-stage", v ? "0" : "1"); } catch { /* private window */ } return !v; });
   const shellRef = useRef(null);
@@ -164,7 +175,11 @@ export function CommandCenter({ open, onClose }) {
   if (!open) return null;
   const d = data;
   const demo = DEMO_TABS[d?.demoTabs || "event"] === undefined ? DEMO_TABS.event : DEMO_TABS[d?.demoTabs || "event"];
-  const demoHidden = !demo && ["act1", "act2", "act3", "act4", "score"].includes(act);
+  const demoHidden = !demo && DEMO_KEYS.includes(act);
+  const demoNow = demo && demo.tabs.find(([k]) => k === act);
+  // Models badge: ready / connected, from the same health checks the Overview uses.
+  const mods = d?.act1 ? [...(d.act1.models || []), ...(d.act1.embed ? [d.act1.embed] : [])] : [];
+  const modsReady = mods.filter((m) => m.health?.ok).length;
   const node = (
     <>
       {minimized && <DockChip label="Private AI Factory" onRestore={() => setMinimized(false)} />}
@@ -233,27 +248,46 @@ export function CommandCenter({ open, onClose }) {
           </div>
 
           <nav className="cc-nav" aria-label="Private AI Factory views">
-            {PLATFORM_TABS.map(([k, l]) => <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)}>{l}</button>)}
-            {demo && <>
-              <span className="cc-nav-div" aria-hidden="true" />
-              <span className="cc-nav-lbl">{demo.label}</span>
-              {demo.tabs.map(([k, l, sh]) => (
-                <button key={k} className={"cc-act demo" + (act === k ? " on" : "")} onClick={() => setAct(k)} title={sh && sh !== l ? l : undefined}>
-                  {sh && sh !== l ? <><span className="cc-full">{l}</span><span className="cc-short">{sh}</span></> : l}
+            {PLATFORM_TABS.map(([k, l]) => (
+              <button key={k} className={"cc-act" + (act === k ? " on" : "")} onClick={() => setAct(k)} title={TAB_SUB[k]}>
+                {l}{k === "catalogue" && mods.length > 0 && <span className={"cc-badge" + (modsReady < mods.length ? " warn" : "")} title={`${modsReady} of ${mods.length} connected models ready`}>{modsReady}/{mods.length}</span>}
+              </button>
+            ))}
+            {demo && (
+              <div className="cc-demo" onMouseLeave={() => setDemoOpen(false)}>
+                <button className={"cc-act demo" + (demoNow ? " on" : "")} onClick={() => setDemoOpen((v) => !v)} aria-haspopup="menu" aria-expanded={demoOpen}>
+                  {demo.label}{demoNow ? <span className="cc-demo-now"> · {demoNow[2] || demoNow[1]}</span> : null} <span aria-hidden="true">▾</span>
                 </button>
-              ))}
-            </>}
+                {demoOpen && (
+                  <div className="cc-menu" role="menu">
+                    {demo.tabs.map(([k, l]) => <button key={k} role="menuitem" className={act === k ? "on" : ""} onClick={() => setAct(k)}><span>{l}</span></button>)}
+                  </div>
+                )}
+              </div>
+            )}
           </nav>
+          {TAB_SUB[act] && <p className="cc-tab-sub">{TAB_SUB[act]}</p>}
 
           <div className="cc-body">
             {err && <div className="vc-alert">{err}</div>}
             {!d && !err && <div className="cc-empty">Loading…</div>}
             {d && !d.enabled && <div className="cc-empty">The Private AI Factory is switched off. An admin can turn it on in Settings → Private AI.</div>}
-            {d?.enabled && (act === "floor" || demoHidden) && <FactoryFloor key={view || "default"} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />}
+            {d?.enabled && (act === "floor" || demoHidden) && <FactoryFloor key={view || "default"} view="overview" onTab={setAct} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />}
             {d?.enabled && act === "usage" && <UsageView busy={busy} act$={act$} />}
-            {d?.enabled && act === "catalogue" && <CatalogueView key={view || "default"} busy={busy} act$={act$} scoped={scoped} onTab={setAct} />}
-            {d?.enabled && act === "fleet" && <FleetView fleet={fleet} busy={busy} act$={act$} reload={loadFleet} viewCluster={view || fleet?.preferred}
-              onOpen={(c) => { chooseCluster(c === fleet?.preferred ? null : c); setAct("floor"); }} />}
+            {d?.enabled && act === "catalogue" && <>
+              <FactoryFloor key={`m-${view || "default"}`} view="models" onTab={setAct} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />
+              <CatalogueView key={view || "default"} busy={busy} act$={act$} scoped={scoped} onTab={setAct} />
+            </>}
+            {d?.enabled && act === "fleet" && <>
+              <FactoryFloor key={`i-${view || "default"}`} view="infra" onTab={setAct} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />
+              <h3 className="cc-sec">GPU clusters in the fleet</h3>
+              <FleetView fleet={fleet} busy={busy} act$={act$} reload={loadFleet} viewCluster={view || fleet?.preferred}
+                onOpen={(c) => { chooseCluster(c === fleet?.preferred ? null : c); setAct("floor"); }} />
+            </>}
+            {d?.enabled && act === "governance" && <>
+              <FactoryFloor key={`g-${view || "default"}`} view="governance" onTab={setAct} busy={busy} act$={act$} hardware={d.hardware} cluster={view} />
+              <RequestsLog />
+            </>}
             {d?.enabled && !demoHidden && act === "act1" && <Act1 d={d} busy={busy} act$={act$} />}
             {d?.enabled && !demoHidden && act === "act2" && <Act2 d={d} busy={busy} act$={act$} />}
             {d?.enabled && !demoHidden && act === "act3" && <Act3 d={d} />}

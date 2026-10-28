@@ -103,18 +103,18 @@ oc --context <gpu-cluster-context> delete -f gpu-cluster-access.yaml   # removes
 - Nothing else heavy on the GPU node gpt-oss-120b lands on: with time-slicing, other pods' GPU memory counts against its 80 GB.
 - The platform's service account can patch Deployments in `tcs-demo-payments` (inject, reset, rollback) and manage NetworkPolicies in its own namespace.
 
-## Factory floor (Private AI Factory, first tab)
+## Private AI Factory tabs
 
-Live view of the GPUs and models, read from what the GPU cluster already reports:
+Each fact has one home; Overview summarises and links to the tab that owns the detail.
 
-| Panel | Source |
-|---|---|
-| Headline figures: answers on-prem, saved vs cloud, first-token time, tokens/s, guardrail stops, GPU energy | Router log, each model's `/metrics`, DCGM `DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION` |
-| GPU factory floor: each H100, which model owns which slice, utilisation, temperature, power | DCGM + HAMi's `hami.io/vgpu-devices-allocated` pod annotation |
-| Model performance, Stop / Start | vLLM / TEI `/metrics`; OpenShift AI `serving.kserve.io/stop` |
-| Guardrails | Router: prompt-injection attempts refused before any model; sensitive requests kept on-prem |
-| Side by side | The same question to the fast and the reasoning model |
-| Evidence pack | Printable session report (Save as PDF) |
+| Tab | Shows | Source |
+|---|---|---|
+| **Overview** | Models ready, answers on-prem, data kept on-prem, how fast answers start; alerts; model status and how questions are routed; the latest requests | Router log, each model's health and `/metrics`, DCGM alerts |
+| **Models** | Model performance with Test, Stop / Start; side by side (fast vs reasoning); the model catalogue with fit check and Deploy | vLLM / TEI `/metrics`; OpenShift AI `serving.kserve.io/stop`; HAMi free memory |
+| **Infrastructure** | GPU memory free, energy, throughput; which model owns which slice of each H100; last 24 hours; every GPU cluster in the fleet | DCGM + HAMi's `hami.io/vgpu-devices-allocated`; `DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION` |
+| **Usage & cost** | Requests and tokens per model, user, feature and day; cloud cost avoided; CSV | The router's usage record (kept in the database) |
+| **Governance** | Data kept on-prem, guardrails (injections blocked, sensitive kept on-prem, masked), every AI request (model tests hidden unless asked for), evidence export | Router log and guardrails |
+| **Live demo ▾** | The stage demo (1 · Private by design … Scorecard), unchanged; hidden or renamed in Settings → Private AI → Demo tabs | |
 
 Settings (hub, `agentic-ai-control-plane` env): `PRIVATE_AI_CLOUD_PRICE_PER_MTOK` (default 5),
 `PRIVATE_AI_GRID_KG_PER_KWH` (default 0.4), `PRIVATE_AI_GUARDRAILS=false` to switch the injection check off.
@@ -126,7 +126,7 @@ on the GPU cluster. Re-apply the access manifest once (adds only that Role):
 oc --kubeconfig "$GPU_KC" apply -f deploy/demo/private-ai-ops/gpu-cluster-access.yaml
 ```
 
-## Several GPU clusters (GPU fleet tab)
+## Several GPU clusters (Infrastructure tab)
 
 Each GPU cluster keeps its own models; the router uses all of them.
 
@@ -134,11 +134,11 @@ Each GPU cluster keeps its own models; the router uses all of them.
    `connect-gpu-cluster.sh`), and apply `gpu-cluster-access.yaml` on it (lets the hub find the
    models, expose each with a Route, and stop / start them).
 2. Deploy the models on it with `rhoai/deploy-rhoai.sh`.
-3. In the Private AI Factory → **GPU fleet**, press **Discover models** on that cluster's tile.
+3. In the Private AI Factory → **Infrastructure**, press **Discover models** on that cluster's tile.
 4. Per cluster: **Answers AI requests** (on/off), **Sensitive data allowed** (data residency),
    and a region label. Fleet-wide: **Selected cluster first** or **Least loaded**.
 
-The header switcher chooses which cluster the Factory floor and the acts show. If the
+The header switcher chooses which cluster the Factory tabs and the demo show. If the
 selected cluster's model is down, the same model on another cluster answers, and AI traffic
 and the evidence pack record which cluster answered each request. The models set by
 `enable.sh` still work and count as the selected cluster's.
@@ -165,4 +165,4 @@ The reason is shown under **Down** in Factory → Model performance:
 |---|---|---|
 | `getaddrinfo ENOTFOUND` | The hub cannot resolve `*.apps.<gpu cluster>` | `LAN_HOSTS` in `deploy/dashboard/manifests/configmap.yaml` (kept across redeploys) |
 | `HTTP 503 · not ready in OpenShift AI` | The model's pods are starting, restarting or failing | `oc -n openshift-mcp get pods` on the GPU cluster |
-| `HTTP 503 · Route reaches no pod` | The Route names a port the pods do not have (OpenShift AI recreated the predictor Service, or an old Route used port 80) | Repaired automatically within two minutes; needs `patch` on routes: re-apply `gpu-cluster-access.yaml` once. Or run `enable.sh` again, or GPU fleet → Discover models |
+| `HTTP 503 · Route reaches no pod` | The Route names a port the pods do not have (OpenShift AI recreated the predictor Service, or an old Route used port 80) | Repaired automatically within two minutes; needs `patch` on routes: re-apply `gpu-cluster-access.yaml` once. Or run `enable.sh` again, or Infrastructure → Discover models |

@@ -368,7 +368,7 @@ async function readFactory({ cluster = "local", since }) {
         const role = inferRole(i.name);
         return { role, label: { large: "Reasoning", small: "Fast answers", vision: "Vision", coder: "Code and YAML", embed: "Incident memory" }[role],
           model: i.name, gpu: null, cluster, ready: false, notConnected: true, stats: null,
-          error: i.stopped ? "stopped in OpenShift AI" : i.ready ? "running, not connected to the platform (run enable.sh or GPU fleet → Discover models)" : "not ready in OpenShift AI",
+          error: i.stopped ? "stopped in OpenShift AI" : i.ready ? "running, not connected to the platform (run enable.sh or Infrastructure → Discover models)" : "not ready in OpenShift AI",
           control: i };
       }),
     ],
@@ -441,7 +441,7 @@ const SYSTEM = "You are an SRE assistant for OpenShift and Kubernetes. Answer in
 /** Is this model really answering? A tiny real request: a one-word reply, or one embedding. */
 export async function testModel(name) {
   const m = allModels().find((x) => x.model === name);
-  if (!m) throw Object.assign(new Error(`${name} is not connected to the platform — start it, then run enable.sh or GPU fleet → Discover models`), { status: 409 });
+  if (!m) throw Object.assign(new Error(`${name} is not connected to the platform — start it, then run enable.sh or Infrastructure → Discover models`), { status: 409 });
   const t0 = Date.now();
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 60000);
