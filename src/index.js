@@ -2150,6 +2150,16 @@ async function startSSE() {
       });
       W.startWorker();
     } catch (e) { console.error("[remediation] worker not started:", e.message); }
+    // VM Guard: OpenShift Virtualization VMs watched from outside (config changes,
+    // guest OS, end of life, optional agentless disk scans). Each process watches
+    // its own cluster in the background so changes are caught between visits.
+    try {
+      const VG = await import("./services/vm-guard.js");
+      VG.configureVmGuard({ ocp: { fetch: ocpFetch, post: ocpPost, delete: ocpDelete }, kev: getKevSet, epss: getEpssScores });
+      const tick = () => VG.refresh("local", { force: true }).catch(() => {});
+      const t0 = setTimeout(tick, 30_000); if (t0.unref) t0.unref();
+      const t = setInterval(tick, Number(process.env.VM_GUARD_WATCH_MS) || 300_000); if (t.unref) t.unref();
+    } catch (e) { console.error("[vm-guard] not started:", e.message); }
     try {
       const SC = await import("./services/private-ai/scenario.js");
       const CC = await import("./services/private-ai/command-center.js");
@@ -9519,6 +9529,34 @@ spec:
         const out = await act();
         return sendJson(res, 200, out);
       } catch (e) { return fail(e); }
+    }
+
+    // VM Guard (services/vm-guard.js). A spoke cluster's request is answered by
+    // its own agent (spoke proxy above), which watches that cluster as "local".
+    if (url.pathname === "/api/vm-guard" || url.pathname.startsWith("/api/vm-guard/")) {
+      const VG = await import("./services/vm-guard.js");
+      const vgCluster = MCP_MODE === "spoke" ? "local" : (url.searchParams.get("cluster") || "local");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      try {
+        if (req.method === "GET" && url.pathname === "/api/vm-guard") {
+          const out = await VG.summary(vgCluster, { force: url.searchParams.get("refresh") === "true" });
+          return sendJson(res, 200, { ...out, you: { canManage: checkPermission(req, "manage") } });
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "VM Guard actions need the Admin role" });
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        const ns = String(body.namespace || ""), name = String(body.name || "");
+        const audit = (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: actor, source: "vm-guard" }).catch(() => {});
+        switch (url.pathname) {
+          case "/api/vm-guard/baseline": { const out = await VG.approveBaseline(vgCluster, ns, name, actor); audit(`VM ${ns}/${name}: current configuration approved as baseline`, out); return sendJson(res, 200, out); }
+          case "/api/vm-guard/snapshot": { const out = await VG.snapshotVm(vgCluster, ns, name, actor); audit(`VM ${ns}/${name}: snapshot ${out.snapshot} requested`, out); return sendJson(res, 200, out); }
+          case "/api/vm-guard/scan": { const out = await VG.requestScan(vgCluster, ns, name === "*" ? "*" : name); audit(name === "*" ? "VM Guard: disk scan of every VM requested" : `VM ${ns}/${name}: disk scan requested`, out); return sendJson(res, 200, out); }
+          default: return sendJson(res, 404, { error: "Unknown VM Guard action" });
+        }
+      } catch (e) {
+        return sendJson(res, e.status || 500, { error: e.message });
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/api/dashboard/image-vulns") {

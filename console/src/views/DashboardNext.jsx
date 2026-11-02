@@ -21,6 +21,7 @@ import { CapacityWidget } from "../components/widgets/CapacityWidget";
 import { GpuOverviewWidget } from "../components/widgets/GpuOverviewWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 import { CommandCenterBanner } from "../components/commandcenter/CommandCenter";
+import { useVmGuard, VmVulnsWidget, VmChangesWidget, VmGuardCenter } from "../components/vmguard/VmGuard";
 
 // The Dashboard, new layout — the same widgets as the classic Dashboard
 // (views/DashboardView.jsx, unchanged), arranged in four zones so the first
@@ -42,7 +43,8 @@ const VIEWS = {
   sec: { label: "Security", tab: "security", first: ["security", "compliance"] },
   cap: { label: "Capacity", tab: "capacity", first: ["pods", "health"] },
 };
-const TABS = [["security", "Security"], ["capacity", "Capacity"], ["trends", "Trends"]];
+// Virtualization appears only when the cluster has VirtualMachines (VM Guard).
+const TABS = [["security", "Security"], ["virtualization", "Virtualization"], ["capacity", "Capacity"], ["trends", "Trends"]];
 const SEV_RANK = { critical: 0, high: 1, warning: 1, medium: 2, info: 3 };
 const LAST_VISIT = "mcp-dash-last-visit";
 
@@ -112,6 +114,7 @@ export function DashboardNext() {
   const [tab, setTabRaw] = useState(() => store.get("mcp-dash-tab", VIEWS[view].tab));
   const [spot, setSpot] = useState(null);
   const [actions, setActions] = useState(false);
+  const [vg, setVg] = useState(null);   // { tab, focus } while the VM Guard window is open
   const [showAll, setShowAll] = useState(false);
   const setView = (v) => { setViewRaw(v); store.set("mcp-dash-view", v); setTab(VIEWS[v].tab); };
   const setTab = (t) => { setTabRaw(t); store.set("mcp-dash-tab", t); };
@@ -132,6 +135,8 @@ export function DashboardNext() {
   const git = useQ("/api/dashboard/gitops", REFRESH.SCAN).data;
   const dr = useQ("/api/dashboard/dr", REFRESH.SCAN).data;
   const img = useQ("/api/dashboard/image-vulns", REFRESH.SCAN).data;
+  const vmq = useVmGuard();
+  const vmg = vmq.data?.available && vmq.data.totals.vms > 0 ? vmq.data : null;
 
   const ops = Array.isArray(opsData) ? opsData : [];
   const alerts = (alertsData?.alerts || []).filter((a) => !a.silenced);
@@ -170,11 +175,17 @@ export function DashboardNext() {
         meta: `${vulns.kevCves} known-exploited CVEs · ${now.slice(0, 2).map((i) => (i.fullImage || i.image || "").split("/").pop()).join(", ")}`, src: "Image Vulnerabilities", go: () => setTab("security") });
     }
     if (dr && dr.failed > 0) out.push({ k: "dr", cat: "dr", sev: "medium", title: `${dr.failed} backup${dr.failed === 1 ? "" : "s"} failed`, meta: `DR readiness ${dr.score ?? "—"}/100`, src: "DR Readiness", go: () => open("DR Readiness", drCard) });
+    if (vmg) {
+      for (const v of vmg.vms.filter((x) => x.tier === "fix-now").slice(0, 3)) out.push({ k: `vm-${v.key}`, cat: "security", sev: "critical", title: `VM ${v.name}: fix now`,
+        meta: v.factors.slice(0, 3).map((f) => f.label).join(" · "), src: "VM Guard", go: () => setVg({ tab: "vms", focus: v.key }) });
+      for (const c of vmg.changes.filter((x) => x.weakens).slice(0, 2)) out.push({ k: `vc-${c.namespace}-${c.vm}-${c.at}-${c.field}`, cat: "security", sev: "high", title: `VM ${c.vm}: ${c.weakens}`,
+        meta: `${c.label}: ${c.before} → ${c.after}${c.tool ? ` · ${c.tool}` : ""}`, src: "VM Configuration Changes", go: () => setVg({ tab: "changes" }) });
+    }
     if (git && git.outOfSync > 0) out.push({ k: "git", cat: "compliance", sev: "medium", title: `${git.outOfSync} GitOps app${git.outOfSync === 1 ? "" : "s"} out of sync`, meta: `${git.degraded || 0} degraded`, src: "GitOps Sync", go: () => open("GitOps Sync", gitCard) });
     const first = VIEWS[view].first;
     const rank = (i) => (SEV_RANK[i.sev] ?? 3) * 10 + (first.includes(i.cat) ? 0 : 5);
     return out.sort((a, b) => rank(a) - rank(b));
-  }, [alerts, pods, degraded, vulns, dr, git, view]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [alerts, pods, degraded, vulns, dr, git, vmg, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fresh = lastVisit ? alerts.filter((a) => a.since && new Date(a.since).getTime() > lastVisit).length : null;
   const shown = showAll ? items : items.slice(0, 5);
@@ -204,6 +215,8 @@ export function DashboardNext() {
     { k: "img", label: "Image risk", pct: vulns ? 100 : null, tone: vulns ? (vulns.tiers["fix-now"] ? "var(--crit)" : vulns.tiers["fix-soon"] ? "var(--warn)" : "var(--ok)") : undefined,
       value: vulns ? `${vulns.tiers["fix-now"] || 0}` : "—",
       sub: vulns ? `fix now · ${vulns.kevCves} known exploited` : "no CVE scan yet", go: () => setTab("security") },
+    ...(vmg ? [{ k: "vm", label: "VM risk", pct: 100, tone: vmg.totals.fixNow ? "var(--crit)" : vmg.totals.offBaseline || vmg.totals.eol ? "var(--warn)" : "var(--ok)",
+      value: `${vmg.totals.fixNow}`, sub: `fix now · ${vmg.totals.eol} end of life · ${vmg.totals.offBaseline} off baseline`, go: () => setTab("virtualization") }] : []),
   ];
 
   return (
@@ -275,7 +288,7 @@ export function DashboardNext() {
       {/* Zone 4 */}
       <section className="dn-card dn-explore">
         <div className="dn-tabs" role="tablist" aria-label="Explore">
-          {TABS.map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+          {TABS.filter(([k]) => k !== "virtualization" || vmg).map(([k, l]) => <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
         </div>
         {tab === "security" && (
           <div className="dash-twin-row">
@@ -287,6 +300,15 @@ export function DashboardNext() {
           <div className="dn-stack">
             <div className="dn-joined"><CapacityWidget /><ResourceOptimizationWidget /></div>
             <GpuOverviewWidget />
+          </div>
+        )}
+        {tab === "virtualization" && !vmg && (
+          <p className="dn-empty">{vmq.isLoading ? "Reading the VirtualMachines…" : vmq.data?.reason || "No VirtualMachines on this cluster."}</p>
+        )}
+        {tab === "virtualization" && vmg && (
+          <div className="dash-twin-row">
+            <div className="dash-twin-card"><VmVulnsWidget data={vmg} onOpen={(t, f) => setVg({ tab: t, focus: f || null })} /></div>
+            <div className="dash-twin-card"><VmChangesWidget data={vmg} onOpen={(t) => setVg({ tab: t })} /></div>
           </div>
         )}
         {tab === "trends" && (
@@ -302,6 +324,7 @@ export function DashboardNext() {
 
       <Spotlight item={spot} onClose={closeSpot} />
       <Drawer open={actions} onClose={() => setActions(false)} title="Emergency actions"><EmergencyActionsWidget /></Drawer>
+      <VmGuardCenter open={!!vg} onClose={() => setVg(null)} data={vmq.data} tab={vg?.tab} focus={vg?.focus} refetch={vmq.refetch} />
     </div>
   );
 }

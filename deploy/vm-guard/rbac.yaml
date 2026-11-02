@@ -1,0 +1,43 @@
+# VM Guard — the extra rights for disk scans and pre-patch snapshots.
+#
+# Configuration changes, guest OS and end of life need nothing new: the
+# platform's reader role already lists VirtualMachines, VMIs, Services and Routes.
+#
+# Apply on every cluster whose VMs you want disk-scanned, after setting
+# VM_GUARD_SCAN=true on the platform (README.md). Nothing here deletes a VM or
+# its disks: VM Guard removes only the snapshot, claim and job it created,
+# each labelled tcs.com/vm-guard=true.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tcs-vm-guard-scanner
+rules:
+  # Snapshot the root disk and restore the snapshot to a temporary claim.
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+  # The Trivy scan job and its output.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  # "Snapshot before patching" (a VirtualMachineSnapshot of the whole VM).
+  - apiGroups: ["snapshot.kubevirt.io"]
+    resources: ["virtualmachinesnapshots"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tcs-vm-guard-scanner
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: tcs-vm-guard-scanner }
+subjects:
+  # The platform's service account on this cluster (the hub's control plane, or a spoke's agent).
+  - kind: ServiceAccount
+    name: agentic-ai-server
+    namespace: openshift-mcp
