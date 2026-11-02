@@ -8,7 +8,8 @@ import TestMigration from "./TestMigration";
 import VCenterConnect from "./VCenterConnect";
 import MigrationRecord from "./MigrationRecord";
 import ContainerizationAgent from "./ContainerizationAgent";
-import { IconDeploy, IconTicket, IconMigrate, IconContainer } from "./icons";
+import { IconDeploy, IconTicket, IconMigrate, IconContainer, IconShield } from "./icons";
+import VmFleetAgent from "./vmguard/VmFleetAgent";
 
 /**
  * A live plan and an archived run are the same case at two points in its life,
@@ -193,7 +194,7 @@ export function AutomationHub({ open, onClose }) {
           styles.css. Everything inside the hub reads var(--text2), so one
           class fixes the whole agent rather than sixty inline colours. */}
       <div onClick={(e) => { e.stopPropagation(); if (viewMenu) setViewMenu(false); }} className={`ah-ink${presenting && !showNotes ? " ah-terse" : ""}`}
-        style={{ width: presenting ? "100vw" : agent === "mig" ? "min(1560px, 97vw)" : "min(1040px, 96vw)",
+        style={{ width: presenting ? "100vw" : agent === "mig" || agent === "vmg" ? "min(1560px, 97vw)" : "min(1040px, 96vw)",
         height: presenting ? "100vh" : "min(1000px, 94vh)", minHeight: presenting ? 0 : 560,
         background: "var(--bg, #fff)", border: presenting ? "none" : "1px solid var(--border, #e4e8f1)",
         borderRadius: presenting ? 0 : 18, boxShadow: presenting ? "none" : "0 24px 70px rgba(0,0,0,0.4)",
@@ -286,7 +287,7 @@ export function AutomationHub({ open, onClose }) {
         {/* Segmented agent switcher */}
         <div style={{ padding: "16px 22px 0" }}>
           <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: 11, background: "var(--card-bg,#f0f2f8)", border: "1px solid var(--border,#e4e8f1)" }}>
-            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Workload Modernization Agent", IconContainer]].map(([k, label, Icon]) => (
+            {[["sop", "App Deployment Agent", IconDeploy], ["snow", "ServiceNow Agent", IconTicket], ["mig", "VM Migration Agent", IconMigrate], ["v2c", "Workload Modernization Agent", IconContainer], ["vmg", "VM Security Agent", IconShield]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setAgent(k)} style={{ display: "inline-flex", alignItems: "center", gap: 8,
                 padding: "8px 16px", borderRadius: 8, border: "none",
                 /* the darker brand step, not --tcs-blue: white 13.8px bold
@@ -306,6 +307,7 @@ export function AutomationHub({ open, onClose }) {
           {agent === "sop" ? <SopAgent clusters={clusters} activeCluster={activeCluster} />
             : agent === "snow" ? <SnowAgent clusters={clusters} activeCluster={activeCluster} />
             : agent === "v2c" ? <ContainerizationAgent cluster={activeCluster} clusters={clusters} />
+            : agent === "vmg" ? <VmFleetAgent clusters={clusters} />
             : <MigrationAgent clusters={clusters} activeCluster={activeCluster} />}
         </div>
       </div>

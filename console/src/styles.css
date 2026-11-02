@@ -10331,3 +10331,17 @@ code.new { color: #22a06b; }
 .vg-fix code { display: block; padding: 10px 12px; border-radius: 8px; background: var(--vc-surface-2); border: 1px solid var(--vc-line); font-family: "SF Mono", "Fira Code", ui-monospace, monospace; font-size: 0.8rem; overflow-x: auto; white-space: nowrap; }
 .vg-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
 .dn-empty { margin: 4px 0 8px; font: 500 13px var(--tcs-font); color: var(--text2); }
+
+/* VM Security Agent (Automation Hub → components/vmguard/VmFleetAgent.jsx). */
+.vgf { display: flex; flex-direction: column; gap: 16px; font-family: var(--tcs-font); color: var(--vc-ink); }
+.vgf-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.vgf-intro h3 { margin: 0 0 4px; font: 800 1.05rem var(--tcs-font); }
+.vgf-intro p { margin: 0; font-size: 0.84rem; color: var(--vc-ink-2); max-width: 820px; line-height: 1.5; }
+.vgf-label { font: 700 0.7rem var(--tcs-font); letter-spacing: .07em; text-transform: uppercase; color: var(--vc-ink-2); margin-bottom: 8px; display: flex; gap: 10px; align-items: baseline; }
+.vgf-label span { font: 500 0.74rem var(--tcs-font); letter-spacing: 0; text-transform: none; color: var(--vc-ink-3); }
+.vgf-clusters tbody tr { cursor: pointer; }
+.vgf-bar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.vgf-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.vgf-filters select, .vgf-filters input { font: 500 0.82rem var(--tcs-font); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--vc-line); background: var(--vc-surface); color: var(--vc-ink); }
+.vgf-filters input { min-width: 220px; }
+.vgf-empty { padding: 40px; text-align: center; color: var(--vc-ink-2); font-family: var(--tcs-font); }

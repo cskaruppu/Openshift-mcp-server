@@ -15,7 +15,7 @@ export function useVmGuard() {
   return useClusterQuery("/api/vm-guard", { refetchInterval: REFRESH.STANDARD });
 }
 
-const rel = (iso) => {
+export const rel = (iso) => {
   if (!iso) return "—";
   const s = Math.round((Date.now() - Date.parse(iso)) / 1000);
   if (s < 60) return "just now";
@@ -25,14 +25,14 @@ const rel = (iso) => {
 };
 const FACTOR_CLASS = { kev: "vc-f-kev", exposed: "vc-f-exposed", eol: "vc-f-epss", epss: "vc-f-epss", baseline: "vc-f-privileged", unscanned: "vc-f-not-running" };
 
-function Tier({ v }) {
+export function Tier({ v }) {
   if (v.tier === "hygiene") {
     return <span className="vc-tier vc-tier-sm" style={{ "--t": "var(--vc-t-hygiene)" }} title={v.scan?.error || ""}><span className="vc-tier-dot" />{v.tierLabel}</span>;
   }
   return <TierBadge tier={v.tier} size="sm" />;
 }
 
-function Factors({ factors = [], max = 3 }) {
+export function Factors({ factors = [], max = 3 }) {
   return (
     <span className="vc-factors">
       {factors.slice(0, max).map((f) => <span key={f.key} className={"vc-factor " + (FACTOR_CLASS[f.key] || "")} title={f.detail}>{f.label}</span>)}
@@ -40,7 +40,7 @@ function Factors({ factors = [], max = 3 }) {
   );
 }
 
-function ChangeTag({ c }) {
+export function ChangeTag({ c }) {
   if (c.weakens) return <span className="vc-tier vc-tier-sm" style={{ "--t": "var(--vc-crit)" }} title={c.weakens}><span className="vc-tier-dot" />Weakens</span>;
   const k = { exposure: ["Network", "var(--vc-high)"], security: ["Security", "var(--vc-high)"], size: ["Size", "var(--vc-t-plan)"], storage: ["Storage", "var(--vc-t-plan)"] }[c.kind] || ["Change", "var(--vc-t-monitor)"];
   return <span className="vc-tier vc-tier-sm" style={{ "--t": k[1] }}><span className="vc-tier-dot" />{k[0]}</span>;
@@ -230,42 +230,50 @@ export function VmGuardCenter({ open, onClose, data, tab: tab0 = "vms", focus = 
           )}
         </div>
 
-        {vm && (
-          <aside className="vg-detail" role="dialog" aria-label={`${vm.name} details`}>
-            <header>
-              <div><h3>{vm.name}</h3><span className="vc-muted">{vm.namespace} · {vm.os || "OS not reported"}{vm.kernel ? ` · kernel ${vm.kernel}` : ""}</span></div>
-              <button className="ah-winbtn" onClick={() => setSel(null)} aria-label="Close details">✕</button>
-            </header>
-            <div className="vg-detail-body">
-              <div className="vg-row"><Tier v={vm} /><Factors factors={vm.factors} max={6} /></div>
-              {vm.eol && <p className="vg-note">{vm.eol.name} left standard support on {vm.eol.since}: no more security fixes from the vendor.</p>}
-              {vm.exposure.length > 0 && <p className="vg-note">Reachable through {vm.exposure.map((e) => `${e.kind} ${e.name}${e.host ? ` (${e.host})` : ""}`).join(", ")}.</p>}
-              {vm.offBaseline.length > 0 && (
-                <section><h4>Off baseline</h4>
-                  {vm.offBaseline.map((d, i) => <div key={i} className="vg-diff"><span>{d.label}</span><span className="vg-mono vc-muted">{d.before}</span><span aria-hidden="true">→</span><span className="vg-mono">{d.after}</span></div>)}
-                </section>
-              )}
-              <section><h4>Findings</h4>
-                {vm.scan?.status === "done" ? (
-                  vm.vulns.length ? (
-                    <table className="vc-table compact"><thead><tr><th>CVE</th><th>Severity</th><th>Package</th><th>Fixed in</th></tr></thead>
-                      <tbody>{vm.vulns.slice(0, 25).map((x) => <tr key={x.id + x.pkg}><td className="vg-mono">{x.id}{x.kev && <span className="vc-factor vc-f-kev" style={{ marginLeft: 6 }}>KEV</span>}</td><td>{x.severity}</td><td>{x.pkg} <span className="vc-muted">{x.installed}</span></td><td className="vg-mono">{x.fix || "no fix yet"}</td></tr>)}</tbody></table>
-                  ) : <p className="vg-note">The last disk scan found no known vulnerabilities.</p>
-                ) : <p className="vg-note">{vm.scan?.status === "failed" ? `The last scan failed: ${vm.scan.error}` : vm.scan ? `Disk scan ${vm.scan.status}…` : data.scan.enabled ? "Not scanned yet." : "Package CVEs need a disk scan, which is off on this platform."}</p>}
-                {vm.fix && <div className="vg-fix"><span className="vc-muted">Update the affected packages (critical, high and known exploited):</span><code>{vm.fix}</code></div>}
-              </section>
-              {admin && (
-                <div className="vg-actions">
-                  {data.scan.enabled && <button className="vc-btn primary" disabled={!!busy} onClick={() => act("scan", { namespace: vm.namespace, name: vm.name }, `Disk scan of ${vm.name} queued`)}>Scan disk now</button>}
-                  <button className="vc-btn" disabled={!!busy} onClick={() => act("snapshot", { namespace: vm.namespace, name: vm.name }, (j) => `Snapshot ${j.snapshot} requested`)}>Snapshot before patching</button>
-                  {vm.offBaseline.length > 0 && <button className="vc-btn ghost" disabled={!!busy} onClick={() => act("baseline", { namespace: vm.namespace, name: vm.name }, `${vm.name}: current configuration approved`)}>Approve current as baseline</button>}
-                </div>
-              )}
-              {!admin && <p className="vc-muted" style={{ fontSize: "0.78rem" }}>Scanning, snapshots and baselines need the Admin role.</p>}
-            </div>
-          </aside>
-        )}
+        {vm && <VmDetail vm={vm} scanEnabled={data.scan.enabled} admin={admin} busy={busy} act={act} onClose={() => setSel(null)} />}
       </div>
     </div>
+  );
+}
+
+/** One VM in full: risk factors, end of life, exposure, baseline drift, findings, fix command and actions.
+    `act(path, body, okMessage)` posts to that VM's cluster; `extra` adds buttons (the fleet view's ticket). */
+export function VmDetail({ vm, scanEnabled, admin, busy, act, onClose, cluster = null, extra = null }) {
+  return (
+    <aside className="vg-detail" role="dialog" aria-label={`${vm.name} details`}>
+      <header>
+        <div><h3>{vm.name}</h3><span className="vc-muted">{cluster ? `${cluster} · ` : ""}{vm.namespace} · {vm.os || "OS not reported"}{vm.kernel ? ` · kernel ${vm.kernel}` : ""}</span></div>
+        <button className="ah-winbtn" onClick={onClose} aria-label="Close details">✕</button>
+      </header>
+      <div className="vg-detail-body">
+        <div className="vg-row"><Tier v={vm} /><Factors factors={vm.factors} max={6} /></div>
+        {(admin || extra) && (
+          <div className="vg-actions">
+            {admin && scanEnabled && <button className="vc-btn primary" disabled={!!busy} onClick={() => act("scan", { namespace: vm.namespace, name: vm.name }, `Disk scan of ${vm.name} queued`)}>Scan disk now</button>}
+            {admin && <button className="vc-btn" disabled={!!busy} onClick={() => act("snapshot", { namespace: vm.namespace, name: vm.name }, (j) => `Snapshot ${j.snapshot} requested`)}>Snapshot before patching</button>}
+            {admin && vm.offBaseline.length > 0 && <button className="vc-btn ghost" disabled={!!busy} onClick={() => act("baseline", { namespace: vm.namespace, name: vm.name }, `${vm.name}: current configuration approved`)}>Approve current as baseline</button>}
+            {extra}
+          </div>
+        )}
+        {!admin && <p className="vc-muted" style={{ fontSize: "0.78rem" }}>Scanning, snapshots and baselines need the Admin role.</p>}
+        {vm.eol && <p className="vg-note">{vm.eol.name} left standard support on {vm.eol.since}: no more security fixes from the vendor.</p>}
+        {vm.exposure.length > 0 && <p className="vg-note">Reachable through {vm.exposure.map((e) => `${e.kind} ${e.name}${e.host ? ` (${e.host})` : ""}`).join(", ")}.</p>}
+        {vm.offBaseline.length > 0 && (
+          <section><h4>Off baseline</h4>
+            {vm.offBaseline.map((d, i) => <div key={i} className="vg-diff"><span>{d.label}</span><span className="vg-mono vc-muted">{d.before}</span><span aria-hidden="true">→</span><span className="vg-mono">{d.after}</span></div>)}
+          </section>
+        )}
+        <section><h4>Findings</h4>
+          {vm.scan?.status !== "done" && <p className="vg-note">{vm.scan?.status === "failed" ? `The last scan failed: ${vm.scan.error}` : vm.scan ? `Disk scan ${vm.scan.status}…` : scanEnabled ? "Not scanned yet." : "Package CVEs need a disk scan, which is off on this platform."}</p>}
+          {vm.scan?.status === "done" && !vm.vulns.length && <p className="vg-note">The last disk scan found no known vulnerabilities.</p>}
+          {vm.fix && <div className="vg-fix"><span className="vc-muted">Update the affected packages (critical, high and known exploited):</span><code>{vm.fix}</code></div>}
+          {vm.scan?.status === "done" && vm.vulns.length > 0 && (
+            <table className="vc-table compact" style={{ marginTop: 10 }}><thead><tr><th>CVE</th><th>Severity</th><th>Package</th><th>Fixed in</th></tr></thead>
+              <tbody>{vm.vulns.slice(0, 15).map((x) => <tr key={x.id + x.pkg}><td className="vg-mono">{x.id}{x.kev && <span className="vc-factor vc-f-kev" style={{ marginLeft: 6 }}>KEV</span>}</td><td>{x.severity}</td><td>{x.pkg} <span className="vc-muted">{x.installed}</span></td><td className="vg-mono">{x.fix || "no fix yet"}</td></tr>)}</tbody></table>
+          )}
+          {vm.scan?.status === "done" && vm.vulns.length > 15 && <p className="vc-muted" style={{ fontSize: "0.76rem", margin: "6px 0 0" }}>The 15 most urgent of {vm.sev.critical + vm.sev.high + vm.sev.medium + vm.sev.low}: known exploited first, then by severity.</p>}
+        </section>
+      </div>
+    </aside>
   );
 }

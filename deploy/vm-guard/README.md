@@ -1,8 +1,14 @@
 # VM Guard
 
 Vulnerabilities and configuration changes for OpenShift Virtualization VMs,
-with nothing installed inside the guests. Shown in the Dashboard (new layout)
-→ Explore → **Virtualization**, which appears when the cluster has VMs.
+with nothing installed inside the guests. Shown in two places:
+
+- **Automation Hub → VM Security Agent** (cluster selection screen): every VM
+  on every connected cluster in one list, with a summary per cluster, the
+  configuration changes across clusters, and the same per-VM actions plus
+  **Raise ServiceNow ticket** (one open incident per VM; asking again shows it).
+- **Dashboard (new layout) → Explore → Virtualization**, for one cluster; the
+  tab appears when the cluster has VMs.
 
 | What | Source | Needs |
 |---|---|---|

@@ -97,3 +97,14 @@ export function ProductMark({ size = 22 }) {
     </svg>
   );
 }
+
+/** VM Security Agent (VM Guard): a shield over a machine. */
+export function IconShield({ size = 17 }) {
+  return (
+    <svg {...base(size)}>
+      <path d="M12 2.8 19.5 5.6v5.6c0 4.6-3.1 8.4-7.5 9.9-4.4-1.5-7.5-5.3-7.5-9.9V5.6z" />
+      <rect x="8.6" y="9" width="6.8" height="5" rx="1" />
+      <path d="M10.6 16.2h2.8" />
+    </svg>
+  );
+}

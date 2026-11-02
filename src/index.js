@@ -2615,6 +2615,8 @@ async function startSSE() {
         p === "/api/cluster-labels" ||
         p.startsWith("/api/private-ai") ||
         p.startsWith("/api/command-center") ||
+        // VM Guard tickets are raised from the hub, where ServiceNow is configured.
+        p === "/api/vm-guard/ticket" ||
         p.startsWith("/api/auth");
 
       // Spoke proxy: forward live-data API requests to the spoke's MCP server.
@@ -9543,6 +9545,29 @@ spec:
           return sendJson(res, 200, { ...out, you: { canManage: checkPermission(req, "manage") } });
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (url.pathname === "/api/vm-guard/ticket") {
+          // A ServiceNow incident for one VM, raised from the hub. One open ticket per VM:
+          // a second request returns the open one instead of a duplicate.
+          if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Raising tickets needs the Operator or Admin role" });
+          if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+          const b = await readJsonBody(req).catch(() => ({}));
+          const tc = String(b.cluster || "local").slice(0, 128), tns = String(b.namespace || ""), tname = String(b.name || "");
+          if (!/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(tns) || !/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(tname)) return sendJson(res, 400, { error: "Not a valid VM name or namespace" });
+          const SN = await import("./utils/servicenow-client.js");
+          const corr = `vm-guard:${tc}:${tns}/${tname}`;
+          const open = await SN.findOpenIncidentByCorrelation(corr).catch(() => null);
+          if (open) return sendJson(res, 200, { number: open.number, existing: true });
+          const lines = (Array.isArray(b.findings) ? b.findings : []).slice(0, 15).map((x) => `- ${String(x).slice(0, 200)}`);
+          const inc = await SN.createIncident({
+            shortDescription: `VM Guard: ${tname} (${tns}, ${tc}) — ${String(b.summary || "needs attention").slice(0, 120)}`,
+            description: [`Virtual machine ${tns}/${tname} on cluster ${tc}, reported by VM Guard (TCS Agentic AI).`, "", ...lines, "", b.fix ? `Suggested update: ${String(b.fix).slice(0, 500)}` : "", `Raised by ${actor}.`].filter((x) => x !== null).join("\n"),
+            urgency: b.priority === "fix-now" ? "1" : "2", impact: "2", category: "Software",
+            correlationId: corr, correlationDisplay: "TCS Agentic AI · VM Guard", cmdbCi: tname,
+          });
+          const number = inc?.result?.number || inc?.number || null;
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: `ServiceNow ${number || "incident"} raised for VM ${tns}/${tname} on ${tc}`, details: { cluster: tc, namespace: tns, name: tname, number }, username: actor, source: "vm-guard" }).catch(() => {});
+          return sendJson(res, 200, { number, existing: false });
+        }
         if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "VM Guard actions need the Admin role" });
         if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
         const body = await readJsonBody(req).catch(() => ({}));
