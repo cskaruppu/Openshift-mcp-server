@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
+import { useDashLayout } from "../store/dashLayoutStore";
 import { useThemeStore } from "../store/themeStore";
 import { showToast } from "../store/toastStore";
 import { refreshCommandCenterEnabled } from "./commandcenter/CommandCenter";
@@ -1442,6 +1443,8 @@ function PrivateAITab() {
 /* ------------------------------------------------------------------ */
 
 function AppearanceTab({ theme, toggleTheme }) {
+  const dashLayout = useDashLayout((st) => st.layout);
+  const setDashLayout = useDashLayout((st) => st.setLayout);
   const [autoRefresh, setAutoRefresh] = useState(() => {
     try { return JSON.parse(localStorage.getItem("mcp-auto-refresh") ?? "true"); } catch { return true; }
   });
@@ -1462,6 +1465,13 @@ function AppearanceTab({ theme, toggleTheme }) {
           <div className="gi-label"><span className="gi-icon">{theme === "dark" ? "☾" : "☀"}</span> Dark theme</div>
           <Toggle checked={theme === "dark"} onChange={toggleTheme} />
         </div>
+      </div>
+      <div style={S.card}>
+        <div className="guardrail-item">
+          <div className="gi-label"><span className="gi-icon">{"▦"}</span> New dashboard layout</div>
+          <Toggle checked={dashLayout === "new"} onChange={() => { const next = dashLayout === "new" ? "classic" : "new"; setDashLayout(next); showToast(next === "new" ? "New dashboard layout on" : "Classic dashboard layout", "ok"); }} />
+        </div>
+        <div style={S.muted}>Status strip, one Needs attention list, posture scores and tabs for the detailed widgets. Off = the classic Dashboard. Saved for this browser.</div>
       </div>
       <div style={S.card}>
         <div className="guardrail-item">

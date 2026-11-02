@@ -18,6 +18,8 @@ import { GpuOverviewWidget } from "../components/widgets/GpuOverviewWidget";
 import { EmergencyActionsWidget } from "../components/widgets/EmergencyActionsWidget";
 import { CommandCenterBanner } from "../components/commandcenter/CommandCenter";
 import { REFRESH } from "../hooks/useClusterQuery";
+import { useDashLayout } from "../store/dashLayoutStore";
+import { DashboardNext } from "./DashboardNext";
 
 function FocusableWidget({ children, label }) {
   const ref = useRef(null);
@@ -86,6 +88,8 @@ function FocusableWidget({ children, label }) {
  * intentionally not duplicated here.
  */
 export function DashboardView() {
+  // Settings → Appearance: the new layout (views/DashboardNext.jsx) or this classic one, the default.
+  if (useDashLayout((st) => st.layout) === "new") return <DashboardNext />;
   return (
     <div className="dash">
       <CommandCenterBanner />
