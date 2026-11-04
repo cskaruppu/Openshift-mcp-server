@@ -278,8 +278,10 @@ export function GpuOverviewWidget() {
               sub={`${s.nodes} node${s.nodes === 1 ? "" : "s"}`} />
 
             {/* Four discrete things read better as pips than as a bar. */}
-            <Stat label="Allocated" value={`${s.allocatedGpus}/${s.totalGpus}`}
-              sub={`${s.unallocatedGpus} free`}
+            <Stat label={data.inventory?.sharing ? "In use" : "Allocated"} value={`${s.allocatedGpus}/${s.totalGpus}`}
+              sub={data.inventory?.sharing
+                ? `${data.inventory.sharing.slicesAllocated} of ${data.inventory.sharing.slices} ${data.inventory.sharing.kind} slices`
+                : `${s.unallocatedGpus} free`}
               viz={<Pips total={s.totalGpus} filled={s.allocatedGpus} />} />
 
             {/* Utilisation is magnitude, not severity — high is GOOD for a GPU.
@@ -352,7 +354,9 @@ export function GpuOverviewWidget() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 700, opacity: .75, letterSpacing: .3 }}>FLEET ALLOCATION</span>
                 <span style={{ fontSize: 11.5, color: "var(--text2)" }}>
-                  {data.inventory.totalAllocated} allocated · {data.inventory.totalFree} free
+                  {data.inventory.sharing
+                    ? `${data.inventory.totalAllocated} of ${data.inventory.totalGpus} cards in use · ${data.inventory.totalFree} fully free · ${data.inventory.sharing.slicesAllocated}/${data.inventory.sharing.slices} ${data.inventory.sharing.kind} slices`
+                    : `${data.inventory.totalAllocated} allocated · ${data.inventory.totalFree} free`}
                   {data.inventory.pendingGpus > 0 && ` · ${data.inventory.pendingGpus} requested and waiting`}
                 </span>
               </div>
@@ -425,7 +429,11 @@ export function GpuOverviewWidget() {
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         <span style={{ opacity: .6 }}>{c.namespace}/</span>{c.pod}
                       </span>
-                      <span style={{ flexShrink: 0, fontWeight: 700, color: "#22c55e" }}>{c.gpus} GPU</span>
+                      <span style={{ flexShrink: 0, fontWeight: 700, color: "#22c55e" }} title={data.inventory.sharing ? `${c.gpus} ${data.inventory.sharing.kind} slice(s) of a shared card` : undefined}>
+                        {data.inventory.sharing
+                          ? `${c.gpus} slice${c.gpus === 1 ? "" : "s"}${c.memMiB ? ` · ${Math.round(c.memMiB / 1024)} GiB` : ""}`
+                          : `${c.gpus} GPU`}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -478,9 +486,13 @@ export function GpuOverviewWidget() {
                           {n.ready && !n.schedulable && <span style={{ color: "#fbbf24", marginLeft: 6 }}>cordoned</span>}
                         </td>
                         <td style={{ padding: "5px 10px" }}>{n.product}</td>
-                        <td style={{ padding: "5px 10px" }}>{n.capacity}</td>
                         <td style={{ padding: "5px 10px" }}>
-                          {n.allocatedGpus}<span style={{ opacity: .5 }}> / {n.allocatable}</span>
+                          {n.capacity}
+                          {n.sharing && <div style={{ fontSize: 10.5, opacity: .6 }}>{n.sharing.slices} {n.sharing.kind} slices</div>}
+                        </td>
+                        <td style={{ padding: "5px 10px" }}>
+                          {n.allocatedGpus}<span style={{ opacity: .5 }}> / {n.capacity}{n.sharing ? " cards" : ""}</span>
+                          {n.sharing && <div style={{ fontSize: 10.5, opacity: .6 }}>{n.sharing.slicesAllocated}/{n.sharing.slices} slices</div>}
                         </td>
                         <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
                           {n.memoryMiBPerGpu ? `${Math.round(n.memoryMiBPerGpu / 1024)} GiB` : "—"}
@@ -489,7 +501,7 @@ export function GpuOverviewWidget() {
                         <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
                           {n.migProfiles
                             ? Object.entries(n.migProfiles).map(([k, v]) => `${v}×${k}`).join(", ")
-                            : n.migCapable ? (n.migStrategy || "capable") : "—"}
+                            : n.migCapable ? (n.migConfig && n.migConfig !== "all-disabled" ? n.migConfig : "off (capable)") : "—"}
                         </td>
                       </tr>
                     ))}
@@ -499,7 +511,7 @@ export function GpuOverviewWidget() {
               {data.inventory.consumers?.length > 0 && (
                 <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, color: "var(--text2)" }}>
                   <strong style={{ opacity: .8 }}>Holding GPUs:</strong>{" "}
-                  {data.inventory.consumers.slice(0, 6).map((c) => `${c.namespace}/${c.pod} (${c.gpus})`).join(" · ")}
+                  {data.inventory.consumers.slice(0, 6).map((c) => `${c.namespace}/${c.pod} (${data.inventory.sharing ? `${c.gpus} slice${c.memMiB ? `, ${Math.round(c.memMiB / 1024)} GiB` : ""}` : c.gpus})`).join(" · ")}
                   {data.inventory.consumerCount > 6 && ` · +${data.inventory.consumerCount - 6} more`}
                 </div>
               )}
@@ -615,7 +627,9 @@ export function GpuOverviewWidget() {
                           {g.eccDbe > 0 ? "ECC" : `XID ${g.xidError}`}
                         </span>
                       )}
-                      {idle ? <span style={{ color: "#f59e0b", fontWeight: 600 }}>idle</span>
+                      {g.sharedBy?.length
+                        ? <span title={g.sharedBy.map((x) => `${x.namespace}/${x.pod}`).join("\n")}>{g.sharedBy.length} pod{g.sharedBy.length === 1 ? "" : "s"}</span>
+                        : idle ? <span style={{ color: "#f59e0b", fontWeight: 600 }}>idle</span>
                         : !alloc && <span style={{ opacity: .7 }}>free</span>}
                     </div>
                   </div>

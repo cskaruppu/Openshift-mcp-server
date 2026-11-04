@@ -70,6 +70,20 @@ function gpuStatus({ tempC, xid, eccDbe }) {
  *
  * Detail comes from the labels GPU Feature Discovery writes onto each node.
  */
+/** HAMi's node register: one entry per physical card, "GPU-uuid,splits,MiB,cores,type,numa,healthy:" … */
+export function parseHamiRegister(v) {
+  if (!v) return [];
+  // Newer HAMi writes JSON, older a colon-separated list.
+  try { const j = JSON.parse(v); if (Array.isArray(j)) return j.map((d) => ({ uuid: d.id || d.ID, splits: Number(d.count || d.Count) || null, mib: Number(d.devmem || d.Devmem) || null })).filter((d) => d.uuid); } catch { /* not JSON */ }
+  return String(v).split(":").map((e) => e.split(",")).filter((p) => /^GPU-/.test(p[0] || "")).map((p) => ({ uuid: p[0], splits: Number(p[1]) || null, mib: Number(p[2]) || null }));
+}
+/** HAMi's pod record: "GPU-uuid,NVIDIA,MiB,cores:" per device, ";" per container. */
+export function parseHamiAllocation(v) {
+  const out = [];
+  for (const m of String(v || "").matchAll(/(GPU-[0-9a-fA-F-]+),[^,]*,(\d+),(\d+)/g)) out.push({ uuid: m[1], mib: Number(m[2]) });
+  return out;
+}
+
 export async function getGpuInventory() {
   let nodeList;
   try {
@@ -87,14 +101,25 @@ export async function getGpuInventory() {
     if (!resKey) continue;
 
     const L = n.metadata?.labels || {};
+    const A = n.metadata?.annotations || {};
     const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
     const memMiB = num(L["nvidia.com/gpu.memory"]);
+    // GPU sharing makes nvidia.com/gpu count SLICES, not cards: HAMi advertises
+    // cards × split count, NVIDIA time-slicing cards × replicas. The physical
+    // count comes from GPU Feature Discovery (nvidia.com/gpu.count) or HAMi's
+    // own device register; the advertised number is kept as slices.
+    const advertised = num(cap[resKey]) || 0;
+    const hamiCards = parseHamiRegister(A["hami.io/node-nvidia-register"]);
+    const physical = hamiCards.length || num(L["nvidia.com/gpu.count"]) || advertised;
+    const shared = physical > 0 && advertised > physical;
+    const perCard = shared ? Math.round(advertised / physical) : 1;
     nodes.push({
       name: n.metadata?.name,
       vendor: resKey.split(".")[0],
       resource: resKey,
-      capacity: num(cap[resKey]) || 0,
-      allocatable: num(alloc[resKey]) || 0,
+      capacity: physical,
+      allocatable: shared ? Math.floor((num(alloc[resKey]) || 0) / perCard) : (num(alloc[resKey]) || 0),
+      sharing: shared ? { kind: hamiCards.length ? "HAMi" : (L["nvidia.com/gpu.sharing-strategy"] || "time-slicing"), slicesPerGpu: perCard, slices: advertised, cardUuids: hamiCards.map((c) => c.uuid) } : null,
       product: L["nvidia.com/gpu.product"] || L["amd.com/gpu.product"] || "GPU",
       memoryMiBPerGpu: memMiB,
       driverVersion: L["nvidia.com/cuda.driver-version.full"]
@@ -106,6 +131,9 @@ export async function getGpuInventory() {
       machine: L["nvidia.com/gpu.machine"] || null,
       migCapable: L["nvidia.com/mig.capable"] === "true",
       migStrategy: L["nvidia.com/mig.strategy"] || null,
+      // "single" is the operator's default strategy even with MIG off; the
+      // config label says whether any card is actually partitioned.
+      migConfig: L["nvidia.com/mig.config"] || null,
       computeCapability: L["nvidia.com/gpu.compute.major"]
         ? `${L["nvidia.com/gpu.compute.major"]}.${L["nvidia.com/gpu.compute.minor"] || 0}` : null,
       ready: (n.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True"),
@@ -129,16 +157,31 @@ export async function getGpuInventory() {
       }
       if (want <= 0) continue;
       const node = pod.spec?.nodeName || "unknown";
-      consumers.push({ namespace: pod.metadata?.namespace, pod: pod.metadata?.name, node, gpus: want });
+      const hami = parseHamiAllocation(pod.metadata?.annotations?.["hami.io/vgpu-devices-allocated"]);
+      let memMiB = hami.reduce((a, x) => a + x.mib, 0);
+      if (!memMiB) for (const c of pod.spec?.containers || []) memMiB += Number(c.resources?.limits?.["nvidia.com/gpumem"] || 0);
+      consumers.push({ namespace: pod.metadata?.namespace, pod: pod.metadata?.name, node, gpus: want, memMiB: memMiB || null, cards: [...new Set(hami.map((x) => x.uuid))] });
       perNode.set(node, (perNode.get(node) || 0) + want);
     }
   } catch { /* pod read is best-effort — inventory still stands */ }
 
-  let totalGpus = 0, totalAllocated = 0;
+  let totalGpus = 0, totalAllocated = 0, totalSlices = 0, slicesAllocated = 0, shared = false;
   const models = {};
   for (const n of nodes) {
     totalGpus += n.capacity;
-    n.allocatedGpus = perNode.get(n.name) || 0;
+    const asked = perNode.get(n.name) || 0;
+    if (n.sharing) {
+      // Cards in use: those holding at least one slice (HAMi says which);
+      // without HAMi's record, at least ceil(slices / slices per card).
+      const mine = consumers.filter((c) => c.node === n.name);
+      const uuids = new Set(mine.flatMap((c) => c.cards));
+      n.allocatedGpus = uuids.size || Math.min(n.capacity, Math.ceil(asked / n.sharing.slicesPerGpu));
+      n.cardsKnown = uuids.size > 0 || asked === 0;
+      n.sharing.slicesAllocated = asked;
+      totalSlices += n.sharing.slices; slicesAllocated += asked; shared = true;
+    } else {
+      n.allocatedGpus = asked;
+    }
     n.freeGpus = Math.max(0, n.allocatable - n.allocatedGpus);
     totalAllocated += n.allocatedGpus;
     models[n.product] = (models[n.product] || 0) + n.capacity;
@@ -193,6 +236,7 @@ export async function getGpuInventory() {
 
   return {
     nodes, totalGpus, totalAllocated, totalFree, models,
+    sharing: shared ? { kind: nodes.find((n) => n.sharing)?.sharing.kind, slices: totalSlices, slicesAllocated } : null,
     consumers: consumers.slice(0, 25),
     consumerCount: consumers.length,
     pending: pending.slice(0, 25),
@@ -554,6 +598,14 @@ export async function getGpuOverview() {
   const iXid = index(xid), iSbe = index(eccSbe), iDbe = index(eccDbe);
 
   const gpus = [];
+  // HAMi slices per card (pod record → card UUID): a shared card is in use when
+  // any slice of it is, even though DCGM attributes it to no single pod.
+  const hamiByUuid = new Map();
+  for (const c of inv.consumers || []) for (const u of c.cards || []) {
+    const list = hamiByUuid.get(u) || [];
+    list.push({ namespace: c.namespace, pod: c.pod });
+    hamiByUuid.set(u, list);
+  }
   for (const s of util) {
     const m = s.metric || {};
     const key = gpuKey(m);
@@ -601,7 +653,8 @@ export async function getGpuOverview() {
       pod,
       namespace,
       container,
-      allocated: !!pod,
+      allocated: !!pod || hamiByUuid.has(m.UUID || m.uuid || ""),
+      sharedBy: hamiByUuid.get(m.UUID || m.uuid || "") || null,
       status: gpuStatus({ tempC, xid: xidErr, eccDbe }),
     });
   }
