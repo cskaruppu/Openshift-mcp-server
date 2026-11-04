@@ -2183,7 +2183,7 @@ async function startSSE() {
       });
       await FL.restoreFleet();
       // AI traffic, guardrail events, session, trend lines: back as they were before the restart.
-      for (const m of ["router", "command-center", "factory", "scenario", "vm-batch", "catalogue"]) await import(`./services/private-ai/${m}.js`);
+      for (const m of ["router", "command-center", "factory", "scenario", "vm-batch", "catalogue", "autosleep"]) await import(`./services/private-ai/${m}.js`);
       const PST = await import("./services/private-ai/persist.js");
       const rs = await PST.restore();
       console.log(rs.restored ? `[private-ai] Restored AI traffic and Factory state from ${rs.storage} (saved ${rs.savedAt})` : `[private-ai] No saved Factory state restored${rs.reason ? ` (${rs.reason})` : ""}`);
@@ -2222,6 +2222,24 @@ async function startSSE() {
         remediations: async (cluster) => (await import("./services/remediation/workflow.js")).list({ cluster }),
         clusterAccess: async (c) => (PS.getClusterAccess(c) || hasCredentials(c) ? "direct" : hasActiveChannel(c) ? "agent" : hasSpoke(c) ? "spoke" : "none"),
       });
+      // Auto-sleep: stop quiet models, wake them when a request needs them (control plane only).
+      const AS = await import("./services/private-ai/autosleep.js");
+      const modelsNs = () => process.env.PRIVATE_AI_MODELS_NAMESPACE || "openshift-mcp";
+      AS.configureAutoSleep({
+        models: () => RT.models(), health: (m) => RT.checkHealth(m, { force: true }),
+        running: (cluster, name) => privateAiRun(cluster, async () => {
+          const i = await ocpFetch(`/apis/serving.kserve.io/v1beta1/namespaces/${modelsNs()}/inferenceservices/${name}`);
+          return { stopped: i?.metadata?.annotations?.["serving.kserve.io/stop"] === "true", ready: (i?.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True") };
+        }),
+        setRunning: (cluster, name, run) => FY.setModelRunning({ cluster, name, run }),
+        preferred: () => PS.effectiveSettings().cluster,
+        audit: (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: "auto-sleep", source: "command-center" }).catch(() => {}),
+      });
+      RT.setSleepHooks({ noteUse: AS.noteUse, wakeFor: AS.wakeFor });
+      if ((process.env.MCP_MODE || "hub").toLowerCase() !== "spoke") {
+        const t = setInterval(() => { AS.tick().catch((e) => console.error("[auto-sleep]", e.message)); }, Number(process.env.PRIVATE_AI_AUTOSLEEP_TICK_MS) || 60_000);
+        if (t.unref) t.unref();
+      }
     } catch (e) { console.error("[command-center] not configured:", e.message); }
     captureCapacitySnapshot().catch(() => {});
     setInterval(() => captureCapacitySnapshot().catch(() => {}), 3600000);
@@ -9375,6 +9393,10 @@ spec:
           const PST = await import("./services/private-ai/persist.js");
           return sendJson(res, 200, { ...R.usage(), pricePerMTok: price, requests: R.trafficLog(300).map(({ _counted, ...d }) => d), persist: PST.persistStatus(), you: { canManage: checkPermission(req, "manage") } });
         }
+        if (req.method === "GET" && url.pathname === "/api/command-center/autosleep") {
+          const AS = await import("./services/private-ai/autosleep.js");
+          return sendJson(res, 200, { ...AS.status(), you: { canManage: checkPermission(req, "manage") } });
+        }
         if (req.method === "GET" && url.pathname === "/api/command-center/fleet") {
           if (!CC.commandCenterEnabled()) return sendJson(res, 404, { error: "The Private AI Factory is switched off (Settings → Private AI)" });
           const FY = await import("./services/private-ai/factory.js");
@@ -9441,6 +9463,19 @@ spec:
             }
             const out = await CAT.deployModel({ cluster, id: String(body.id || ""), node: typeof body.node === "string" ? body.node : null, actor, since: CC.sessionSince() });
             audit(`Model ${out.id} deployment started on ${cluster} (${String(out.node).split(".")[0]})`, out);
+            return sendJson(res, 200, out);
+          }
+          case "/api/command-center/autosleep":
+          case "/api/command-center/autosleep/wake": {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Auto-sleep needs the Admin role" });
+            const AS = await import("./services/private-ai/autosleep.js");
+            if (url.pathname.endsWith("/wake")) {
+              const w = await AS.wakeNow(String(body.cluster || cluster), String(body.model || ""));
+              audit(`Auto-sleep: ${body.model} started by hand`, { model: body.model });
+              return sendJson(res, 200, w);
+            }
+            const out = AS.setPolicy({ cluster: body.cluster || null, model: String(body.model || ""), enabled: body.enabled, idleMin: body.idleMin, alwaysOn: body.alwaysOn, keepAwake: body.keepAwake }, actor);
+            audit(`Auto-sleep for ${out.model}: ${out.policy.alwaysOn ? "always on" : out.policy.enabled ? `sleeps after ${out.policy.idleMin} min idle` : "off"}`, out);
             return sendJson(res, 200, out);
           }
           case "/api/command-center/usage/reset": {

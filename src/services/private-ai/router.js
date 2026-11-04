@@ -35,6 +35,9 @@ const DEFAULT_MODEL = { large: "gpt-oss-120b", small: "llama-3-1-8b", vision: "q
 // Set at startup; tests and single-cluster setups use the environment only.
 let _fleet = { models: () => [], mode: () => "preferred", preferred: () => null };
 export function setFleetProvider(p) { _fleet = { ..._fleet, ...p }; }
+// Auto-sleep (autosleep.js): told of every answer, asked to wake a sleeping model.
+let _sleep = { noteUse: () => {}, wakeFor: () => null };
+export function setSleepHooks(h) { _sleep = { ..._sleep, ...h }; }
 
 // Requests running per endpoint, as last read from each model's /metrics (factory.js).
 const _load = new Map();
@@ -309,6 +312,14 @@ export async function route(o, messages, { useCase = null, conversationId = null
     if (chosen) break;
   }
 
+  // The model this request wanted is not answering: if auto-sleep put it to
+  // sleep, start it now; this request is answered by the fallback meanwhile.
+  let waking = null;
+  if (!chosen || (firstPick && chosen.url !== firstPick.url) || (!firstPick && chosen.role !== d.role)) {
+    try { waking = _sleep.wakeFor(d.role, firstPick?.cluster || null); } catch { waking = null; }
+    if (waking) fallbackNote = `${waking.model} is waking from auto-sleep${waking.lastWakeSeconds ? ` (about ${Math.max(1, Math.round(waking.lastWakeSeconds / 60))} min)` : ""}${chosen ? `, answered by ${chosen.model} meanwhile` : ""}`;
+  }
+
   const cloud = process.env.PRIVATE_AI_CLOUD_PROVIDER;
   const decision = {
     id: randomBytes(6).toString("hex"), at: new Date().toISOString(), question: preview([...messages].reverse().find((m) => m.role === "user")?.content || useCase || ""),
@@ -330,6 +341,7 @@ export async function route(o, messages, { useCase = null, conversationId = null
   } else {
     decision.ok = false; decision.reason = d.sensitive.length ? `${d.reason} · sensitive (${d.sensitive.join(", ")}), cloud not allowed` : `${d.reason} · no on-prem model healthy`;
     record(decision);
+    if (waking) throw Object.assign(new Error(`${waking.model} was asleep to save GPU memory and is starting now${waking.lastWakeSeconds ? ` (last time it took about ${Math.max(1, Math.round(waking.lastWakeSeconds / 60))} min)` : ""}. Ask again in a moment.`), { status: 503, waking: waking.model });
     throw Object.assign(new Error(`No private AI model is available to answer${d.sensitive.length ? " (request contains sensitive data, so it was not sent to a cloud model)" : ""}.`), { status: 503 });
   }
   record(decision);
@@ -338,6 +350,7 @@ export async function route(o, messages, { useCase = null, conversationId = null
 }
 
 function record(decision) {
+  try { _sleep.noteUse(decision); } catch { /* never block the log */ }
   _log.push(decision);
   if (_log.length > MAX_LOG) _log.shift();
   _counts.total++;

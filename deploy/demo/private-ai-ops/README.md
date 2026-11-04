@@ -166,3 +166,24 @@ The reason is shown under **Down** in Factory → Model performance:
 | `getaddrinfo ENOTFOUND` | The hub cannot resolve `*.apps.<gpu cluster>` | `LAN_HOSTS` in `deploy/dashboard/manifests/configmap.yaml` (kept across redeploys) |
 | `HTTP 503 · not ready in OpenShift AI` | The model's pods are starting, restarting or failing | `oc -n openshift-mcp get pods` on the GPU cluster |
 | `HTTP 503 · Route reaches no pod` | The Route names a port the pods do not have (OpenShift AI recreated the predictor Service, or an old Route used port 80) | Repaired automatically within two minutes; needs `patch` on routes: re-apply `gpu-cluster-access.yaml` once. Or run `enable.sh` again, or Infrastructure → Discover models |
+
+## Auto-sleep (Private AI Factory → Models)
+
+Per model, an Admin can turn on **Auto-sleep**: after 10 min to 4 h without a
+request (from the AI router's record), the model is stopped in OpenShift AI
+(`serving.kserve.io/stop: "true"`, as the Stop button does; nothing deleted)
+and its GPU memory is released.
+
+- **Wake on demand:** a request that needs a sleeping model starts it at once;
+  the request is answered by the next healthy model meanwhile (the answer's
+  detail says so), or, if none can answer, the user is told the model is
+  starting. The time each wake takes is shown.
+- **Keep awake:** days and hours (in the browser's time zone) when the model
+  never sleeps; a model asleep when they begin is started then.
+- **Always on:** never put to sleep (suggested for bge-m3, which incident
+  analysis uses).
+
+Checked every minute on the control plane (`PRIVATE_AI_AUTOSLEEP_TICK_MS`).
+Calls that reach a model's Route without the router are not seen, so leave
+auto-sleep off for a model other applications call directly. Every sleep and
+wake is in the audit trail.

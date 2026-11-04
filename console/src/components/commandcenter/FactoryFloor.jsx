@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { AutoSleepLine } from "./AutoSleep";
 
 // Private AI Factory — the parts read from /api/command-center/factory, one view
 // per tab so each fact has one home:
@@ -164,6 +165,14 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null, vie
   const [cmpBusy, setCmpBusy] = useState(false);
   const [detail, setDetail] = useState(null);
   const [tests, setTests] = useState({});   // model → { busy } | test result
+  const [sleep, setSleep] = useState(null);  // auto-sleep status (Models view)
+  const loadSleep = useCallback(async () => {
+    try { const r = await fetch(scoped("/api/command-center/autosleep")); if (r.ok) setSleep(await r.json()); } catch { /* shown as absent */ }
+  }, []);
+  useEffect(() => {
+    if (view !== "models") return undefined;
+    loadSleep(); const t = setInterval(loadSleep, 15000); return () => clearInterval(t);
+  }, [view, loadSleep]);
   const testModel = async (name) => {
     setTests((t) => ({ ...t, [name]: { busy: true } }));
     try { const r = await post("/api/command-center/model/test", { name }); setTests((t) => ({ ...t, [name]: r })); }
@@ -235,6 +244,11 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null, vie
                   {tests[m.model].ok ? `✓ Answered in ${tests[m.model].ms} ms: “${tests[m.model].reply}”` : `✗ ${tests[m.model].error}`}
                 </div>)}
               {m.notConnected && <div className="ff-test muted">{m.error}</div>}
+              {sleep?.models?.[m.model] && (
+                <AutoSleepLine model={m.model} r={sleep.models[m.model]} idleChoices={sleep.idleChoices || [30]} canManage={!!sleep.you?.canManage} busy={busy}
+                  onSave={(body, done) => act$(`sleep-${m.model}`, async () => { await post("/api/command-center/autosleep", body); await loadSleep(); done(); }, "Auto-sleep saved")}
+                  onWake={(model, cluster) => act$(`wake-${model}`, async () => { await post("/api/command-center/autosleep/wake", { model, cluster }); await loadSleep(); }, `${model} starting`)} />
+              )}
               </div>
             ))}
             {!f.models.length && <p className="cc-note">No models connected yet.</p>}

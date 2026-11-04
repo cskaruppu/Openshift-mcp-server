@@ -10345,3 +10345,16 @@ code.new { color: #22a06b; }
 .vgf-filters select, .vgf-filters input { font: 500 0.82rem var(--tcs-font); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--vc-line); background: var(--vc-surface); color: var(--vc-ink); }
 .vgf-filters input { min-width: 220px; }
 .vgf-empty { padding: 40px; text-align: center; color: var(--vc-ink-2); font-family: var(--tcs-font); }
+
+/* Auto-sleep line under each model (components/commandcenter/AutoSleep.jsx). */
+.as-line { margin: 2px 0 8px 18px; display: flex; flex-direction: column; gap: 8px; }
+.as-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 500 0.74rem var(--tcs-font); color: var(--cc-ink2); }
+.as-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ink3); flex-shrink: 0; }
+.as-dot.on { background: var(--cc-ok, #22c55e); } .as-dot.sleep { background: #8b5cf6; } .as-dot.wake { background: #f59e0b; }
+.as-text { flex: 1; min-width: 200px; }
+.as-edit { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--cc-line); background: var(--cc-sub);
+  font: 500 0.78rem var(--tcs-font); color: var(--cc-fg); }
+.as-check, .as-field, .as-day { display: inline-flex; align-items: center; gap: 6px; }
+.as-field select, .as-field input[type="time"] { font: 500 0.78rem var(--tcs-font); padding: 3px 6px; border-radius: 6px; border: 1px solid var(--cc-line); background: var(--cc-card); color: var(--cc-fg); }
+.as-day { gap: 3px; margin-right: 4px; }
+.as-actions { flex-basis: 100%; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
