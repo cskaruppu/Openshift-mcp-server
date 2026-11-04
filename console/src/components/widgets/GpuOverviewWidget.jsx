@@ -149,6 +149,78 @@ function HealthValue({ health }) {
   );
 }
 
+/**
+ * Who holds which card: node → card → pods, with the GPU memory each pod
+ * reserved and how full the card is. With HAMi the pod record names the card;
+ * without sharing (or without HAMi's record) pods are grouped by node.
+ */
+function CardHolders({ inv, gpus }) {
+  const gib = (mib) => `${Math.round((mib || 0) / 1024)} GiB`;
+  const byUuid = new Map(gpus.filter((g) => g.uuid).map((g) => [g.uuid, g]));
+  const nodes = (inv.nodes || []).map((n) => {
+    const pods = inv.consumers.filter((c) => c.node === n.name);
+    const uuids = [...new Set([...(n.sharing?.cardUuids || []), ...pods.flatMap((c) => c.cards || [])])];
+    const cards = uuids.map((u) => {
+      const g = byUuid.get(u);
+      const on = pods.filter((c) => (c.cards || []).includes(u));
+      const total = g?.memTotalMiB || n.memoryMiBPerGpu || null;
+      const reserved = on.reduce((a, c) => a + (c.cards.length > 1 ? (c.memMiB || 0) / c.cards.length : (c.memMiB || 0)), 0);
+      return { uuid: u, label: g ? `${(g.model || "GPU").replace(/^NVIDIA\s+/i, "")} #${g.index ?? "?"}` : `card ${u.slice(4, 10)}`, pods: on, reserved, total, util: g?.utilPct };
+    }).sort((x, y) => y.pods.length - x.pods.length || x.label.localeCompare(y.label));
+    const loose = pods.filter((c) => !(c.cards || []).length);
+    return { name: n.name, cards, loose, count: n.capacity };
+  }).filter((n) => n.cards.length || n.loose.length || n.count);
+  const head = { padding: "6px 11px", fontSize: 11, fontWeight: 700, opacity: .75, borderBottom: "1px solid var(--border)", letterSpacing: .3 };
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", gridColumn: "1 / -1" }}>
+      <div style={head}>WHO HOLDS EACH GPU <span style={{ opacity: .6 }}>({inv.consumerCount} pod{inv.consumerCount === 1 ? "" : "s"}{inv.sharing ? ` · ${inv.sharing.kind} slices` : ""})</span></div>
+      <div style={{ display: "grid", gap: 10, padding: 10, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+        {nodes.flatMap((n) => [
+          ...n.cards.map((c) => (
+            <div key={c.uuid} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px", background: "var(--surface2, var(--card))" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{n.name.split(".")[0]} · {c.label}</span>
+                <span style={{ fontSize: 11, color: c.pods.length ? "#22c55e" : "var(--text2)", fontWeight: 700 }}>
+                  {c.pods.length ? `${c.pods.length} pod${c.pods.length === 1 ? "" : "s"}` : "free"}
+                </span>
+              </div>
+              {c.total && (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ height: 6, borderRadius: 999, background: "color-mix(in srgb, var(--text2) 18%, transparent)", overflow: "hidden" }}>
+                    <div style={{ width: `${Math.min(100, (c.reserved / c.total) * 100)}%`, height: "100%", background: "#22c55e" }} />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "var(--text2)", marginTop: 3 }}>
+                    {gib(c.reserved)} of {gib(c.total)} reserved{c.util != null ? ` · ${c.util}% busy now` : ""}
+                  </div>
+                </div>
+              )}
+              {c.pods.map((p) => (
+                <div key={p.namespace + p.pod} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, marginTop: 5 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={`${p.namespace}/${p.pod}`}>
+                    <span style={{ opacity: .55 }}>{p.namespace}/</span>{p.pod}
+                  </span>
+                  <span style={{ flexShrink: 0, fontWeight: 600 }}>{p.memMiB ? gib(p.memMiB) : `${p.gpus} GPU`}</span>
+                </div>
+              ))}
+            </div>
+          )),
+          ...(n.loose.length ? [(
+            <div key={n.name + "-loose"} style={{ border: "1px solid var(--border)", borderRadius: 9, padding: "9px 11px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700 }}>{n.name.split(".")[0]}</div>
+              {n.loose.map((p) => (
+                <div key={p.namespace + p.pod} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5, marginTop: 5 }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><span style={{ opacity: .55 }}>{p.namespace}/</span>{p.pod}</span>
+                  <span style={{ flexShrink: 0, fontWeight: 600 }}>{p.memMiB ? gib(p.memMiB) : `${p.gpus} GPU`}</span>
+                </div>
+              ))}
+            </div>
+          )] : []),
+        ])}
+      </div>
+    </div>
+  );
+}
+
 export function GpuOverviewWidget() {
   const cluster = useActiveCluster();
   const setSeed = useChatStore((s) => s.setSeed);
@@ -417,27 +489,7 @@ export function GpuOverviewWidget() {
           {/* Who holds the GPUs, and who is waiting for them */}
           {(data.inventory?.consumers?.length > 0 || data.inventory?.pending?.length > 0) && (
             <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-              {data.inventory.consumers?.length > 0 && (
-                <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "6px 11px", fontSize: 11, fontWeight: 700, opacity: .75,
-                    borderBottom: "1px solid var(--border)", letterSpacing: .3 }}>
-                    RUNNING ON GPUs <span style={{ opacity: .6 }}>({data.inventory.consumerCount})</span>
-                  </div>
-                  {data.inventory.consumers.slice(0, 6).map((c, i) => (
-                    <div key={i} style={{ padding: "5px 11px", fontSize: 11.5, display: "flex",
-                      justifyContent: "space-between", gap: 8, borderTop: i ? "1px solid var(--border)" : "none" }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        <span style={{ opacity: .6 }}>{c.namespace}/</span>{c.pod}
-                      </span>
-                      <span style={{ flexShrink: 0, fontWeight: 700, color: "#22c55e" }} title={data.inventory.sharing ? `${c.gpus} ${data.inventory.sharing.kind} slice(s) of a shared card` : undefined}>
-                        {data.inventory.sharing
-                          ? `${c.gpus} slice${c.gpus === 1 ? "" : "s"}${c.memMiB ? ` · ${Math.round(c.memMiB / 1024)} GiB` : ""}`
-                          : `${c.gpus} GPU`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {data.inventory.consumers?.length > 0 && <CardHolders inv={data.inventory} gpus={gpus} />}
               {data.inventory.pending?.length > 0 && (
                 <div style={{ border: "1px solid color-mix(in srgb, #f59e0b 35%, transparent)", borderRadius: 10, overflow: "hidden" }}>
                   <div style={{ padding: "6px 11px", fontSize: 11, fontWeight: 700, color: "#f59e0b",
@@ -508,13 +560,16 @@ export function GpuOverviewWidget() {
                   </tbody>
                 </table>
               </div>
-              {data.inventory.consumers?.length > 0 && (
-                <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 11.5, color: "var(--text2)" }}>
-                  <strong style={{ opacity: .8 }}>Holding GPUs:</strong>{" "}
-                  {data.inventory.consumers.slice(0, 6).map((c) => `${c.namespace}/${c.pod} (${data.inventory.sharing ? `${c.gpus} slice${c.memMiB ? `, ${Math.round(c.memMiB / 1024)} GiB` : ""}` : c.gpus})`).join(" · ")}
-                  {data.inventory.consumerCount > 6 && ` · +${data.inventory.consumerCount - 6} more`}
-                </div>
-              )}
+            </div>
+          )}
+
+          {/* Shared cards that are quiet: not waste, but the models on them are idle now. */}
+          {s.idleSharedGpus > 0 && (
+            <div style={{ padding: "10px 14px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5,
+              border: "1px solid color-mix(in srgb, var(--accent2) 35%, transparent)", background: "color-mix(in srgb, var(--accent2) 7%, transparent)" }}>
+              <strong style={{ color: "var(--accent2)" }}>{s.idleSharedGpus} shared GPU{s.idleSharedGpus === 1 ? "" : "s"} quiet right now</strong>
+              {" "}— {(s.idleShared || []).reduce((n, x) => n + x.pods.length, 0)} pods hold memory slices on {s.idleSharedGpus === 1 ? "it" : "them"} but nothing is running at this moment
+              (usual for model servers between requests). The unreserved memory on these cards is still available to new workloads.
             </div>
           )}
 

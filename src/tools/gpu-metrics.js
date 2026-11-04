@@ -662,7 +662,8 @@ export async function getGpuOverview() {
   // Aggregate the fleet summary.
   const nodeMap = new Map();
   const modelCounts = {};
-  let sumUtil = 0, maxUtil = 0, allocated = 0, idleAllocated = 0;
+  let sumUtil = 0, maxUtil = 0, allocated = 0, idleAllocated = 0, idleShared = 0;
+  const idleSharedDetail = [];
   let memUsedTot = 0, memTot = 0, maxTemp = 0, powerTot = 0, powerCapTot = 0;
   let tempSum = 0, tempN = 0, smClockSum = 0, smClockN = 0, tensorSum = 0, tensorN = 0;
   let xidCount = 0, eccCount = 0, unhealthy = 0;
@@ -692,7 +693,14 @@ export async function getGpuOverview() {
       // Idle-but-allocated: reserved to a pod yet effectively unused → the
       // clearest GPU cost-waste signal (GPUs are the most expensive resource in
       // the fleet, and a claimed-but-idle card blocks other workloads).
-      if ((g.utilPct == null || g.utilPct < 5) && (g.smActivePct == null || g.smActivePct < 5)) {
+      const quiet = (g.utilPct == null || g.utilPct < 5) && (g.smActivePct == null || g.smActivePct < 5);
+      // A HAMi-shared card is not "reserved and wasted": each pod holds a memory
+      // slice, the rest of the card stays schedulable. Quiet there means the
+      // loaded models are not being asked anything right now.
+      if (quiet && g.sharedBy?.length && !g.pod) {
+        idleShared++;
+        idleSharedDetail.push({ id: g.id, node: g.node, model: g.model, pods: g.sharedBy.map((x) => `${x.namespace}/${x.pod}`), memPct: g.memPct ?? null });
+      } else if (quiet) {
         idleAllocated++;
         waste.push({ id: g.id, node: g.node, model: g.model, pod: g.pod, namespace: g.namespace, utilPct: g.utilPct });
       }
@@ -732,6 +740,8 @@ export async function getGpuOverview() {
       allocatedGpus: inv.totalGpus > 0 ? inv.totalAllocated : allocated,
       unallocatedGpus: inv.totalGpus > 0 ? inv.totalFree : (total - allocated),
       idleAllocatedGpus: inv.totalAllocated > 0 ? idleAllocated : 0,
+      idleSharedGpus: idleShared,
+      idleShared: idleSharedDetail,
       memUsedGiB: Math.round((memUsedTot / 1024) * 10) / 10,
       memTotalGiB: Math.round((memTot / 1024) * 10) / 10,
       memPct: memTot ? Math.round((memUsedTot / memTot) * 100) : null,
