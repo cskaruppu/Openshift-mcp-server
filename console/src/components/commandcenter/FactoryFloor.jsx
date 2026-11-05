@@ -244,8 +244,8 @@ export default function FactoryFloor({ busy, act$, hardware, cluster = null, vie
                   {tests[m.model].ok ? `✓ Answered in ${tests[m.model].ms} ms: “${tests[m.model].reply}”` : `✗ ${tests[m.model].error}`}
                 </div>)}
               {m.notConnected && <div className="ff-test muted">{m.error}</div>}
-              {sleep?.models?.[m.model] && (
-                <AutoSleepLine model={m.model} r={sleep.models[m.model]} idleChoices={sleep.idleChoices || [30]} canManage={!!sleep.you?.canManage} busy={busy}
+              {sleep && (sleep.models?.[m.model] || m.control) && (
+                <AutoSleepLine model={m.model} r={sleep.models?.[m.model] || { cluster: m.cluster || null, policy: null, stopped: !!m.control?.stopped }} idleChoices={sleep.idleChoices || [30]} canManage={!!sleep.you?.canManage} busy={busy}
                   onSave={(body, done) => act$(`sleep-${m.model}`, async () => { await post("/api/command-center/autosleep", body); await loadSleep(); done(); }, "Auto-sleep saved")}
                   onWake={(model, cluster) => act$(`wake-${model}`, async () => { await post("/api/command-center/autosleep/wake", { model, cluster }); await loadSleep(); }, `${model} starting`)} />
               )}

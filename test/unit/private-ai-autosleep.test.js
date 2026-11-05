@@ -89,3 +89,58 @@ test("started by hand while asleep: auto-sleep notices and can sleep it again la
   c.advance(11);
   assert.deepEqual((await AS.tick()).slept, ["llama-3-1-8b"]);
 });
+
+test("a model stopped by hand, with auto-sleep on, is woken when its role is wanted", async () => {
+  AS._resetAutoSleep();
+  const isvc = { "gpt-oss-120b": { stopped: true } };
+  const calls = [];
+  AS.configureAutoSleep({
+    models: () => [{ model: "gpt-oss-120b", role: "large", cluster: "gpu", url: "http://oss", stopped: isvc["gpt-oss-120b"].stopped }],
+    known: () => [], floor: async () => null, needMiB: async () => null,
+    health: async () => ({ ok: false }), running: async (_c, n) => isvc[n], setRunning: async (c, n, run) => { calls.push([n, run]); isvc[n].stopped = !run; },
+    preferred: () => "gpu", audit: () => {}, now: () => Date.parse("2026-11-05T10:00:00Z"),
+  });
+  assert.equal(AS.wakeable("gpu", "gpt-oss-120b"), false, "no policy: the router keeps ignoring it");
+  AS.setPolicy({ model: "gpt-oss-120b", enabled: true, idleMin: 60 });
+  assert.equal(AS.wakeable("gpu", "gpt-oss-120b"), true);
+  assert.equal(AS.status().models["gpt-oss-120b"].asleep.byHand, true);
+  assert.equal(AS.wakeFor("large").model, "gpt-oss-120b");
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(calls, [["gpt-oss-120b", true]]);
+});
+
+test("no room on a card: the quietest model that allows it is put to sleep first", async () => {
+  AS._resetAutoSleep();
+  let now = Date.parse("2026-11-05T02:00:00Z");
+  const isvc = { "gpt-oss-120b": { stopped: true }, "llama-3-1-8b": { stopped: false }, "qwen2-5-vl-7b": { stopped: false }, "bge-m3": { stopped: false } };
+  const calls = [];
+  const card = (uuid, slices) => ({ uuid, memTotalMiB: 95830, freeMiB: 95830 - slices.reduce((a, x) => a + x.mib, 0), slices });
+  AS.configureAutoSleep({
+    models: () => Object.keys(isvc).map((n) => ({ model: n, role: { "gpt-oss-120b": "large", "llama-3-1-8b": "small", "qwen2-5-vl-7b": "vision", "bge-m3": "embed" }[n], cluster: "gpu", url: `http://${n}`, stopped: isvc[n].stopped })),
+    known: () => [],
+    floor: async () => [card("GPU-1", [{ owner: "llama-3-1-8b", mib: 24576 }, { owner: "bge-m3", mib: 6144 }]), card("GPU-2", [{ owner: "qwen2-5-vl-7b", mib: 24576 }, { owner: "other-team", mib: 30000 }])],
+    needMiB: async (_c, n) => (n === "gpt-oss-120b" ? 76000 : 24576),
+    health: async () => ({ ok: false }), running: async (_c, n) => isvc[n], setRunning: async (c, n, run) => { calls.push([n, run]); isvc[n].stopped = !run; },
+    preferred: () => "gpu", audit: () => {}, now: () => now,
+  });
+  AS.setPolicy({ model: "gpt-oss-120b", enabled: true, idleMin: 60 });
+  AS.setPolicy({ model: "llama-3-1-8b", enabled: true, idleMin: 60 });
+  AS.setPolicy({ model: "bge-m3", enabled: true, idleMin: 60, alwaysOn: true });
+  // GPU-1: 65 GiB free + llama 24 GiB = 89 ≥ 76 (bge is always on). GPU-2: qwen has no policy, other-team is never touched.
+  const r = await AS.makeRoom("gpu", "gpt-oss-120b");
+  assert.deepEqual(r, { ok: true, slept: ["llama-3-1-8b"] });
+  assert.equal(AS.status().models["llama-3-1-8b"].asleep.madeRoomFor, "gpt-oss-120b");
+  // Nothing allowed to move: refused with the reason, not started.
+  AS.setPolicy({ model: "llama-3-1-8b", enabled: true, idleMin: 60, alwaysOn: true });
+  isvc["llama-3-1-8b"].stopped = false;
+  AS._resetAutoSleep();
+  AS.setPolicy({ model: "gpt-oss-120b", enabled: true, idleMin: 60 });
+  const r2 = await AS.makeRoom("gpu", "gpt-oss-120b");
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason, /needs 74 GiB .* most free is 64 GiB/);
+  calls.length = 0;
+  AS.wakeFor("large");
+  await new Promise((res) => setTimeout(res, 5));
+  assert.deepEqual(calls, [], "not started when it cannot fit");
+  assert.match(AS.wakeFor("large").blocked, /needs 74 GiB/);
+});

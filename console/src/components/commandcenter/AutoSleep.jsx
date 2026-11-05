@@ -11,7 +11,9 @@ const mins = (s) => (s == null ? null : s < 90 ? `${s} s` : `${Math.round(s / 60
 export function autoSleepSummary(r) {
   if (!r?.policy || (!r.policy.enabled && !r.policy.alwaysOn)) return { tone: "muted", text: "Auto-sleep off" };
   if (r.policy.alwaysOn) return { tone: "muted", text: "Always on: never put to sleep" };
-  if (r.asleep) return { tone: "sleep", text: `Asleep since ${hhmm(r.asleep.at)} (${r.asleep.afterMin} min without a request) · wakes on the next request${r.woke?.lastSeconds || r.woke?.seconds ? `, about ${mins(r.woke.seconds ?? r.woke.lastSeconds)}` : ""}` };
+  if (r.blocked && !(r.woke && Date.parse(r.woke.at) > Date.parse(r.blocked.at))) return { tone: "wake", text: `Could not start at ${hhmm(r.blocked.at)}: ${r.blocked.reason}` };
+  if (r.asleep?.byHand) return { tone: "sleep", text: "Stopped · the router starts it when a request needs it" };
+  if (r.asleep) return { tone: "sleep", text: `Asleep since ${hhmm(r.asleep.at)} (${r.asleep.madeRoomFor ? `to make room for ${r.asleep.madeRoomFor}` : `${r.asleep.afterMin} min without a request`}) · wakes on the next request${r.woke?.lastSeconds || r.woke?.seconds ? `, about ${mins(r.woke.seconds ?? r.woke.lastSeconds)}` : ""}` };
   if (r.woke && !r.woke.readyAt) return { tone: "wake", text: `Waking since ${hhmm(r.woke.at)} (${r.woke.why})` };
   if (r.inKeepAwake) return { tone: "on", text: `Kept awake now (keep-awake hours) · sleeps after ${r.policy.idleMin} min idle outside them` };
   return { tone: "on", text: `Sleeps after ${r.policy.idleMin} min without a request · quiet ${r.quietMin ?? 0} min${r.sleepsInMin != null ? `, sleeps in ${r.sleepsInMin} min` : ""}${r.woke?.seconds ? ` · last wake took ${mins(r.woke.seconds)}` : ""}` };
@@ -36,7 +38,7 @@ export function AutoSleepLine({ model, r, idleChoices, canManage, busy, onSave, 
       <div className="as-row">
         <span className={"as-dot " + sum.tone} aria-hidden="true" />
         <span className="as-text">{sum.text}</span>
-        {r.asleep && canManage && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => onWake(model, r.cluster)}>Wake now</button>}
+        {(r.asleep || r.stopped) && r.policy?.enabled && canManage && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => onWake(model, r.cluster)}>Wake now</button>}
         {canManage && <button className="vc-btn ghost sm" onClick={() => setEdit((v) => !v)}>{edit ? "Close" : "Auto-sleep…"}</button>}
       </div>
       {edit && (

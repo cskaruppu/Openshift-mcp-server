@@ -4,6 +4,7 @@ import { useChatStore } from "../store/chatStore";
 import { clusterUrl } from "../api/client";
 import { showToast } from "../store/toastStore";
 import { ChatMessageBody, computeResponseWidth } from "./ChatTokens";
+import DeeperAnswer from "../components/DeeperAnswer";
 
 const PROVIDER_META = {
   private:   { icon: "PA", color: "#1559b4",  label: "Private AI",        desc: "Auto-routed · your GPUs" },
@@ -774,7 +775,7 @@ export function ChatView() {
                     .then((r) => (r.ok ? r.json() : null))
                     .then((t) => {
                       const route = t?.log?.[0];
-                      if (route) setMsgMeta((prev) => ({ ...prev, [at]: { ...prev[at], route, routeCalls: t.log.length } }));
+                      if (route) setMsgMeta((prev) => ({ ...prev, [at]: { ...prev[at], route, routeCalls: t.log.length, question: msg } }));
                     })
                     .catch(() => {});
                 }
@@ -1181,6 +1182,7 @@ export function ChatView() {
                       {meta.route.sensitive?.length ? <span className="ac-route-sens">sensitive data kept on-prem</span> : null}
                     </div>
                   )}
+                  {meta.route?.waking && <DeeperAnswer waking={meta.route.waking} question={meta.question} busy={busy} onAsk={sendText} />}
 
                   {/* Thinking stages */}
                   {busy && isLastAI && stage && (

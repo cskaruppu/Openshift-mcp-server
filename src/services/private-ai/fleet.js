@@ -67,6 +67,15 @@ export function fleetModels() {
   }
   return out;
 }
+/** Record that a model was stopped or started (Stop / Start, auto-sleep), without a new discovery. */
+export async function markStopped(cluster, model, stopped) {
+  const c = _fleet.clusters[cluster];
+  const m = c?.models?.find((x) => x.model === model);
+  if (!m || m.stopped === !!stopped) return false;
+  m.stopped = !!stopped;
+  await persist();
+  return true;
+}
 export function routingMode() { return _fleet.mode === "least-loaded" ? "least-loaded" : "preferred"; }
 export function preferredCluster() { return _deps.preferred() || null; }
 
@@ -171,7 +180,8 @@ export async function discoverModels(cluster, { actor = "admin", expose = true }
     }
     return out;
   });
-  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url && !m.stopped).map(({ ready: _r, stopped: _s, routeNote: _n, ...m }) => m),
+  // Stopped models are kept, flagged: the router may wake one that has auto-sleep (autosleep.js).
+  _fleet.clusters[cluster] = { ...(_fleet.clusters[cluster] || {}), models: found.filter((m) => m.url).map(({ ready: _r, routeNote: _n, ...m }) => ({ ...m, stopped: !!m.stopped })),
     discoveredAt: new Date().toISOString(), discoveredBy: actor };
   const storage = await persist();
   return { cluster, models: found, storage };

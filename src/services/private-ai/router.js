@@ -36,7 +36,7 @@ const DEFAULT_MODEL = { large: "gpt-oss-120b", small: "llama-3-1-8b", vision: "q
 let _fleet = { models: () => [], mode: () => "preferred", preferred: () => null };
 export function setFleetProvider(p) { _fleet = { ..._fleet, ...p }; }
 // Auto-sleep (autosleep.js): told of every answer, asked to wake a sleeping model.
-let _sleep = { noteUse: () => {}, wakeFor: () => null };
+let _sleep = { noteUse: () => {}, wakeFor: () => null, wakeable: () => false };
 export function setSleepHooks(h) { _sleep = { ..._sleep, ...h }; }
 
 // Requests running per endpoint, as last read from each model's /metrics (factory.js).
@@ -49,9 +49,12 @@ export function models() {
   const seen = new Set(out.map((m) => m.url));
   for (const m of _fleet.models()) {
     if (!m.url || seen.has(m.url) || !ROLES.includes(m.role)) continue;
+    // A stopped model counts only when auto-sleep may wake it: a request that
+    // needs it then starts it, instead of the router never choosing it.
+    if (m.stopped && !_sleep.wakeable(m.cluster, m.model)) continue;
     seen.add(m.url);
     out.push({ role: m.role, label: ROLE_LABEL[m.role] || m.label, url: m.url.replace(/\/+$/, ""), model: m.model, gpu: m.gpu || null,
-      cluster: m.cluster, routing: m.routing !== false, sensitiveOk: m.sensitiveOk !== false, region: m.region || "" });
+      cluster: m.cluster, routing: m.routing !== false, sensitiveOk: m.sensitiveOk !== false, region: m.region || "", ...(m.stopped ? { stopped: true } : {}) });
   }
   return out;
 }
@@ -317,7 +320,8 @@ export async function route(o, messages, { useCase = null, conversationId = null
   let waking = null;
   if (!chosen || (firstPick && chosen.url !== firstPick.url) || (!firstPick && chosen.role !== d.role)) {
     try { waking = _sleep.wakeFor(d.role, firstPick?.cluster || null); } catch { waking = null; }
-    if (waking) fallbackNote = `${waking.model} is waking from auto-sleep${waking.lastWakeSeconds ? ` (about ${Math.max(1, Math.round(waking.lastWakeSeconds / 60))} min)` : ""}${chosen ? `, answered by ${chosen.model} meanwhile` : ""}`;
+    if (waking?.blocked) fallbackNote = `${waking.model} is asleep and cannot start: ${waking.blocked}`;
+    else if (waking) fallbackNote = `${waking.model} is waking from auto-sleep${waking.lastWakeSeconds ? ` (about ${Math.max(1, Math.round(waking.lastWakeSeconds / 60))} min)` : ""}${chosen ? `, answered by ${chosen.model} meanwhile` : ""}`;
   }
 
   const cloud = process.env.PRIVATE_AI_CLOUD_PROVIDER;
@@ -328,6 +332,8 @@ export async function route(o, messages, { useCase = null, conversationId = null
     // For the request detail panel: what the model was given and what it did.
     toolsOffered: Array.isArray(o.tools) ? o.tools.length : 0, images: Array.isArray(o.images) ? o.images.length : 0,
     turns: messages.length, override: d.override || null,
+    // AI Chat offers the better answer when the model this request wanted is up.
+    ...(waking && !waking.blocked && chosen && chosen.model !== waking.model ? { waking: { model: waking.model, role: d.role, lastWakeSeconds: waking.lastWakeSeconds || null } } : {}),
   };
 
   let out;
@@ -341,6 +347,7 @@ export async function route(o, messages, { useCase = null, conversationId = null
   } else {
     decision.ok = false; decision.reason = d.sensitive.length ? `${d.reason} · sensitive (${d.sensitive.join(", ")}), cloud not allowed` : `${d.reason} · no on-prem model healthy`;
     record(decision);
+    if (waking?.blocked) throw Object.assign(new Error(`${waking.model} is asleep and cannot start: ${waking.blocked}.`), { status: 503 });
     if (waking) throw Object.assign(new Error(`${waking.model} was asleep to save GPU memory and is starting now${waking.lastWakeSeconds ? ` (last time it took about ${Math.max(1, Math.round(waking.lastWakeSeconds / 60))} min)` : ""}. Ask again in a moment.`), { status: 503, waking: waking.model });
     throw Object.assign(new Error(`No private AI model is available to answer${d.sensitive.length ? " (request contains sensitive data, so it was not sent to a cloud model)" : ""}.`), { status: 503 });
   }

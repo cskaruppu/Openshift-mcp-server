@@ -2192,13 +2192,13 @@ async function startSSE() {
       RT.setFleetProvider({ models: FL.fleetModels, mode: FL.routingMode, preferred: FL.preferredCluster });
       (await import("./services/llm.js")).setPrivateDefault(() => PS.effectiveSettings().routeChat && RT.models().length > 0);
       EM.setEmbedProvider(() => {
-        const em = FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false);
+        const em = FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false && !m.stopped);
         return em.find((m) => m.cluster === FL.preferredCluster()) || em[0] || null;
       });
       const FY = await import("./services/private-ai/factory.js");
       FY.configureFactory({
         runForCluster: privateAiRun, gpu: gpuCached, clusterKey,
-        fleetEmbeds: () => FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false),
+        fleetEmbeds: () => FL.fleetModels().filter((m) => m.role === "embed" && m.routing !== false && !m.stopped),
         prom: async (q) => (await import("./services/prometheus.js")).promQuery(q),
         promRange: async (q, start, end, step) => (await import("./services/prometheus.js")).promRange(q, start, end, step),
         ocp: { fetch: ocpFetch, patch: ocpPatch },
@@ -2227,15 +2227,23 @@ async function startSSE() {
       const modelsNs = () => process.env.PRIVATE_AI_MODELS_NAMESPACE || "openshift-mcp";
       AS.configureAutoSleep({
         models: () => RT.models(), health: (m) => RT.checkHealth(m, { force: true }),
+        known: () => FL.fleetModels(),
+        // GPU cards with who holds what (HAMi), for "is there room to start this model?"
+        floor: async (cluster) => (await FY.factoryState({ cluster, since: CC.sessionSince() }))?.floor?.nodes?.flatMap((n) => n.cards || []) || null,
+        needMiB: (cluster, name) => privateAiRun(cluster, async () => {
+          const i = await ocpFetch(`/apis/serving.kserve.io/v1beta1/namespaces/${modelsNs()}/inferenceservices/${name}`);
+          const r = i?.spec?.predictor?.model?.resources || i?.spec?.predictor?.resources || {};
+          return Number(r.limits?.["nvidia.com/gpumem"] || r.requests?.["nvidia.com/gpumem"]) || null;
+        }),
         running: (cluster, name) => privateAiRun(cluster, async () => {
           const i = await ocpFetch(`/apis/serving.kserve.io/v1beta1/namespaces/${modelsNs()}/inferenceservices/${name}`);
           return { stopped: i?.metadata?.annotations?.["serving.kserve.io/stop"] === "true", ready: (i?.status?.conditions || []).some((c) => c.type === "Ready" && c.status === "True") };
         }),
-        setRunning: (cluster, name, run) => FY.setModelRunning({ cluster, name, run }),
+        setRunning: async (cluster, name, run) => { const out = await FY.setModelRunning({ cluster, name, run }); await FL.markStopped(cluster, name, !run).catch(() => {}); return out; },
         preferred: () => PS.effectiveSettings().cluster,
         audit: (title, details) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: "auto-sleep", source: "command-center" }).catch(() => {}),
       });
-      RT.setSleepHooks({ noteUse: AS.noteUse, wakeFor: AS.wakeFor });
+      RT.setSleepHooks({ noteUse: AS.noteUse, wakeFor: AS.wakeFor, wakeable: AS.wakeable });
       if ((process.env.MCP_MODE || "hub").toLowerCase() !== "spoke") {
         const t = setInterval(() => { AS.tick().catch((e) => console.error("[auto-sleep]", e.message)); }, Number(process.env.PRIVATE_AI_AUTOSLEEP_TICK_MS) || 60_000);
         if (t.unref) t.unref();
@@ -9475,6 +9483,10 @@ spec:
               return sendJson(res, 200, w);
             }
             const out = AS.setPolicy({ cluster: body.cluster || null, model: String(body.model || ""), enabled: body.enabled, idleMin: body.idleMin, alwaysOn: body.alwaysOn, keepAwake: body.keepAwake }, actor);
+            // A stopped model the fleet has not recorded yet (stopped before discovery kept stopped
+            // models): find it, so the router can wake it.
+            const FLm = await import("./services/private-ai/fleet.js");
+            if (!FLm.fleetModels().some((m) => m.cluster === out.cluster && m.model === out.model)) await FLm.discoverModels(out.cluster, { actor }).catch(() => {});
             audit(`Auto-sleep for ${out.model}: ${out.policy.alwaysOn ? "always on" : out.policy.enabled ? `sleeps after ${out.policy.idleMin} min idle` : "off"}`, out);
             return sendJson(res, 200, out);
           }
@@ -9495,6 +9507,7 @@ spec:
             if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Starting or stopping a model needs the Admin role" });
             const FY = await import("./services/private-ai/factory.js");
             const out = await FY.setModelRunning({ cluster, name: body.name, run: body.run === true });
+            await (await import("./services/private-ai/fleet.js")).markStopped(cluster, out.name, !out.running).catch(() => {});
             audit(`Model ${out.name} ${out.running ? "started" : "stopped"} on ${cluster}`, { model: out.name });
             return sendJson(res, 200, out);
           }

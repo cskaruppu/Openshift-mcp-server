@@ -23,6 +23,9 @@ const MAX_EVENTS = 100;
 
 let _deps = {
   models: () => [],                       // router.models(): { model, role, cluster, url, ... }
+  known: () => [],                        // every model the fleet knows, stopped ones too
+  floor: async () => null,                // (cluster) → GPU cards [{ node, uuid, memTotalMiB, freeMiB, slices: [{ owner, mib }] }]
+  needMiB: async () => null,              // (cluster, model) → GPU memory the model asks for, or null
   health: async () => ({ ok: false }),    // router.checkHealth(model)
   running: async () => null,              // (cluster, name) → { stopped, ready } | null
   setRunning: async () => {},             // (cluster, name, run) → patch serving.kserve.io/stop
@@ -32,9 +35,11 @@ let _deps = {
 };
 export function configureAutoSleep(deps) { _deps = { ..._deps, ...deps }; }
 
-let _st = { policies: {}, sleeping: {}, woke: {}, lastUse: {}, events: [] };
-registerPart("autosleep", { exportState: () => _st, importState: (v) => { _st = { policies: {}, sleeping: {}, woke: {}, lastUse: {}, events: [], ...v }; } });
-export function _resetAutoSleep() { _st = { policies: {}, sleeping: {}, woke: {}, lastUse: {}, events: [] }; }
+const blank = () => ({ policies: {}, sleeping: {}, woke: {}, lastUse: {}, blocked: {}, events: [] });
+let _st = blank();
+registerPart("autosleep", { exportState: () => _st, importState: (v) => { _st = { ...blank(), ...v }; } });
+export function _resetAutoSleep() { _st = blank(); }
+const allModels = () => { const seen = new Set(); return [..._deps.models(), ..._deps.known()].filter((m) => { const k = key(clusterOf(m), m.model); if (seen.has(k)) return false; seen.add(k); return true; }); };
 
 const key = (cluster, model) => `${cluster || "local"}|${model}`;
 const clusterOf = (m) => m?.cluster || _deps.preferred() || "local";
@@ -50,7 +55,7 @@ const DAY = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 /** Validate and store a model's policy. */
 export function setPolicy({ cluster, model, enabled, idleMin, alwaysOn, keepAwake }, actor = "admin") {
   if (!/^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(String(model || ""))) throw Object.assign(new Error("Not a valid model name"), { status: 400 });
-  const m = _deps.models().find((x) => x.model === model && (!cluster || clusterOf(x) === cluster));
+  const m = allModels().find((x) => x.model === model && (!cluster || clusterOf(x) === cluster));
   const c = cluster || clusterOf(m);
   const k = key(c, model);
   const cur = _st.policies[k] || {};
@@ -152,13 +157,60 @@ async function wakeKey(k, why) {
   const [cluster, model] = k.split("|");
   const w = _st.woke[k];
   if (w && !w.readyAt && _deps.now() - Date.parse(w.at) < WAKE_DEBOUNCE_MS) return w;   // already waking
+  const room = await makeRoom(cluster, model);
+  if (!room.ok) {
+    _st.blocked[k] = { at: iso(), reason: room.reason };
+    event("blocked", k, `Not started: ${room.reason}`);
+    changed();
+    throw Object.assign(new Error(room.reason), { status: 409 });
+  }
+  delete _st.blocked[k];
   await _deps.setRunning(cluster, model, true);
   delete _st.sleeping[k];
-  _st.woke[k] = { at: iso(), why, readyAt: null, seconds: null, lastSeconds: w?.seconds ?? w?.lastSeconds ?? null };
-  event("wake", k, `Waking: ${why}`);
-  _deps.audit(`Auto-sleep: ${model} on ${cluster} started (${why})`, { cluster, model });
+  _st.woke[k] = { at: iso(), why, readyAt: null, seconds: null, lastSeconds: w?.seconds ?? w?.lastSeconds ?? null, madeRoom: room.slept.length ? room.slept : undefined };
+  event("wake", k, `Waking: ${why}${room.slept.length ? ` (put ${room.slept.join(", ")} to sleep to make room)` : ""}`);
+  _deps.audit(`Auto-sleep: ${model} on ${cluster} started (${why})${room.slept.length ? `; ${room.slept.join(", ")} put to sleep to make room` : ""}`, { cluster, model });
   changed();
   return _st.woke[k];
+}
+
+const gibs = (mib) => `${Math.round(mib / 1024)} GiB`;
+/**
+ * Is there a card with room for the model? If not, put to sleep the quietest
+ * models that allow it (auto-sleep on, not always on, outside keep-awake hours)
+ * on the one card where that frees enough. Nothing else is ever stopped.
+ */
+export async function makeRoom(cluster, model) {
+  const need = await _deps.needMiB(cluster, model).catch(() => null);
+  if (!need) return { ok: true, slept: [] };                    // size unknown: start and let the scheduler decide
+  const cards = await _deps.floor(cluster).catch(() => null);
+  if (!cards || !cards.length) return { ok: true, slept: [] };  // no GPU picture: same
+  if (cards.some((c) => (c.freeMiB ?? 0) >= need)) return { ok: true, slept: [] };
+  const now = _deps.now();
+  const may = (owner) => {
+    if (owner === model) return false;
+    const k = key(cluster, owner); const p = _st.policies[k];
+    return p && p.enabled && !p.alwaysOn && !inWindow(p.keepAwake, now) && !_st.sleeping[k];
+  };
+  const quiet = (owner) => { const k = key(cluster, owner); const p = _st.policies[k]; return now - idleSince(k, p); };
+  let best = null;
+  for (const c of cards) {
+    const victims = (c.slices || []).filter((sl) => may(sl.owner)).sort((x, y) => quiet(y.owner) - quiet(x.owner));
+    let free = c.freeMiB ?? 0; const take = [];
+    for (const v of victims) { if (free >= need) break; free += v.mib || 0; take.push(v.owner); }
+    if (free >= need && (!best || take.length < best.take.length)) best = { card: c, take };
+  }
+  if (!best) {
+    const most = Math.max(0, ...cards.map((c) => c.freeMiB ?? 0));
+    return { ok: false, slept: [], reason: `it needs ${gibs(need)} of GPU memory on one card, the most free is ${gibs(most)}, and the models holding the rest do not allow auto-sleep` };
+  }
+  for (const owner of best.take) {
+    const vk = key(cluster, owner);
+    await _deps.setRunning(cluster, owner, false);
+    _st.sleeping[vk] = { at: iso(), afterMin: Math.round(quiet(owner) / 60_000), role: _st.policies[vk]?.role, madeRoomFor: model };
+    event("sleep", vk, `Asleep to make room for ${model} (${gibs(need)})`);
+  }
+  return { ok: true, slept: best.take };
 }
 
 /**
@@ -167,13 +219,25 @@ async function wakeKey(k, why) {
  * last wake took.
  */
 export function wakeFor(role, cluster = null) {
-  const hit = Object.entries(_st.sleeping).find(([k, s]) => s.role === role && (!cluster || k.startsWith(`${cluster}|`)))
-    || Object.entries(_st.woke).find(([k, w]) => !w.readyAt && _st.policies[k]?.role === role && (!cluster || k.startsWith(`${cluster}|`)));
+  const inCluster = (k) => !cluster || k.startsWith(`${cluster}|`);
+  // Stopped by hand, with auto-sleep on: as good as asleep.
+  const stoppedByHand = _deps.models().filter((m) => m.stopped && m.role === role).map((m) => key(clusterOf(m), m.model)).filter((k) => _st.policies[k]?.enabled && inCluster(k));
+  const hit = Object.entries(_st.sleeping).find(([k, s]) => s.role === role && inCluster(k))
+    || Object.entries(_st.woke).find(([k, w]) => !w.readyAt && _st.policies[k]?.role === role && inCluster(k))
+    || (stoppedByHand[0] ? [stoppedByHand[0]] : null);
   if (!hit) return null;
   const [k] = hit;
+  const b = _st.blocked[k];
+  if (b && _deps.now() - Date.parse(b.at) < WAKE_DEBOUNCE_MS) return { model: k.split("|")[1], cluster: k.split("|")[0], blocked: b.reason };
   wakeKey(k, "a request needed it").catch((e) => event("error", k, `Could not start: ${e.message}`));
   const w = _st.woke[k];
   return { model: k.split("|")[1], cluster: k.split("|")[0], lastWakeSeconds: w?.seconds ?? w?.lastSeconds ?? null };
+}
+
+/** May the router count this stopped model as available (it will be woken when chosen)? */
+export function wakeable(cluster, model) {
+  const p = _st.policies[key(cluster || _deps.preferred() || "local", model)];
+  return !!(p && p.enabled && !p.alwaysOn);
 }
 
 /** Wake by hand (the Models tab). */
@@ -183,12 +247,13 @@ export async function wakeNow(cluster, model) { return wakeKey(key(cluster, mode
 export function status() {
   const now = _deps.now();
   const rows = {};
-  for (const m of _deps.models()) {
+  for (const m of allModels()) {
     const k = key(clusterOf(m), m.model);
     const p = _st.policies[k] || null;
     const since = p ? idleSince(k, p) : (_st.lastUse[k] ? Date.parse(_st.lastUse[k]) : null);
     rows[m.model] = {
-      cluster: clusterOf(m), policy: p, asleep: _st.sleeping[k] || null, woke: _st.woke[k] || null,
+      cluster: clusterOf(m), policy: p, asleep: _st.sleeping[k] || (m.stopped && p?.enabled ? { at: null, afterMin: null, byHand: true } : null), woke: _st.woke[k] || null,
+      blocked: _st.blocked[k] || null, stopped: !!m.stopped,
       lastUse: _st.lastUse[k] || null, quietMin: since != null ? Math.floor((now - since) / 60_000) : null,
       inKeepAwake: p ? inWindow(p.keepAwake, now) : false,
       sleepsInMin: p?.enabled && !p.alwaysOn && !_st.sleeping[k] && !inWindow(p.keepAwake, now) ? Math.max(0, p.idleMin - Math.floor((now - since) / 60_000)) : null,

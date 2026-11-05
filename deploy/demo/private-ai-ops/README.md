@@ -187,3 +187,22 @@ Checked every minute on the control plane (`PRIVATE_AI_AUTOSLEEP_TICK_MS`).
 Calls that reach a model's Route without the router are not seen, so leave
 auto-sleep off for a model other applications call directly. Every sleep and
 wake is in the audit trail.
+
+### The router wakes the right model
+
+- **Stopped models with auto-sleep count as available.** A model stopped by
+  hand (or asleep) that has auto-sleep on is still a choice for the router: a
+  question that needs it (for example a root-cause question for the reasoning
+  model) starts it. Without an auto-sleep setting a stopped model is ignored,
+  as before.
+- **The better answer follows.** In AI Chat, an answer given by a stand-in
+  model while the right one wakes says so under the answer; when the right
+  model is up, the same question is asked again with `@deep` / `@fast` /
+  `@code` and its answer appears below. (Screenshots are not re-sent.)
+- **Room on the GPU first.** Before starting a model, auto-sleep checks the
+  HAMi free memory per card against the model's `nvidia.com/gpumem`. If no
+  card has room, it puts to sleep the quietest models that allow it (auto-sleep
+  on, not always on, outside keep-awake hours) on the one card where that frees
+  enough. Models without auto-sleep and other teams' workloads are never
+  stopped; if that is not enough, the model is not started and the reason is
+  shown in AI Chat and the Models tab.
