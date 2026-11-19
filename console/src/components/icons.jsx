@@ -108,3 +108,14 @@ export function IconShield({ size = 17 }) {
     </svg>
   );
 }
+
+/** Ops Twin: a rack and its mirror image, joined. */
+export function IconTwin({ size = 17 }) {
+  return (
+    <svg {...base(size)}>
+      <rect x="3" y="4" width="7" height="16" rx="1.4" />
+      <rect x="14" y="4" width="7" height="16" rx="1.4" strokeDasharray="2.2 1.8" />
+      <path d="M5.3 8h2.4M5.3 12h2.4M16.3 8h2.4M16.3 12h2.4M10 16h4" />
+    </svg>
+  );
+}

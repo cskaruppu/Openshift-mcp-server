@@ -7,6 +7,7 @@
  */
 
 import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
+import { AGENT_TOOLS as OPS_TWIN_TOOLS } from "../tools/ops-twin-tools.js";
 
 const MAX_ITEMS = 40;
 
@@ -255,6 +256,8 @@ export const TOOLS = [
       return promQuery(query);
     },
   },
+  // Ops Twin what-ifs (read-only simulation): tools/ops-twin-tools.js.
+  ...OPS_TWIN_TOOLS,
 ];
 
 /**

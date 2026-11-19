@@ -102,6 +102,7 @@ import { buildGateRecord, verifyGateRecord, gateCoversManifests } from "./servic
 import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnalysisAPI, handleApiMigrationAPI } from "./services/chat-api.js";
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
 import { getGpuOverview, getGpuHistory, registerGpuTools } from "./tools/gpu-metrics.js";
+import { registerOpsTwinTools } from "./tools/ops-twin-tools.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -294,6 +295,7 @@ function createMcpServer() {
     ["registerTektonTools",         registerTektonTools],
     ["registerKubeVirtTools",       registerKubeVirtTools],
     ["registerGpuTools",            registerGpuTools],
+    ["registerOpsTwinTools",        registerOpsTwinTools],
     ["registerNetworkTools",        registerNetworkTools],
     ["registerGenericTools",        registerGenericTools],
     ["registerMustGatherTools",     registerMustGatherTools],
@@ -2160,6 +2162,19 @@ async function startSSE() {
       const t0 = setTimeout(tick, 30_000); if (t0.unref) t0.unref();
       const t = setInterval(tick, Number(process.env.VM_GUARD_WATCH_MS) || 300_000); if (t.unref) t.unref();
     } catch (e) { console.error("[vm-guard] not started:", e.message); }
+    // Ops Twin: what-if simulations on a live copy of this cluster (read-only).
+    // DCGM power and temperature per card are optional enrichment, bounded so a
+    // slow Prometheus never holds up a simulation.
+    try {
+      const OT = await import("./services/ops-twin.js");
+      OT.configureOpsTwin({
+        ocp: { fetch: ocpFetch },
+        gpuTelemetry: async () => {
+          const o = await Promise.race([getGpuOverview(), new Promise((r) => { const t = setTimeout(() => r(null), 4000); if (t.unref) t.unref(); })]);
+          return (o?.gpus || []).map((g) => ({ uuid: g.uuid, powerW: g.powerW ?? null, tempC: g.tempC ?? null }));
+        },
+      });
+    } catch (e) { console.error("[ops-twin] not started:", e.message); }
     try {
       const SC = await import("./services/private-ai/scenario.js");
       const CC = await import("./services/private-ai/command-center.js");
@@ -2643,6 +2658,8 @@ async function startSSE() {
         p.startsWith("/api/command-center") ||
         // VM Guard tickets are raised from the hub, where ServiceNow is configured.
         p === "/api/vm-guard/ticket" ||
+        // Ops Twin change requests too: the report travels with the request.
+        p === "/api/ops-twin/change" ||
         p.startsWith("/api/auth");
 
       // Spoke proxy: forward live-data API requests to the spoke's MCP server.
@@ -9627,6 +9644,58 @@ spec:
           case "/api/vm-guard/scan": { const out = await VG.requestScan(vgCluster, ns, name === "*" ? "*" : name); audit(name === "*" ? "VM Guard: disk scan of every VM requested" : `VM ${ns}/${name}: disk scan requested`, out); return sendJson(res, 200, out); }
           default: return sendJson(res, 404, { error: "Unknown VM Guard action" });
         }
+      } catch (e) {
+        return sendJson(res, e.status || 500, { error: e.message });
+      }
+    }
+
+    // Ops Twin (services/ops-twin.js): what-if simulations on a live copy of a
+    // cluster. Read-only. A spoke cluster's request is answered by its own agent.
+    if (url.pathname === "/api/ops-twin" || url.pathname.startsWith("/api/ops-twin/")) {
+      const OT = await import("./services/ops-twin.js");
+      const otCluster = MCP_MODE === "spoke" ? "local" : (url.searchParams.get("cluster") || "local");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      try {
+        if (req.method === "GET" && url.pathname === "/api/ops-twin") {
+          const twin = await OT.snapshot(otCluster, { fresh: url.searchParams.get("refresh") === "true" });
+          return sendJson(res, 200, { ...OT.overview(twin), scenarios: OT.SCENARIOS, history: OT.history(otCluster), you: { canRaise: checkPermission(req, "write") } });
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (url.pathname === "/api/ops-twin/change") {
+          // A ServiceNow change request carrying the simulation, raised from the hub.
+          if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "Raising change requests needs the Operator or Admin role" });
+          if (enforceRateLimit(req, res, { burst: 5, refillPerSec: 0.1 })) return;
+          const b = await readJsonBody(req).catch(() => ({}));
+          const tc = String(b.cluster || "local").slice(0, 128);
+          const reportText = String(b.report || "").slice(0, 20000);
+          const subject = String(b.subject || "").slice(0, 160), title = String(b.verdict || "").slice(0, 80);
+          if (!reportText || !subject) return sendJson(res, 400, { error: "Run a simulation first" });
+          const level = String(b.level || "warn");
+          const SN = await import("./utils/servicenow-client.js");
+          const cr = await SN.createChangeRequest({
+            shortDescription: `${String(b.label || "Change").slice(0, 40)}: ${subject} (${tc}) — Ops Twin: ${title}`,
+            description: `${reportText}\n\nSimulated by Ops Twin (TCS Agentic AI) on a live copy of cluster ${tc}. Raised by ${actor}.`,
+            risk: level === "crit" ? "high" : level === "warn" ? "moderate" : "low",
+            impact: level === "crit" ? "2" : "3",
+            justification: "Impact rehearsed on the Ops Twin before the change.",
+            implementationPlan: (Array.isArray(b.plan) ? b.plan : []).slice(0, 20).map((s, i) => `${i + 1}. ${String(s).slice(0, 200)}`).join("\n"),
+            testPlan: "Re-run the same Ops Twin scenario just before the window; the verdict must be unchanged.",
+          });
+          const number = cr?.result?.number || cr?.number || null;
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: `ServiceNow ${number || "change"} raised from Ops Twin: ${subject} on ${tc}`, details: { cluster: tc, subject, verdict: title, number }, username: actor, source: "ops-twin" }).catch(() => {});
+          return sendJson(res, 200, { number });
+        }
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.5 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        let sc = body.scenario;
+        if (url.pathname === "/api/ops-twin/ask") {
+          const twin = await OT.snapshot(otCluster);
+          sc = OT.parseQuestion(twin, String(body.question || "").slice(0, 500));
+          if (!sc) return sendJson(res, 400, { error: "Ask about a node, a rack or a GPU by name — for example “what if tcsaiinode1 goes down?”, “drain worker-03”, “add a model of 40 GiB”, “is the upgrade safe?” or “migrate 30 VMs of 4 cores and 16 GiB”." });
+        } else if (url.pathname !== "/api/ops-twin/simulate") return sendJson(res, 404, { error: "Unknown Ops Twin action" });
+        const out = await OT.run(otCluster, sc, { actor, fresh: !!body.fresh });
+        logAuditTrailEvent({ type: "action_taken", severity: "info", title: `Ops Twin what-if: ${OT.SCENARIOS.find((s) => s.id === out.scenario.kind)?.label} — ${out.scenario.subject}: ${out.verdict.title}`, details: { cluster: otCluster, scenario: sc, verdict: out.verdict.level }, username: actor, source: "ops-twin" }).catch(() => {});
+        return sendJson(res, 200, { ...out, report: OT.report(out), parsed: url.pathname === "/api/ops-twin/ask" ? sc : undefined });
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }
