@@ -18,6 +18,19 @@ document and the code that built it never drift apart.
 | **UC-07** | Document-Driven Application Deployment | Human uploads / pastes / links a document | [`uc-07-doc-driven-deployment/`](./uc-07-doc-driven-deployment/) |
 | **UC-08** | Configuration Drift Detection & Rollback | Continuous watch | [`drift-detection/`](./drift-detection/) |
 | **UC-10** | VMware → OpenShift Virtualization Migration | Human-initiated, agent-assessed | [`uc-10-vm-migration/`](./uc-10-vm-migration/) |
+| **UC-11** | Private AI Factory | Every Private AI request | [`uc-11-private-ai-factory/`](./uc-11-private-ai-factory/) |
+| **UC-12** | Smart Model Routing, Auto-Sleep & Wake | Every request · 60-second tick | [`uc-12-model-routing-autosleep/`](./uc-12-model-routing-autosleep/) |
+| **UC-13** | GPU Fleet Optimisation | Continuous | [`uc-13-gpu-fleet/`](./uc-13-gpu-fleet/) |
+| **UC-14** | VM Guard — Agentless VM Security | Continuous · on-demand disk scans | [`uc-14-vm-guard/`](./uc-14-vm-guard/) |
+| **UC-15** | Ops Twin — rehearse a change on a live copy | Human asks a what-if | [`uc-15-ops-twin/`](./uc-15-ops-twin/) |
+| **UC-16** | Workload Modernization | Human-initiated, on a wave of VMs | [`uc-16-workload-modernization/`](./uc-16-workload-modernization/) |
+| **UC-17** | ServiceNow Agent | Human triage · raised by other use cases | [`uc-17-servicenow-agent/`](./uc-17-servicenow-agent/) |
+| **UC-18** | Application Change Intelligence | Continuous watch | [`uc-18-app-change-intelligence/`](./uc-18-app-change-intelligence/) |
+
+UC-11 to UC-18 have a specification page (`use-case.md`) each; decks and
+workbooks for them are not generated yet. Each page has a verification table:
+check it before demonstrating, as several parts are unit-tested but not yet run
+against live systems.
 
 There is no UC-09: it and UC-01 described the same pipeline and were merged
 into UC-01. The folder names for UC-08 and the UC-01 incident half still
