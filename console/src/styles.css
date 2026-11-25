@@ -10582,3 +10582,6 @@ code.new { color: #22a06b; }
 .ua-row2 { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ua-seg-sm button { padding: 3px 9px; font-size: 0.7rem; }
 .ua-gov a.vc-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.ua-cr { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 8px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--vc-line); }
+.ua-cr:last-child { border-bottom: none; }
+.ua-crn { font-weight: 600; font-size: 0.76rem; color: var(--vc-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

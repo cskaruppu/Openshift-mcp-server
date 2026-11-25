@@ -199,28 +199,42 @@ export default function UserAccess({ clusters = [] }) {
             <div className="vgf-label">Who has access <span><input className="ua-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, namespace or group" /></span></div>
             <div className="ua-tablewrap">
               <table className="ua-t">
-                <thead><tr><th>Person</th>{okClusters.map((c) => <th key={c}>{label(c)}</th>)}<th /></tr></thead>
+                <thead><tr><th style={{ width: "24%" }}>Person</th><th>Clusters and roles</th><th style={{ width: "24%" }} /></tr></thead>
                 <tbody>
-                  {people.slice(0, 80).map((p) => (
+                  {people.slice(0, 80).map((p) => {
+                    // The clusters this person is on, each with its roles; one chip per role and scope.
+                    const on = okClusters.filter((c) => (p.builtin ? p.kubeadmin?.[c] : (p.clusters[c] || []).length || p.detail?.[c]?.exists));
+                    const rolesOn = (c) => {
+                      const by = new Map();
+                      for (const g of p.clusters[c] || []) { const key = `${g.role}|${g.scope}`; by.set(key, [...(by.get(key) || []), g.via]); }
+                      return [...by].map(([key, via]) => { const [role, scope] = key.split("|"); return { role, scope, via }; })
+                        .sort((a, b) => ["cluster-admin", "cluster-reader", "admin", "edit", "view"].indexOf(a.role) - ["cluster-admin", "cluster-reader", "admin", "edit", "view"].indexOf(b.role));
+                    };
+                    return (
                     <tr key={p.name}>
                       <td><button className="ua-name" onClick={() => setSel(p.name)}>{p.name}</button>{p.disabled && <span className="ua-src ht">disabled</span>}{p.source && <span className={"ua-src" + (/htpasswd|built-in/.test(p.source) ? " ht" : "")}>{p.source}</span>}{p.lastLogin && <div className="vc-muted ua-small">last login {ago(p.lastLogin)}</div>}</td>
-                      {okClusters.map((c) => {
-                        if (p.builtin) return <td key={c}>{p.kubeadmin?.[c] ? <span className="ua-chip adm">present</span> : <span className="vc-muted">removed</span>}</td>;
-                        // One chip per role and scope; the tooltip says how it is given.
-                        const by = new Map();
-                        for (const g of p.clusters[c] || []) { const key = `${g.role}|${g.scope}`; by.set(key, [...(by.get(key) || []), g.via]); }
-                        const gs = [...by].map(([key, via]) => { const [role, scope] = key.split("|"); return { role, scope, via }; });
-                        return <td key={c}>{gs.length ? gs.slice(0, 3).map((g, i) => <span key={i} className={"ua-chip " + roleClass(g.role)} title={g.via.map((v) => (v === "direct" ? "given directly" : `via group ${v}`)).join(", ")}>{g.role}{g.scope !== "cluster" ? ` · ${g.scope}` : ""}</span>) : <span className="vc-muted">—</span>}{gs.length > 3 && <span className="vc-muted"> +{gs.length - 3}</span>}</td>;
-                      })}
+                      <td>
+                        {on.length ? on.map((c) => {
+                          const gs = p.builtin ? [{ role: "cluster-admin", scope: "cluster", via: ["built-in"] }] : rolesOn(c);
+                          return (
+                            <div key={c} className="ua-cr">
+                              <span className="ua-crn">{label(c)}</span>
+                              <span>{gs.length ? gs.slice(0, 4).map((g, i) => <span key={i} className={"ua-chip " + roleClass(g.role)} title={g.via.map((v) => (v === "direct" ? "given directly" : v === "built-in" ? "built-in account" : `via group ${v}`)).join(", ")}>{p.builtin ? "present" : g.role}{g.scope !== "cluster" ? ` · ${g.scope}` : ""}</span>) : <span className="vc-muted ua-small">no roles</span>}
+                                {gs.length > 4 && <button className="ua-link" onClick={() => setSel(p.name)}>+{gs.length - 4} more</button>}</span>
+                            </div>
+                          );
+                        }) : <span className="vc-muted">—</span>}
+                      </td>
                       <td className="ua-flagcell">
                         {p.flags.slice(0, 1).map((x, i) => <div key={i} className={"ua-flag " + x.level}>{x.text}</div>)}
                         {p.builtin
-                          ? k.kubeadmin > 0 && <button className="ua-link" disabled={!!busy} onClick={() => submit({ kind: "remove-kubeadmin", clusters: okClusters.filter((c) => p.kubeadmin?.[c]), reason: "Company login in place" })}>Request removal</button>
-                          : <button className="ua-link" disabled={!!busy} onClick={() => { if (window.confirm(`Request removal of ${p.name} from all ${okClusters.length} reachable clusters?`)) submit({ kind: "revoke", clusters: okClusters, user: p.name, reason: p.flags.map((x) => x.text).join("; ") }); }}>Remove everywhere</button>}
+                          ? k.kubeadmin > 0 && <button className="ua-link" disabled={!!busy} onClick={() => submit({ kind: "remove-kubeadmin", clusters: on, reason: "Company login in place" })}>Request removal</button>
+                          : <button className="ua-link" disabled={!!busy || !on.length} onClick={() => { if (window.confirm(`Request removal of ${p.name} from ${on.length} cluster${on.length > 1 ? "s" : ""}: ${on.map(label).join(", ")}?`)) submit({ kind: "revoke", clusters: on, user: p.name, reason: p.flags.map((x) => x.text).join("; ") }); }}>Remove everywhere</button>}
                       </td>
                     </tr>
-                  ))}
-                  {!people.length && <tr><td colSpan={okClusters.length + 2} className="vc-muted">{onlyFlags ? "Nothing needs a look." : "No one matches."}</td></tr>}
+                    );
+                  })}
+                  {!people.length && <tr><td colSpan={3} className="vc-muted">{onlyFlags ? "Nothing needs a look." : "No one matches."}</td></tr>}
                 </tbody>
               </table>
             </div>
