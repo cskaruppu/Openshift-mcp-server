@@ -34,6 +34,7 @@ export default function UserAccess({ clusters = [] }) {
   const [secret, setSecret] = useState(null);       // { user, password, id } shown once
   const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", hours: "", delivery: "direct", reason: "" });
   const [tab, setTab] = useState("people");
+  const [fc, setFc] = useState("");   // filter: one cluster
   const [sel, setSel] = useState(null);
 
   useEffect(() => { fetch("/api/cluster-labels").then((r) => r.json()).then((j) => setLabels(j.labels || {})).catch(() => {}); }, []);
@@ -196,14 +197,21 @@ export default function UserAccess({ clusters = [] }) {
         <div className="ua-right">
           {/* ── who has access ── */}
           <div className="vc-card">
-            <div className="vgf-label">Who has access <span><input className="ua-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, namespace or group" /></span></div>
+            <div className="vgf-label">Who has access <span className="ua-filters">
+              <select className="ua-search ua-fsel" value={fc} onChange={(e) => setFc(e.target.value)} aria-label="Cluster">
+                <option value="">All clusters</option>
+                {data.clusters.filter((c) => c.ok).map((c) => <option key={c.cluster} value={c.cluster}>{label(c.cluster)}</option>)}
+              </select>
+              <input className="ua-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, namespace or group" />
+            </span></div>
             <div className="ua-tablewrap">
               <table className="ua-t">
                 <thead><tr><th style={{ width: "24%" }}>Person</th><th>Clusters and roles</th><th style={{ width: "24%" }} /></tr></thead>
                 <tbody>
                   {people.slice(0, 80).map((p) => {
                     // The clusters this person is on, each with its roles; one chip per role and scope.
-                    const on = okClusters.filter((c) => (p.builtin ? p.kubeadmin?.[c] : (p.clusters[c] || []).length || p.detail?.[c]?.exists));
+                    const on = okClusters.filter((c) => (!fc || c === fc) && (p.builtin ? p.kubeadmin?.[c] : (p.clusters[c] || []).length || p.detail?.[c]?.exists));
+                    if (fc && !on.length) return null;
                     const rolesOn = (c) => {
                       const by = new Map();
                       for (const g of p.clusters[c] || []) { const key = `${g.role}|${g.scope}`; by.set(key, [...(by.get(key) || []), g.via]); }
@@ -229,12 +237,12 @@ export default function UserAccess({ clusters = [] }) {
                         {p.flags.slice(0, 1).map((x, i) => <div key={i} className={"ua-flag " + x.level}>{x.text}</div>)}
                         {p.builtin
                           ? k.kubeadmin > 0 && <button className="ua-link" disabled={!!busy} onClick={() => submit({ kind: "remove-kubeadmin", clusters: on, reason: "Company login in place" })}>Request removal</button>
-                          : <button className="ua-link" disabled={!!busy || !on.length} onClick={() => { if (window.confirm(`Request removal of ${p.name} from ${on.length} cluster${on.length > 1 ? "s" : ""}: ${on.map(label).join(", ")}?`)) submit({ kind: "revoke", clusters: on, user: p.name, reason: p.flags.map((x) => x.text).join("; ") }); }}>Remove everywhere</button>}
+                          : <button className="ua-link" disabled={!!busy || !on.length} onClick={() => { if (window.confirm(`Request removal of ${p.name} from ${on.length} cluster${on.length > 1 ? "s" : ""}: ${on.map(label).join(", ")}?`)) submit({ kind: "revoke", clusters: on, user: p.name, reason: p.flags.map((x) => x.text).join("; ") }); }}>{fc ? "Remove from this cluster" : "Remove everywhere"}</button>}
                       </td>
                     </tr>
                     );
                   })}
-                  {!people.length && <tr><td colSpan={3} className="vc-muted">{onlyFlags ? "Nothing needs a look." : "No one matches."}</td></tr>}
+                  {!people.filter((p) => !fc || (p.builtin ? p.kubeadmin?.[fc] : (p.clusters[fc] || []).length || p.detail?.[fc]?.exists)).length && <tr><td colSpan={3} className="vc-muted">{onlyFlags ? "Nothing needs a look." : "No one matches."}</td></tr>}
                 </tbody>
               </table>
             </div>
