@@ -179,6 +179,12 @@ export function buildTwin(raw, { cluster = "local", at = new Date().toISOString(
       nodeSelector: p.spec?.nodeSelector || {}, tolerations: p.spec?.tolerations || [], affinity: p.spec?.affinity || null,
       model: L[MODEL_LABEL] || null,
       vm: owner?.kind === "VirtualMachineInstance" ? owner.name : (vmName || null),
+      pvcs: (p.spec?.volumes || []).filter((v) => v.persistentVolumeClaim?.claimName).map((v) => v.persistentVolumeClaim.claimName),
+      antiAffinity: (p.spec?.affinity?.podAntiAffinity?.requiredDuringSchedulingIgnoredDuringExecution || []).map((t) => ({ selector: t.labelSelector || null, topologyKey: t.topologyKey || "kubernetes.io/hostname", namespaces: t.namespaces || null })),
+      spread: (p.spec?.topologySpreadConstraints || []).filter((t) => (t.whenUnsatisfiable || "DoNotSchedule") === "DoNotSchedule").map((t) => ({ selector: t.labelSelector || null, topologyKey: t.topologyKey, maxSkew: t.maxSkew || 1 })),
+      sa: p.spec?.serviceAccountName || "default",
+      privileged: (p.spec?.containers || []).some((c) => c.securityContext?.privileged) || !!p.spec?.hostNetwork || !!p.spec?.hostPID || (p.spec?.volumes || []).some((v) => v.hostPath),
+      secrets: [...new Set((p.spec?.volumes || []).filter((v) => v.secret?.secretName).map((v) => v.secret.secretName))],
     };
     pods.push(pod);
     const n = byNode.get(pod.node);
@@ -242,8 +248,42 @@ export function buildTwin(raw, { cluster = "local", at = new Date().toISOString(
 
   const racks = {};
   for (const n of nodes) (racks[n.rack || "Unassigned"] ||= []).push(n.name);
+  // Sites (zones, data centres) for site-failure and DR scenarios.
+  const siteKeys = (process.env.OPS_TWIN_SITE_LABEL ? [process.env.OPS_TWIN_SITE_LABEL] : []).concat(["tcs.io/site", "topology.kubernetes.io/zone", "topology.kubernetes.io/region"]);
+  const sites = {};
+  for (const n of nodes) { const k = siteKeys.find((x) => n.labels[x]); n.site = k ? n.labels[k] : null; if (n.site) (sites[n.site] ||= []).push(n.name); }
+  // Storage: which nodes each claimed volume can attach to.
+  const pvByName = new Map((raw.pvs || []).map((v) => [v.metadata.name, v]));
+  const volumes = {};
+  for (const c of raw.pvcs || []) {
+    const pv = pvByName.get(c.spec?.volumeName);
+    const terms = pv?.spec?.nodeAffinity?.required?.nodeSelectorTerms || null;
+    volumes[`${c.metadata.namespace}/${c.metadata.name}`] = {
+      pv: pv?.metadata?.name || null, terms, local: !!(pv?.spec?.local || pv?.spec?.hostPath),
+      rwo: (c.spec?.accessModes || []).every((m) => m === "ReadWriteOnce" || m === "ReadWriteOncePod"),
+      storageClass: c.spec?.storageClassName || null,
+    };
+  }
+  // Namespace quotas: hard limits and what is used, for requests.cpu / requests.memory / pods.
+  const quotas = {};
+  for (const q of raw.quotas || []) {
+    const h = q.status?.hard || q.spec?.hard || {}, u = q.status?.used || {};
+    const ns = q.metadata.namespace;
+    const cur = (quotas[ns] ||= { cpu: null, mem: null, pods: null });
+    const pick = (keys, conv) => { const k = keys.find((x) => h[x] != null); return k ? { hard: conv(h[k]), used: conv(u[k] || 0) } : null; };
+    cur.cpu = pick(["requests.cpu", "cpu"], cpuMilli) || cur.cpu;
+    cur.mem = pick(["requests.memory", "memory"], memMiB) || cur.mem;
+    cur.pods = pick(["pods", "count/pods"], (x) => Number(x) || 0) || cur.pods;
+  }
+  // Real usage (95th percentile, when Prometheus answers): per pod, and per node.
+  const usage = raw.usage || null;
+  if (usage) {
+    for (const n of nodes) { n.cpuUsed = 0; n.memUsed = 0; }
+    for (const pd of pods) { const u = usage[`${pd.ns}/${pd.name}`]; const n = byNode.get(pd.node); if (u && n) { n.cpuUsed += u.cpu || 0; n.memUsed += u.mem || 0; pd.usage = u; } }
+  }
+  const saBindings = raw.saBindings || [];
   const powerKnown = nodes.some((n) => n.cards.some((c) => c.powerW != null));
-  return { cluster, at, nodes, pods, vms, models, pdbs, racks, powerKnown, racksKnown: nodes.some((n) => n.rack) };
+  return { cluster, at, nodes, pods, vms, models, pdbs, racks, sites, volumes, quotas, usageKnown: !!usage, saBindings, powerKnown, racksKnown: nodes.some((n) => n.rack) };
 }
 
 /* ─────────────────────────── reading the cluster ─────────────────────────── */
@@ -257,20 +297,30 @@ export async function snapshot(cluster = "local", { fresh = false } = {}) {
   const hit = _cache.get(cluster);
   if (!fresh && hit && _deps.now() - hit.atMs < CACHE_MS) return hit.twin;
   if (!_deps.ocp?.fetch) throw Object.assign(new Error("Ops Twin is not connected to a cluster"), { status: 503 });
-  const [nodes, pods, pdbs, vmis, vms, isvcs] = await Promise.all([
+  const [nodes, pods, pdbs, vmis, vms, isvcs, pvcs, pvs, quotas, crbs, rbs] = await Promise.all([
     list("/api/v1/nodes"),
     list("/api/v1/pods?limit=5000"),
     list("/apis/policy/v1/poddisruptionbudgets"),
     list("/apis/kubevirt.io/v1/virtualmachineinstances"),
     list("/apis/kubevirt.io/v1/virtualmachines"),
     list("/apis/serving.kserve.io/v1beta1/inferenceservices"),
+    list("/api/v1/persistentvolumeclaims"),
+    list("/api/v1/persistentvolumes"),
+    list("/api/v1/resourcequotas"),
+    list("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"),
+    list("/apis/rbac.authorization.k8s.io/v1/rolebindings"),
   ]);
+  // Which roles service accounts hold (for blast radius), without the rest of RBAC.
+  const saBindings = [];
+  for (const b of [...(crbs || []).map((x) => ({ ...x, cl: true })), ...(rbs || [])]) for (const sub of b.subjects || []) if (sub.kind === "ServiceAccount") saBindings.push({ ns: sub.namespace, sa: sub.name, role: b.roleRef?.name, scope: b.cl ? "cluster" : b.metadata?.namespace });
+  let usage = null;
+  try { usage = await _deps.usage?.(); } catch { /* optional */ }
   if (nodes === null || pods === null) throw Object.assign(new Error("Could not read nodes and pods from this cluster"), { status: 502 });
   let telemetry = null;
   try { telemetry = await _deps.gpuTelemetry(); } catch { /* optional */ }
-  const twin = buildTwin({ nodes, pods, pdbs: pdbs || [], vmis: vmis || [], vms: vms || [], isvcs: isvcs || [], telemetry: telemetry || [] },
+  const twin = buildTwin({ nodes, pods, pdbs: pdbs || [], vmis: vmis || [], vms: vms || [], isvcs: isvcs || [], telemetry: telemetry || [], pvcs: pvcs || [], pvs: pvs || [], quotas: quotas || [], usage, saBindings },
     { cluster, at: new Date(_deps.now()).toISOString() });
-  twin.sources = { kubernetes: true, pdbs: pdbs !== null, virtualization: vmis !== null, models: isvcs !== null, gpuTelemetry: !!(telemetry && telemetry.length) };
+  twin.sources = { kubernetes: true, pdbs: pdbs !== null, virtualization: vmis !== null, models: isvcs !== null, gpuTelemetry: !!(telemetry && telemetry.length), storage: pvcs !== null && pvs !== null, quotas: quotas !== null, usage: !!usage };
   _cache.set(cluster, { atMs: _deps.now(), twin });
   return twin;
 }
@@ -320,14 +370,83 @@ export const SCENARIOS = [
 /** Working copy of capacity: free CPU/memory per node, free MiB per card. */
 function capacity(twin, gone = new Set(), goneCards = new Set()) {
   const cap = new Map();
+  cap.twin = twin;
+  cap.gone = gone;
+  cap.quota = JSON.parse(JSON.stringify(twin.quotas || {}));
   for (const n of twin.nodes) {
     if (gone.has(n.name)) continue;
     cap.set(n.name, {
       node: n, cpu: n.cpuAlloc - n.cpuReq, mem: n.memAlloc - n.memReq,
+      pods: twin.pods.filter((p) => p.node === n.name).map((p) => ({ ns: p.ns, labels: p.labels })),
       cards: n.cards.filter((c) => !goneCards.has(c.uuid)).map((c) => ({ uuid: c.uuid, index: c.index, free: c.totalMiB - c.slices.reduce((a, s) => a + s.mib, 0), total: c.totalMiB, hami: c.hami })),
     });
   }
   return cap;
+}
+
+
+/* ─────────────── placement rules beyond CPU and memory ─────────────── */
+
+const domainOf = (node, key) => (key === "kubernetes.io/hostname" ? node.labels?.[key] || node.name : node.labels?.[key] ?? null);
+
+/** Storage, required pod anti-affinity and topology spread (DoNotSchedule). */
+function rulesAllow(cap, c, item) {
+  const twin = cap.twin;
+  // Volumes that can only attach to some nodes (local disks, zonal storage).
+  for (const claim of item.pvcs || []) {
+    const v = twin?.volumes?.[`${item.ns}/${claim}`];
+    if (!v) continue;
+    if (v.local && item.node && cap.gone?.has(item.node)) return false;
+    if (v.terms?.length && !v.terms.some((t) => (t.matchExpressions || []).every((e) => matchExpr(c.node.labels, e)))) return false;
+  }
+  // Required anti-affinity: no matching pod already in the same domain.
+  for (const t of item.antiAffinity || []) {
+    if (!t.selector) continue;
+    const dom = domainOf(c.node, t.topologyKey);
+    if (dom == null) continue;
+    for (const other of cap.values()) {
+      if (domainOf(other.node, t.topologyKey) !== dom) continue;
+      if (other.pods.some((p) => (t.namespaces ? t.namespaces.includes(p.ns) : p.ns === item.ns) && selectorMatches(t.selector, p.labels))) return false;
+    }
+  }
+  // Topology spread: placing here must keep the skew within maxSkew.
+  for (const t of item.spread || []) {
+    if (!t.selector || !t.topologyKey) continue;
+    const counts = new Map();
+    for (const other of cap.values()) {
+      if (!nodeAccepts(other.node, item)) continue;
+      const d = domainOf(other.node, t.topologyKey);
+      if (d == null) continue;
+      counts.set(d, (counts.get(d) || 0) + other.pods.filter((p) => p.ns === item.ns && selectorMatches(t.selector, p.labels)).length);
+    }
+    const dom = domainOf(c.node, t.topologyKey);
+    if (dom == null || !counts.size) continue;
+    const min = Math.min(...counts.values());
+    if ((counts.get(dom) || 0) + 1 - min > t.maxSkew) return false;
+  }
+  return true;
+}
+
+/** Why storage alone blocks an item, or null. */
+function volumeBlock(cap, item) {
+  for (const claim of item.pvcs || []) {
+    const v = cap.twin?.volumes?.[`${item.ns}/${claim}`];
+    if (!v) continue;
+    if (v.local && item.node && cap.gone?.has(item.node)) return `its data is on a local volume (${claim}) of the node that is gone`;
+    if (v.terms?.length && ![...cap.values()].some((c) => v.terms.some((t) => (t.matchExpressions || []).every((e) => matchExpr(c.node.labels, e))))) return `its volume ${claim} can only attach to nodes that are gone (zonal or local storage)`;
+  }
+  return null;
+}
+
+/** A new pod (scale-up, new workload) must fit its namespace quota. */
+function quotaAllows(cap, item, { dry = false } = {}) {
+  const q = cap.quota?.[item.ns];
+  if (!q) return true;
+  if (q.cpu && q.cpu.used + item.cpu > q.cpu.hard) return false;
+  if (q.mem && q.mem.used + item.mem > q.mem.hard) return false;
+  if (q.pods && q.pods.used + 1 > q.pods.hard) return false;
+  if (!dry) { if (q.cpu) q.cpu.used += item.cpu; if (q.mem) q.mem.used += item.mem; if (q.pods) q.pods.used += 1; }
+  return true;
 }
 
 /** Place one item; returns { node, card } or null. Picks the node with the most memory left (spread). */
@@ -337,6 +456,7 @@ function place(cap, item, { exclude = new Set() } = {}) {
     if (exclude.has(name)) continue;
     if (!nodeAccepts(c.node, item)) continue;
     if (c.cpu < item.cpu || c.mem < item.mem) continue;
+    if (!rulesAllow(cap, c, item)) continue;
     let card = null;
     if (item.gpuMem > 0 || item.gpus > 0) {
       const need = item.gpuMem > 0 ? item.gpuMem : null;
@@ -349,15 +469,22 @@ function place(cap, item, { exclude = new Set() } = {}) {
     if (!best || score > best.score) best = { name, c, card, score };
   }
   if (!best) return null;
+  if (item.newPod && !quotaAllows(cap, item)) return null;
   best.c.cpu -= item.cpu; best.c.mem -= item.mem;
+  best.c.pods.push({ ns: item.ns, labels: item.labels || {} });
   if (best.card) best.card.free -= item.gpuMem > 0 ? item.gpuMem : best.card.total;
   return { node: best.name, card: best.card ? { uuid: best.card.uuid, index: best.card.index } : null };
 }
 
 const why = (cap, item) => {
   const nodes = [...cap.values()];
+  if (item.newPod && !quotaAllows(cap, item, { dry: true })) return `the ${item.ns} namespace quota is used up`;
+  const vol = volumeBlock(cap, item);
+  if (vol) return vol;
   const ok = nodes.filter((c) => nodeAccepts(c.node, item));
   if (!ok.length) return "no remaining node accepts it (taints, node selector or affinity)";
+  const fitting = ok.filter((c) => c.cpu >= item.cpu && c.mem >= item.mem);
+  if (fitting.length && !fitting.some((c) => rulesAllow(cap, c, item))) return "its spreading rules (pod anti-affinity or topology spread) allow none of the nodes with room";
   if (item.gpuMem > 0 || item.gpus > 0) {
     const most = Math.max(0, ...ok.flatMap((c) => c.cards.map((k) => k.free)));
     if (!ok.some((c) => c.cards.length)) return "no remaining node it may run on has a GPU";
@@ -415,6 +542,7 @@ function replay(twin, { kind, fail, gone, goneCards, subject }) {
     const c = cap.get(p.node);
     if (!c) continue;
     c.cpu += p.cpu; c.mem += p.mem;
+    c.pods = c.pods.filter((x) => !(x.ns === p.ns && x.labels === p.labels));
     for (const s of p.cards) { const k = c.cards.find((x) => x.uuid === s.uuid); if (k) k.free += s.mib; }
   }
 
@@ -582,7 +710,7 @@ function replay(twin, { kind, fail, gone, goneCards, subject }) {
   };
 }
 
-const ASSUMPTIONS = "Modelled on CPU and memory requests, taints, node selectors, required node affinity and GPU memory per card. Pod affinity, topology spread, storage zones and quotas are not simulated.";
+const ASSUMPTIONS = "Modelled on CPU and memory requests, taints, node selectors, required node affinity, required pod anti-affinity, topology spread (DoNotSchedule), volumes that attach only to some nodes, namespace quotas for new pods, and GPU memory per card; real usage (95th percentile over 7 days) where Prometheus answers. Preferred (soft) rules, network and storage throughput are not simulated.";
 
 function simulateAdd(twin, sc) {
   const cap = capacity(twin);
