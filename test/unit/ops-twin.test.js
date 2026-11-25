@@ -138,3 +138,107 @@ test("quantities and selectors", () => {
   assert.equal(OT.selectorMatches({ matchExpressions: [{ key: "app", operator: "In", values: ["a"] }] }, { app: "a" }), true);
   assert.equal(OT.selectorMatches({ matchLabels: { app: "b" } }, { app: "a" }), false);
 });
+
+test("risk score: verdict, findings and production raise it; levels map to ServiceNow", () => {
+  const t = estate();
+  const drain = OT.simulate(t, { kind: "drain", node: "tcsaiinode1" });
+  const r = OT.computeRisk(drain, { cluster: "gpu" });
+  assert.ok(r.score >= 0 && r.score <= 100);
+  assert.ok(["Low", "Medium", "High"].includes(r.level));
+  assert.ok(r.reasons.length >= 1);
+  const prod = OT.computeRisk(drain, { cluster: "payments-prod" });
+  assert.ok(prod.score > r.score, "production adds risk");
+  const safe = OT.simulate(t, { kind: "drain", node: "worker-04" });
+  assert.ok(OT.computeRisk(safe, { cluster: "lab" }).score <= r.score);
+  assert.equal(OT.computeRisk({ ...drain, verdict: { level: "crit", title: "x" } }, { cluster: "prod-1" }).level, "High");
+});
+
+test("site fails, and critical single replicas become outages", () => {
+  const t = estate();
+  t.sites = { "DC-East": ["tcsaiinode1", "worker-03"] };
+  const out = OT.simulate(t, { kind: "site-fail", site: "DC-East" });
+  assert.equal(out.scenario.subject, "site DC-East");
+  assert.throws(() => OT.simulate(t, { kind: "site-fail", site: "Mars" }), /No site/);
+  const plain = OT.simulate(t, { kind: "drain", node: "tcsaiinode2" });
+  const crit = OT.simulate(t, { kind: "drain", node: "tcsaiinode2", critical: "other-team" });
+  assert.ok(crit.impact.some((i) => /critical app/.test(i.title)));
+  assert.ok(["crit"].includes(crit.verdict.level) || crit.impact.filter((i) => i.level === "crit").length > plain.impact.filter((i) => i.level === "crit").length);
+});
+
+test("peak load: extra replicas placed, shortfall gives nodes needed", () => {
+  const t = estate();
+  const ok = OT.simulate(t, { kind: "peak", namespaces: ["payments"], factor: 2 });
+  assert.equal(ok.scenario.kind, "peak");
+  assert.ok(ok.kpis.moves >= 1);
+  const big = OT.simulate(t, { kind: "peak", namespaces: "payments", factor: 10 });
+  assert.ok(big.kpis.moves + big.kpis.cannotMove >= 18);
+  assert.throws(() => OT.simulate(t, { kind: "peak", namespaces: "payments", factor: 50 }), /between/);
+});
+
+test("maintenance window: nodes scheduled into the hours given", () => {
+  const t = estate();
+  const w = OT.simulate(t, { kind: "window", windowHours: 1 });
+  assert.equal(w.window.hours, 1);
+  assert.ok(w.window.schedule.length === 4);
+  assert.ok(w.window.windowsNeeded >= 1);
+  assert.ok(w.plan.length === 4);
+});
+
+test("retire nodes: savings and verdict", () => {
+  const t = estate();
+  const r = OT.simulate(t, { kind: "retire", nodes: "worker-04" });
+  assert.equal(r.savings.nodes, 1);
+  assert.ok(r.savings.kwhMonth > 0);
+  assert.equal(r.savings.money, null);
+});
+
+test("blast radius of a node and of a service account", () => {
+  const t = estate();
+  t.saBindings = [{ ns: "payments", sa: "default", role: "cluster-admin", scope: "cluster" }];
+  for (const p of t.pods) p.sa = p.sa || "default";
+  const n = OT.simulate(t, { kind: "blast", node: "tcsaiinode1" });
+  assert.equal(n.verdict.level, "crit");
+  assert.ok(n.plan.some((x) => /Rotate/.test(x.text)));
+  const sa = OT.simulate(t, { kind: "blast", serviceAccount: "payments/default" });
+  assert.ok(sa.impact.some((i) => /Full control/.test(i.title)));
+  const none = OT.simulate(t, { kind: "blast", serviceAccount: "other-team/builder" });
+  assert.notEqual(none.verdict.level, "crit");
+});
+
+test("DR failover between two clusters, and N+1 resilience", () => {
+  const src = estate(), dst = estate();
+  dst.cluster = "dr";
+  const f = OT.failover(OT.exportTwin(src), dst, {});
+  assert.equal(f.scenario.subject, "gpu → dr");
+  assert.ok(f.kpis.moves > 0);
+  const small = { ...dst, nodes: dst.nodes.filter((x) => x.name === "master-0" || x.name === "worker-04"), pods: [] };
+  const g = OT.failover(src, small, { critical: "payments" });
+  assert.notEqual(g.verdict.level, "ok");
+  const r = OT.resilience(src);
+  assert.equal(r.workers, 4);
+  assert.ok(r.score >= 0 && r.score <= 100);
+  assert.equal(r.per.length, 4);
+});
+
+test("accuracy: a drain prediction is scored once the node is drained", () => {
+  const before = estate();
+  const out = OT.simulate(before, { kind: "drain", node: "worker-03" });
+  const pred = { node: "worker-03", moves: out.moves.filter((m) => m.to && m.kind !== "vm").map((m) => ({ ns: m.ns, workload: m.workload || m.name, to: m.to })) };
+  assert.ok(pred.moves.length >= 1);
+  assert.equal(OT.scorePrediction(pred, before), null, "not drained yet");
+  const after = estate();
+  const target = pred.moves[0].to;
+  for (const p of after.pods) if (p.node === "worker-03") p.node = target;
+  after.nodes.find((x) => x.name === "worker-03").schedulable = false;
+  const s = OT.scorePrediction(pred, after);
+  assert.ok(s.landed >= 1);
+  assert.equal(s.placementPct, 100);
+});
+
+test("ask the twin: windows, peaks and blast radius", () => {
+  const t = estate();
+  assert.deepEqual(OT.parseQuestion(t, "patch everything in a 4 hour window"), { kind: "window", windowHours: 4 });
+  const p = OT.parseQuestion(t, "can payments take 3x traffic on sale day?");
+  assert.equal(p.kind, "peak"); assert.equal(p.factor, 3); assert.deepEqual(p.namespaces, ["payments"]);
+  assert.deepEqual(OT.parseQuestion(t, "what if worker-04 is compromised"), { kind: "blast", node: "worker-04" });
+});

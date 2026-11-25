@@ -27,13 +27,28 @@ const STOP_ANNOTATION = "serving.kserve.io/stop";
 let _deps = {
   ocp: null,                              // { fetch(path) → parsed JSON }
   gpuTelemetry: async () => null,         // → [{ uuid, powerW, tempC }] or null
+  usage: null,                            // async () → { "ns/pod": { cpu: milli, mem: MiB } } (p95) or null
+  store: null,                            // { get(key), set(key, value) } for accuracy and resilience records
+  notify: null,                           // ({ type, title, message, severity }) → void
   now: () => Date.now(),
 };
 export function configureOpsTwin(deps) { _deps = { ..._deps, ...deps }; }
 
 const _cache = new Map();                 // cluster → { at, twin }
 const _history = new Map();               // cluster → [{ at, scenario, verdict, actor }]
-export function _resetOpsTwin() { _cache.clear(); _history.clear(); }
+export function _resetOpsTwin() { _cache.clear(); _history.clear(); _state = null; }
+
+/* Records kept across restarts: predictions (for accuracy) and resilience scores. */
+const STATE_KEY = "ops_twin_state";
+let _state = null;
+async function loadState() {
+  if (_state) return _state;
+  let v = null;
+  try { v = await _deps.store?.get(STATE_KEY); } catch { /* none */ }
+  _state = { predictions: [], resilience: {}, ...(v && typeof v === "object" ? v : {}) };
+  return _state;
+}
+async function saveState() { try { await _deps.store?.set(STATE_KEY, _state); } catch { /* memory only */ } }
 
 /* ─────────────────────────── quantities ─────────────────────────── */
 
@@ -365,6 +380,11 @@ export const SCENARIOS = [
   { id: "add-model", label: "Add a model", hint: "will it fit?", needs: ["gpuGiB"] },
   { id: "upgrade", label: "Upgrade cluster", hint: "rolling, one node at a time", needs: [] },
   { id: "add-vms", label: "Migrate VMs in", hint: "from VMware or elsewhere", needs: ["count", "cpu", "memGiB"] },
+  { id: "site-fail", label: "Site or zone fails", hint: "data centre, availability zone", needs: ["site"] },
+  { id: "peak", label: "Peak load", hint: "sale day, month-end, ×N traffic", needs: ["namespaces", "factor"] },
+  { id: "window", label: "Maintenance window", hint: "patch every node in N hours", needs: ["windowHours"] },
+  { id: "retire", label: "Retire nodes", hint: "cost and power saving", needs: ["nodes"] },
+  { id: "blast", label: "Security blast radius", hint: "compromised node or account", needs: ["node|serviceAccount"] },
 ];
 
 /** Working copy of capacity: free CPU/memory per node, free MiB per card. */
@@ -507,10 +527,14 @@ const wlabel = (p) => (p.model ? p.model : p.owner ? `${p.owner.name}` : p.name)
 export function simulate(twin, sc) {
   const kind = sc?.kind;
   if (!SCENARIOS.some((s) => s.id === kind)) throw Object.assign(new Error("Unknown scenario"), { status: 400 });
-  if (kind === "upgrade") return simulateUpgrade(twin, sc);
+  if (kind === "upgrade" || kind === "window") return simulateUpgrade(twin, sc);
   if (kind === "add-model" || kind === "add-vms") return simulateAdd(twin, sc);
+  if (kind === "peak") return simulatePeak(twin, sc);
+  if (kind === "retire") return simulateRetire(twin, sc);
+  if (kind === "blast") return simulateBlast(twin, sc);
+  const critical = criticalSet(sc.critical);
 
-  const fail = kind === "node-fail" || kind === "rack-fail";
+  const fail = kind === "node-fail" || kind === "rack-fail" || kind === "site-fail";
   let gone = new Set(), goneCards = new Set(), subject;
   if (kind === "drain" || kind === "node-fail") {
     const n = twin.nodes.find((x) => x.name === sc.node);
@@ -520,16 +544,26 @@ export function simulate(twin, sc) {
     const names = twin.racks[sc.rack];
     if (!names?.length || sc.rack === "Unassigned") throw Object.assign(new Error(`No rack called ${sc.rack}. Label nodes with tcs.io/rack to group them`), { status: 400 });
     gone = new Set(names); subject = `rack ${sc.rack}`;
+  } else if (kind === "site-fail") {
+    const names = twin.sites?.[sc.site];
+    if (!names?.length) throw Object.assign(new Error(`No site or zone called ${sc.site}. Nodes are grouped by tcs.io/site or topology.kubernetes.io/zone`), { status: 400 });
+    gone = new Set(names); subject = `site ${sc.site}`;
   } else if (kind === "gpu-fail") {
     const n = twin.nodes.find((x) => x.name === sc.node);
     const card = n?.cards.find((c) => c.uuid === sc.card || String(c.index) === String(sc.card));
     if (!card) throw Object.assign(new Error("Pick a GPU card on that node"), { status: 400 });
     goneCards.add(card.uuid); subject = `GPU-${card.index} on ${n.name}`;
   }
-  return replay(twin, { kind, fail, gone, goneCards, subject });
+  return replay(twin, { kind, fail, gone, goneCards, subject, critical });
 }
 
-function replay(twin, { kind, fail, gone, goneCards, subject }) {
+/** Critical namespaces: exact names or prefixes ending in *. */
+function criticalSet(list) {
+  const items = (Array.isArray(list) ? list : String(list || "").split(",")).map((x) => String(x).trim()).filter(Boolean).slice(0, 50);
+  return (ns) => items.some((i) => (i.endsWith("*") ? ns.startsWith(i.slice(0, -1)) : ns === i));
+}
+
+function replay(twin, { kind, fail, gone, goneCards, subject, critical = () => false }) {
   const cap = capacity(twin, gone, goneCards);
   const impact = [], moves = [], checks = [];
   const displaced = twin.pods.filter((p) => !p.daemon && !p.mirror && (gone.has(p.node) || (goneCards.size && p.cards.some((c) => goneCards.has(c.uuid)))));
@@ -613,7 +647,11 @@ function replay(twin, { kind, fail, gone, goneCards, subject }) {
     }
   }
   // Single replicas restart once: OpenShift's own components expect it; an app is briefly down.
-  const plat = singles.filter((s) => s.platform), apps = singles.filter((s) => !s.platform);
+  const plat = singles.filter((s) => s.platform), crit1 = singles.filter((s) => !s.platform && critical(s.ns)), apps = singles.filter((s) => !s.platform && !critical(s.ns));
+  if (crit1.length) {
+    outages += crit1.length;
+    impact.push({ level: "crit", title: `${crit1.length} critical app${crit1.length > 1 ? "s" : ""} would be down`, text: `${crit1.slice(0, 8).map((s) => `${s.ns}/${s.name}`).join(", ")}: a single replica on the lost capacity ${fail ? "is down until rescheduled" : "is down while it restarts"}`, fix: { kind: "scale", text: "Run at least 2 replicas of every critical app, spread across nodes", targets: crit1.map((s) => `${s.ns}/${s.kind}/${s.name}`) } });
+  }
   if (plat.length) impact.push({ level: "ok", title: `${plat.length} platform component${plat.length > 1 ? "s" : ""} restart once`, text: "OpenShift’s own single-replica operators; they are built to be rescheduled", fix: null });
   if (apps.length) {
     impact.push({ level: "warn", title: `${apps.length} app${apps.length > 1 ? "s" : ""} with a single replica here`, text: `${apps.slice(0, 8).map((s) => `${s.ns}/${s.name}`).join(", ")}${apps.length > 8 ? ` and ${apps.length - 8} more` : ""}: ${fail ? "down until rescheduled" : "a short outage while each restarts"}`, fix: { kind: "scale", text: `Run 2 replicas of ${apps.length > 1 ? "each" : apps[0].name} so one keeps serving`, targets: apps.map((s) => `${s.ns}/${s.kind}/${s.name}`) } });
@@ -660,6 +698,20 @@ function replay(twin, { kind, fail, gone, goneCards, subject }) {
       }
     }
     checks.push({ name: "Auto-wake", level: wakeLevel });
+  }
+
+  // ── real usage on the nodes that receive work ──
+  if (twin.usageKnown) {
+    const hot = [];
+    for (const n of twin.nodes.filter((x) => !gone.has(x.name))) {
+      const add = moves.filter((m) => m.to === n.name && m.kind !== "vm").map((m) => twin.pods.find((p) => p.ns === m.ns && (p.name === m.name || p.model === m.name))?.usage).filter(Boolean);
+      if (!add.length) continue;
+      const cpu = (n.cpuUsed || 0) + add.reduce((a, u) => a + (u.cpu || 0), 0), mem = (n.memUsed || 0) + add.reduce((a, u) => a + (u.mem || 0), 0);
+      const cp = n.cpuAlloc ? Math.round((cpu / n.cpuAlloc) * 100) : 0, mp = n.memAlloc ? Math.round((mem / n.memAlloc) * 100) : 0;
+      if (cp > 85 || mp > 85) hot.push(`${n.name} (${cp}% CPU, ${mp}% memory)`);
+    }
+    if (hot.length) impact.push({ level: "warn", title: `By real usage, ${hot.length} node${hot.length > 1 ? "s" : ""} would run hot`, text: `${hot.join(", ")}: requests fit, but measured use (95th percentile, 7 days) goes above 85%`, fix: { kind: "capacity", text: "Spread the move, or add capacity before the change" } });
+    checks.push({ name: "Real usage", level: hot.length ? "warn" : "ok" });
   }
 
   // ── rack and power ──
@@ -715,6 +767,7 @@ const ASSUMPTIONS = "Modelled on CPU and memory requests, taints, node selectors
 function simulateAdd(twin, sc) {
   const cap = capacity(twin);
   const impact = [], moves = [];
+  let sizing = null;
   let subject;
   if (sc.kind === "add-model") {
     const mib = Math.round(Number(sc.gpuGiB) * 1024);
@@ -748,6 +801,7 @@ function simulateAdd(twin, sc) {
     }
     for (const [node, n] of per) moves.push({ kind: "vm", name: `${n} VM${n > 1 ? "s" : ""}`, from: null, to: node, how: "new" });
     if (fit) impact.push({ level: fit === count ? "ok" : "warn", title: `${fit} of ${count} fit`, text: [...per].map(([n, k]) => `${k} on ${n}`).join(", "), fix: null });
+    sizing = { nodesNeeded: nodesFor(twin, (count - fit) * item.cpu, (count - fit) * item.mem), withSpare: nodesFor(twin, (count - fit) * item.cpu, (count - fit) * item.mem) + 1, vmsPerNode: Math.max(1, Math.floor(Math.min(workerShape(twin).cpu / item.cpu, workerShape(twin).mem / item.mem))) };
     if (fit < count) impact.push({ level: "crit", title: `${count - fit} do not fit`, text: `the next one: ${reason}`, fix: { kind: "capacity", text: `Add about ${Math.ceil(((count - fit) * item.mem) / 1024)} GiB of memory and ${Math.ceil(((count - fit) * item.cpu) / 1000)} cores, or migrate in waves` } });
     // Headroom left for a node failure.
     const after = [...cap.values()];
@@ -761,7 +815,8 @@ function simulateAdd(twin, sc) {
     verdict: crit ? { level: "crit", title: "Does not fit as it stands", text: "See below for what is missing." }
       : warn ? { level: "warn", title: "Fits, with a caution", text: "It fits, but leaves the cluster tight." }
         : { level: "ok", title: "Fits", text: "There is room, with headroom to spare." },
-    kpis: { downtime: "none", moves: moves.filter((m) => m.to).length, cannotMove: moves.filter((m) => !m.to).length, gpusInService: null, powerW: null, minutes: null },
+    kpis: { downtime: "none", moves: moves.filter((m) => m.to).length, cannotMove: moves.filter((m) => !m.to).length, gpusInService: null, powerW: null, minutes: null, ...(sizing ? { nodesNeeded: sizing.withSpare } : {}) },
+    sizing,
     impact, checks: [{ name: "Scheduler fit", level: crit ? "crit" : warn ? "warn" : "ok" }, ...(sc.kind === "add-model" ? [{ name: "GPU memory per card", level: crit ? "crit" : "ok" }] : [])],
     plan: [], moves,
     view: twin.nodes.map((n) => nodeView(n, twin, { state: moves.some((m) => m.to === n.name) ? "receives" : "same", incoming: moves.filter((m) => m.to === n.name).map((m) => ({ kind: m.kind, name: m.name, card: m.card?.uuid || null, gpuMiB: m.gpuMiB || null })), goneCards: [] })),
@@ -770,9 +825,13 @@ function simulateAdd(twin, sc) {
 }
 
 /** A rolling upgrade drains each worker in turn: each drain is checked on the twin as it is. */
-function simulateUpgrade(twin) {
+function simulateUpgrade(twin, sc = {}) {
+  const critical = criticalSet(sc.critical);
   const workers = twin.nodes.filter((n) => !n.roles.includes("master") && !n.roles.includes("control-plane"));
-  const steps = workers.map((n) => ({ node: n.name, r: replay(twin, { kind: "drain", fail: false, gone: new Set([n.name]), goneCards: new Set(), subject: n.name }) }));
+  const steps0 = workers.map((n) => ({ node: n.name, r: replay(twin, { kind: "drain", fail: false, gone: new Set([n.name]), goneCards: new Set(), subject: n.name, critical }) }));
+  // Clean nodes first, then those needing actions, blocked last: the window is used where it is safe.
+  const rank = { ok: 0, warn: 1, crit: 2 };
+  const steps = sc.kind === "window" ? [...steps0].sort((a, b) => rank[a.r.verdict.level] - rank[b.r.verdict.level]) : steps0;
   const worst = steps.some((s) => s.r.verdict.level === "crit") ? "crit" : steps.some((s) => s.r.verdict.level === "warn") ? "warn" : "ok";
   const impact = steps.map((s) => ({ level: s.r.verdict.level, title: `${s.node}: ${s.r.verdict.title}`, text: s.r.impact.filter((i) => i.level !== "ok").map((i) => i.title).join("; ") || "drains cleanly", fix: s.r.impact.find((i) => i.fix && i.level !== "ok")?.fix || null }));
   const minutes = Math.round(steps.reduce((a, s) => a + (s.r.kpis.minutes || 1) + 8, 0));   // + reboot and rejoin
@@ -788,7 +847,223 @@ function simulateUpgrade(twin) {
     moves: [], view: twin.nodes.map((n) => nodeView(n, twin, { state: "same", incoming: [], goneCards: [] })),
     perNode: steps.map((s) => ({ node: s.node, verdict: s.r.verdict, impact: s.r.impact })),
     assumptions: `${ASSUMPTIONS} Each node is checked against the cluster as it is now; the time adds about 8 minutes per node for update and reboot.`,
+    ...(sc.kind === "window" ? windowPlan(steps, sc) : {}),
   };
+}
+
+/** Fit the node-by-node drains into a maintenance window. */
+function windowPlan(steps, sc) {
+  const hours = Math.min(48, Math.max(1, Number(sc.windowHours) || 4));
+  const per = Math.min(120, Math.max(3, Number(sc.rebootMinutes) || 8));
+  const start = sc.start && Date.parse(sc.start) ? Date.parse(sc.start) : null;
+  let t = 0;
+  const schedule = [];
+  for (const s of steps) {
+    const mins = Math.round((s.r.kpis.minutes || 1) + per);
+    const blocked = s.r.verdict.level === "crit";
+    schedule.push({ node: s.node, from: t, to: t + (blocked ? 0 : mins), minutes: blocked ? 0 : mins, inWindow: !blocked && t + mins <= hours * 60, level: s.r.verdict.level, note: s.r.verdict.title, at: start ? new Date(start + t * 60000).toISOString() : null });
+    if (!blocked) t += mins;
+  }
+  const fit = schedule.filter((x) => x.inWindow).length, todo = schedule.filter((x) => x.level !== "crit").length;
+  const windows = Math.max(1, Math.ceil(t / (hours * 60)));
+  return {
+    scenario: { kind: "window", subject: `${steps.length} worker nodes in a ${hours} h window` },
+    window: { hours, perNodeMinutes: per, totalMinutes: t, fits: fit === todo, nodesInWindow: fit, windowsNeeded: windows, schedule },
+    verdict: schedule.some((x) => x.level === "crit")
+      ? { level: "crit", title: `${schedule.filter((x) => x.level === "crit").length} node(s) cannot be patched as things stand`, text: `${fit} of ${todo} patchable nodes fit in the ${hours} h window.` }
+      : fit === todo ? { level: steps.some((s) => s.r.verdict.level === "warn") ? "warn" : "ok", title: `All ${todo} nodes fit in the ${hours} h window`, text: `About ${Math.round(t / 6) / 10} h of work, in the order below.` }
+        : { level: "warn", title: `${fit} of ${todo} nodes fit in the ${hours} h window`, text: `The rest needs ${windows - 1} more window${windows > 2 ? "s" : ""} of ${hours} h.` },
+    plan: schedule.map((x) => ({ text: `${x.at ? `${x.at.slice(11, 16)} ` : `+${Math.floor(x.from / 60)}:${String(x.from % 60).padStart(2, "0")} `}${x.node}${x.level === "crit" ? ": blocked" : `: ${x.minutes} min`}${x.inWindow || x.level === "crit" ? "" : " (next window)"}`, level: x.level === "crit" ? "crit" : x.inWindow ? (x.level === "warn" ? "warn" : "info") : "warn" })),
+  };
+}
+
+/* ─────────────────────────── more scenarios ─────────────────────────── */
+
+const median = (xs) => { const a = [...xs].sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : 0; };
+function workerShape(twin) {
+  const w = twin.nodes.filter((n) => !n.roles.includes("master") && !n.roles.includes("control-plane"));
+  return { cpu: median(w.map((n) => n.cpuAlloc)) || 1, mem: median(w.map((n) => n.memAlloc)) || 1, count: w.length };
+}
+const nodesFor = (twin, cpu, mem) => { const sh = workerShape(twin); return Math.max(0, Math.ceil(Math.max(cpu / sh.cpu, mem / sh.mem))); };
+
+/** Peak load: extra replicas of every workload in the chosen namespaces. */
+function simulatePeak(twin, sc) {
+  const factor = Number(sc.factor);
+  if (!(factor > 1 && factor <= 10)) throw Object.assign(new Error("Give a load factor between 1.1 and 10 (e.g. 3 for ×3)"), { status: 400 });
+  const pick = criticalSet(sc.namespaces);
+  const groups = new Map();
+  for (const p of twin.pods.filter((x) => x.owner && ["Deployment", "StatefulSet", "ReplicaSet"].includes(x.owner.kind) && !x.daemon && pick(x.ns))) {
+    const k = `${p.ns}/${p.owner.kind}/${p.owner.name}`;
+    if (!groups.has(k)) groups.set(k, { sample: p, n: 0 });
+    groups.get(k).n++;
+  }
+  if (!groups.size) throw Object.assign(new Error("No Deployments or StatefulSets in those namespaces"), { status: 400 });
+  const cap = capacity(twin);
+  const impact = [], moves = [];
+  let missCpu = 0, missMem = 0, extra = 0, unplaced = 0;
+  const short = [], quotaHit = new Set();
+  for (const g of [...groups.values()].sort((a, b) => b.sample.mem - a.sample.mem)) {
+    const add = Math.ceil(g.n * factor) - g.n;
+    let miss = 0;
+    for (let i = 0; i < add; i++) {
+      const item = { ...g.sample, newPod: true, node: null };
+      const to = place(cap, item);
+      extra++;
+      if (to) moves.push({ kind: "pod", name: `${g.sample.owner.name} +${i + 1}`, workload: g.sample.owner.name, ns: g.sample.ns, from: null, to: to.node });
+      else { miss++; unplaced++; missCpu += item.cpu; missMem += item.mem; if (!quotaAllows(cap, item, { dry: true })) quotaHit.add(item.ns); }
+    }
+    if (miss) short.push(`${g.sample.ns}/${g.sample.owner.name} (${miss} of ${add})`);
+  }
+  // Real usage scaled by the factor, on the busiest nodes.
+  const hot = [];
+  if (twin.usageKnown) for (const n of twin.nodes) {
+    const mine = twin.pods.filter((p) => p.node === n.name && pick(p.ns) && p.usage);
+    if (!mine.length) continue;
+    const cpu = (n.cpuUsed || 0) + mine.reduce((a, p) => a + p.usage.cpu * (factor - 1), 0);
+    const pct = n.cpuAlloc ? Math.round((cpu / n.cpuAlloc) * 100) : 0;
+    if (pct > 85) hot.push(`${n.name} ${pct}% CPU`);
+  }
+  const need = nodesFor(twin, missCpu, missMem);
+  if (moves.length) impact.push({ level: "ok", title: `${moves.length} of ${extra} extra replicas fit`, text: `across ${[...new Set(moves.map((m) => m.to))].length} nodes`, fix: null });
+  if (unplaced) impact.push({ level: "crit", title: `${unplaced} extra replicas do not fit`, text: `${short.slice(0, 8).join(", ")}${short.length > 8 ? "…" : ""}`, fix: { kind: "capacity", text: `Add about ${need + 1} worker node${need + 1 > 1 ? "s" : ""} of the usual size (${need} for the load, 1 to survive a node failure), or raise the limits` } });
+  if (quotaHit.size) impact.push({ level: "warn", title: "Namespace quotas stop the scale-up", text: [...quotaHit].join(", "), fix: { kind: "quota", text: "Raise the quota for the peak period" } });
+  if (hot.length) impact.push({ level: "warn", title: "By real usage, these nodes would run hot", text: hot.join(", "), fix: { kind: "capacity", text: "Add capacity or spread the busiest apps" } });
+  const crit = unplaced > 0;
+  return {
+    scenario: { kind: "peak", subject: `×${factor} on ${groups.size} workloads` }, at: twin.at, cluster: twin.cluster,
+    verdict: crit ? { level: "crit", title: `Not ready for ×${factor}`, text: `${unplaced} replicas have nowhere to run; about ${need} more node${need === 1 ? "" : "s"} needed.` }
+      : hot.length || quotaHit.size ? { level: "warn", title: `Fits ×${factor}, with cautions`, text: "Requests fit, but see below." } : { level: "ok", title: `Ready for ×${factor}`, text: "Every extra replica fits." },
+    kpis: { downtime: crit ? "outage" : "none", moves: moves.length, cannotMove: unplaced, nodesNeeded: need, gpusInService: null, powerW: null, minutes: null },
+    impact, checks: [{ name: `Scheduler fit · ${extra} extra replicas`, level: crit ? "crit" : "ok" }, { name: "Namespace quotas", level: quotaHit.size ? "warn" : "ok" }, ...(twin.usageKnown ? [{ name: "Real usage ×factor", level: hot.length ? "warn" : "ok" }] : [])],
+    plan: [], moves,
+    view: twin.nodes.map((n) => nodeView(n, twin, { state: moves.some((m) => m.to === n.name) ? "receives" : "same", incoming: moves.filter((m) => m.to === n.name).map((m) => ({ kind: "pod", name: m.name })), goneCards: [] })),
+    assumptions: `${ASSUMPTIONS} Peak load is modelled as extra replicas of each workload in the chosen namespaces, with the same requests.`,
+  };
+}
+
+/** Retire nodes: drain them all at once, and what it saves. */
+function simulateRetire(twin, sc) {
+  const names = (Array.isArray(sc.nodes) ? sc.nodes : String(sc.nodes || "").split(",")).map((x) => String(x).trim()).filter(Boolean);
+  const gone = new Set(names.filter((n) => twin.nodes.some((x) => x.name === n)));
+  if (!gone.size) throw Object.assign(new Error("Pick the nodes to retire"), { status: 400 });
+  const out = replay(twin, { kind: "drain", fail: false, gone, goneCards: new Set(), subject: `${gone.size} node${gone.size > 1 ? "s" : ""}`, critical: criticalSet(sc.critical) });
+  const nodeW = Number(process.env.OPS_TWIN_NODE_WATTS) || 350;
+  const gpuW = twin.nodes.filter((n) => gone.has(n.name)).flatMap((n) => n.cards).reduce((a, c) => a + (c.powerW || 0), 0);
+  const watts = gone.size * nodeW + gpuW;
+  const kwhMonth = Math.round((watts * 730) / 1000);
+  const perNode = Number(process.env.OPS_TWIN_NODE_COST_MONTH) || 0, kwhPrice = Number(process.env.OPS_TWIN_KWH_PRICE) || 0;
+  const currency = process.env.OPS_TWIN_CURRENCY || "";
+  const money = perNode || kwhPrice ? Math.round(gone.size * perNode + kwhMonth * kwhPrice) : null;
+  out.scenario = { kind: "retire", subject: [...gone].join(", ") };
+  out.savings = { nodes: gone.size, watts, kwhMonth, money, currency, basis: `${nodeW} W per node${gpuW ? ` + ${Math.round(gpuW)} W of GPUs measured` : ""}${perNode ? `, ${perNode} per node per month` : ""}${kwhPrice ? `, ${kwhPrice} per kWh` : ""}` };
+  out.impact.unshift({ level: "ok", title: `Saves about ${kwhMonth} kWh a month${money != null ? ` and ${currency}${money.toLocaleString()} a month` : ""}`, text: out.savings.basis + (money == null ? ". Set OPS_TWIN_NODE_COST_MONTH or OPS_TWIN_KWH_PRICE to see money." : ""), fix: null });
+  if (out.verdict.level === "ok") out.verdict = { level: "ok", title: `Safe to retire ${gone.size} node${gone.size > 1 ? "s" : ""}`, text: "Everything on them fits on the remaining nodes." };
+  return out;
+}
+
+/** Security blast radius: what a compromised node or service account can reach. Read-only. */
+function simulateBlast(twin, sc) {
+  const impact = [], plan = [];
+  let subject, crit = 0;
+  const rolesOf = (ns, sa) => (twin.saBindings || []).filter((b) => b.ns === ns && b.sa === sa);
+  const strong = (r) => ["cluster-admin", "admin", "edit"].includes(r.role) || /admin/.test(r.role || "");
+  if (sc.node) {
+    const n = twin.nodes.find((x) => x.name === sc.node);
+    if (!n) throw Object.assign(new Error(`No node called ${sc.node}`), { status: 400 });
+    subject = `node ${n.name}`;
+    const pods = twin.pods.filter((p) => p.node === n.name);
+    const sas = [...new Set(pods.map((p) => `${p.ns}/${p.sa}`))];
+    const priv = pods.filter((p) => p.privileged);
+    const secrets = pods.reduce((a, p) => a + (p.secrets?.length || 0), 0);
+    const elevated = sas.flatMap((k) => { const [ns, sa] = k.split("/"); return rolesOf(ns, sa).filter(strong).map((r) => `${k} → ${r.role} ${r.scope === "cluster" ? "cluster-wide" : `in ${r.scope}`}`); });
+    impact.push({ level: "warn", title: `${pods.length} pods in ${new Set(pods.map((p) => p.ns)).size} namespaces run here`, text: `${sas.length} service accounts' tokens and ${secrets} mounted secrets are readable from the node`, fix: null });
+    if (elevated.length) { crit += elevated.some((e) => /cluster-admin|cluster-wide/.test(e)) ? 1 : 0; impact.push({ level: elevated.some((e) => /cluster-admin/.test(e)) ? "crit" : "warn", title: `${elevated.length} powerful service account${elevated.length > 1 ? "s" : ""} reachable`, text: elevated.slice(0, 8).join("; "), fix: { kind: "rbac", text: "Reduce those roles, or keep these workloads off shared nodes" } }); }
+    if (priv.length) impact.push({ level: "warn", title: `${priv.length} privileged or host-level pod${priv.length > 1 ? "s" : ""}`, text: priv.slice(0, 6).map((p) => `${p.ns}/${p.name}`).join(", "), fix: { kind: "scc", text: "Review why they need host access (SCC)" } });
+    if (n.cards.length) impact.push({ level: "warn", title: `${n.cards.length} GPU${n.cards.length > 1 ? "s" : ""} and their models`, text: "model weights and prompts in memory on this node", fix: null });
+    plan.push({ text: `Cordon ${n.name} and drain it (see "Drain a node" for the impact)`, level: "info" }, { text: `Rotate tokens of the ${sas.length} service accounts that ran here`, level: "warn" }, { text: "Rotate the secrets mounted here", level: "warn" }, { text: "Rebuild the node from a clean image before it rejoins", level: "info" });
+  } else {
+    const [ns, sa] = String(sc.serviceAccount || "").split("/");
+    if (!ns || !sa) throw Object.assign(new Error("Give a node, or a service account as namespace/name"), { status: 400 });
+    subject = `service account ${ns}/${sa}`;
+    const roles = rolesOf(ns, sa);
+    const pods = twin.pods.filter((p) => p.ns === ns && p.sa === sa);
+    const clusterWide = roles.filter((r) => r.scope === "cluster");
+    const nsReach = [...new Set(roles.filter((r) => r.scope !== "cluster").map((r) => r.scope))];
+    if (clusterWide.some((r) => r.role === "cluster-admin")) { crit++; impact.push({ level: "crit", title: "Full control of the cluster", text: "bound to cluster-admin: every namespace, secret and node", fix: { kind: "rbac", text: "Replace cluster-admin with the narrowest role it needs" } }); }
+    else if (clusterWide.length) impact.push({ level: "warn", title: `Cluster-wide: ${clusterWide.map((r) => r.role).join(", ")}`, text: "reaches objects in every namespace", fix: { kind: "rbac", text: "Scope it to the namespaces it needs" } });
+    if (nsReach.length) impact.push({ level: roles.some((r) => ["admin", "edit"].includes(r.role)) ? "warn" : "ok", title: `Namespaces it can act in: ${nsReach.length}`, text: nsReach.slice(0, 12).join(", ") + (roles.some((r) => ["admin", "edit"].includes(r.role)) ? " (including secrets)" : ""), fix: null });
+    if (!roles.length) impact.push({ level: "ok", title: "No roles bound", text: "only what every authenticated account can do", fix: null });
+    impact.push({ level: "ok", title: `${pods.length} running pod${pods.length === 1 ? "" : "s"} use it`, text: [...new Set(pods.map((p) => p.owner?.name || p.name))].slice(0, 8).join(", ") || "none", fix: null });
+    plan.push({ text: `Rotate the token of ${ns}/${sa}`, level: "warn" }, { text: "Restart the pods that use it", level: "info" }, { text: "Review its role bindings", level: "info" });
+  }
+  return {
+    scenario: { kind: "blast", subject }, at: twin.at, cluster: twin.cluster,
+    verdict: crit ? { level: "crit", title: "Wide blast radius", text: "A compromise here reaches the whole cluster." } : impact.some((i) => i.level === "warn") ? { level: "warn", title: "Contained, with exposures", text: "See what it reaches and the steps below." } : { level: "ok", title: "Narrow blast radius", text: "Little is reachable from here." },
+    kpis: { downtime: "none", moves: 0, cannotMove: 0, gpusInService: null, powerW: null, minutes: null },
+    impact, checks: [{ name: "Role bindings of service accounts", level: crit ? "crit" : "ok" }], plan, moves: [],
+    view: twin.nodes.map((n) => nodeView(n, twin, { state: sc.node === n.name ? "lost" : "same", incoming: [], goneCards: [] })),
+    assumptions: "Read from role bindings, pod service accounts, mounted secrets and pod security settings. Network reach (NetworkPolicies) is not modelled.",
+  };
+}
+
+/**
+ * DR failover between clusters: can the target cluster run everything from the
+ * source (outside OpenShift's own namespaces)? Pure; takes two twins.
+ */
+export function failover(src, dst, { namespaces = null, critical = null } = {}) {
+  const pick = namespaces && String(namespaces).trim() ? criticalSet(namespaces) : (ns) => !/^(openshift|kube-|default$)/.test(ns);
+  const isCrit = criticalSet(critical);
+  const cap = capacity(dst);
+  const groups = new Map();
+  for (const p of src.pods.filter((x) => !x.daemon && !x.mirror && pick(x.ns) && !x.vm)) {
+    const k = p.owner ? `${p.ns}/${p.owner.kind}/${p.owner.name}` : `${p.ns}/Pod/${p.name}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(p);
+  }
+  const impact = [], moves = [], missing = [];
+  let missCpu = 0, missMem = 0;
+  for (const [k, pods] of [...groups].sort((a, b) => b[1][0].gpuMem - a[1][0].gpuMem || b[1][0].mem - a[1][0].mem)) {
+    let placed = 0;
+    for (const p of pods) {
+      const item = { ...p, node: null, pvcs: [], newPod: false };
+      const to = place(cap, item);
+      if (to) { placed++; moves.push({ kind: p.model ? "model" : "pod", name: p.model || p.name, ns: p.ns, from: `${src.cluster}/${p.node}`, to: to.node }); }
+      else { missCpu += p.cpu; missMem += p.mem; }
+    }
+    if (placed < pods.length) missing.push({ k, critical: isCrit(pods[0].ns), placed, of: pods.length, gpu: pods[0].gpuMem > 0 });
+  }
+  let vmMiss = 0;
+  for (const v of src.vms.filter((x) => pick(x.ns))) {
+    const to = place(cap, { cpu: v.cpu, mem: v.mem, gpus: 0, gpuMem: 0, tolerations: [], nodeSelector: {} });
+    if (to) moves.push({ kind: "vm", name: v.name, ns: v.ns, from: `${src.cluster}/${v.node}`, to: to.node, how: "restore" }); else { vmMiss++; missCpu += v.cpu; missMem += v.mem; }
+  }
+  const critMiss = missing.filter((m) => m.critical);
+  const need = nodesFor(dst, missCpu, missMem);
+  if (moves.length) impact.push({ level: "ok", title: `${moves.length} pods, models and VMs fit on ${dst.cluster}`, text: `${groups.size} workloads and ${src.vms.filter((x) => pick(x.ns)).length} VMs checked`, fix: null });
+  if (critMiss.length) impact.push({ level: "crit", title: `${critMiss.length} critical workload${critMiss.length > 1 ? "s" : ""} would not run`, text: critMiss.slice(0, 8).map((m) => `${m.k} (${m.placed}/${m.of})`).join(", "), fix: { kind: "capacity", text: `Add about ${need} node${need === 1 ? "" : "s"} at the DR site, or reserve capacity for critical apps` } });
+  const other = missing.filter((m) => !m.critical);
+  if (other.length) impact.push({ level: "warn", title: `${other.length} other workload${other.length > 1 ? "s" : ""} would run short`, text: other.slice(0, 8).map((m) => `${m.k} (${m.placed}/${m.of})${m.gpu ? " GPU" : ""}`).join(", "), fix: { kind: "capacity", text: `About ${need} more node${need === 1 ? "" : "s"} for everything` } });
+  if (vmMiss) impact.push({ level: "warn", title: `${vmMiss} VM${vmMiss > 1 ? "s" : ""} would not fit`, text: "restored from backup or replicated", fix: null });
+  impact.push({ level: "ok", title: "Data", text: "Persistent volumes must be replicated or restored to the DR site (ODF Regional-DR, OADP/Velero); the twin checks compute only.", fix: null });
+  const level = critMiss.length ? "crit" : other.length || vmMiss ? "warn" : "ok";
+  return {
+    scenario: { kind: "dr-failover", subject: `${src.cluster} → ${dst.cluster}` }, at: dst.at, cluster: dst.cluster,
+    verdict: level === "crit" ? { level, title: "DR site cannot take the critical load", text: `${critMiss.length} critical workload(s) have nowhere to run on ${dst.cluster}.` }
+      : level === "warn" ? { level, title: "Critical load fits; the rest runs short", text: `About ${need} more node(s) to run everything.` } : { level, title: `${dst.cluster} can take everything`, text: "Every workload, model and VM fits." },
+    kpis: { downtime: level === "crit" ? "outage" : "none", moves: moves.length, cannotMove: missing.reduce((a, m) => a + m.of - m.placed, 0) + vmMiss, nodesNeeded: need, gpusInService: null, powerW: null, minutes: null },
+    impact, checks: [{ name: "Compute and GPU fit at the DR site", level }, { name: "Data replication", level: "ok", note: "not modelled" }],
+    plan: [], moves, view: dst.nodes.map((n) => nodeView(n, dst, { state: moves.some((m) => m.to === n.name) ? "receives" : "same", incoming: moves.filter((m) => m.to === n.name).map((m) => ({ kind: m.kind, name: m.name })), goneCards: [] })),
+    assumptions: `${ASSUMPTIONS} Failover places every workload of the source cluster on the target as it is now; storage placement is not checked across sites.`,
+  };
+}
+
+/** N+1: can the cluster lose any one worker without an outage? */
+export function resilience(twin, { critical = null } = {}) {
+  const crit = criticalSet(critical);
+  const workers = twin.nodes.filter((n) => !n.roles.includes("master") && !n.roles.includes("control-plane"));
+  const per = workers.map((n) => { const r = replay(twin, { kind: "node-fail", fail: true, gone: new Set([n.name]), goneCards: new Set(), subject: n.name, critical: crit }); return { node: n.name, level: r.verdict.level, title: r.verdict.title, stops: r.impact.filter((i) => i.level === "crit").map((i) => i.title) }; });
+  const ok = per.filter((x) => x.level !== "crit").length;
+  return { at: twin.at, cluster: twin.cluster, score: workers.length ? Math.round((ok / workers.length) * 100) : 100, workers: workers.length, survivable: ok, failing: per.filter((x) => x.level === "crit"), per };
 }
 
 /* ─────────────────────────── service entry points ─────────────────────────── */
@@ -796,12 +1071,152 @@ function simulateUpgrade(twin) {
 export async function run(cluster, sc, { actor = null, fresh = false } = {}) {
   const twin = await snapshot(cluster, { fresh });
   const out = simulate(twin, sc);
+  out.risk = computeRisk(out, { cluster, critical: sc?.critical });
+  if (sc?.kind === "drain" && out.moves.some((m) => m.to && m.kind !== "vm")) await recordPrediction(cluster, sc.node, out, actor).catch(() => {});
   const h = _history.get(cluster) || [];
-  h.unshift({ at: new Date(_deps.now()).toISOString(), scenario: out.scenario, verdict: out.verdict.title, level: out.verdict.level, actor });
+  h.unshift({ at: new Date(_deps.now()).toISOString(), scenario: out.scenario, verdict: out.verdict.title, level: out.verdict.level, risk: out.risk.score, actor });
   _history.set(cluster, h.slice(0, 20));
   return out;
 }
 export function history(cluster) { return _history.get(cluster) || []; }
+
+/* ─────────────────────────── risk score ─────────────────────────── */
+
+const PROD = () => new RegExp(process.env.OPS_TWIN_PROD_PATTERN || process.env.USER_ACCESS_PROD_PATTERN || "prod", "i");
+
+/**
+ * One number a change board can use: 0–100, Low / Medium / High, and the
+ * reasons that made it. Deterministic, from the simulation only.
+ */
+export function computeRisk(out, { cluster = out.cluster, critical = null } = {}) {
+  const reasons = [];
+  let score = { ok: 8, warn: 35, crit: 70 }[out.verdict.level] ?? 35;
+  reasons.push({ points: score, text: `Verdict: ${out.verdict.title}` });
+  const add = (points, text) => { if (points) { score += points; reasons.push({ points, text }); } };
+  const crits = out.impact.filter((i) => i.level === "crit").length, warns = out.impact.filter((i) => i.level === "warn").length;
+  add(Math.min(15, Math.max(0, crits - 1) * 5), `${crits} findings that stop the change`);
+  add(Math.min(12, warns * 3), `${warns} findings that need action first`);
+  const k = out.kpis || {};
+  if (k.cannotMove) add(Math.min(10, 2 + k.cannotMove), `${k.cannotMove} items with nowhere to run`);
+  if (k.downtime && k.downtime !== "none" && k.downtime !== "outage") add(4, `Brief interruption expected (${k.downtime})`);
+  if (k.minutes > 60) add(4, `Long change (about ${k.minutes} min)`);
+  const isCrit = criticalSet(critical);
+  if (critical && out.moves?.some((m) => m.ns && isCrit(m.ns))) add(6, "Critical applications are moved");
+  if (PROD().test(String(cluster))) add(10, "Production cluster");
+  if (out.scenario?.kind === "blast") { score = Math.min(score, out.verdict.level === "crit" ? 90 : score); }
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const level = score >= 67 ? "High" : score >= 34 ? "Medium" : "Low";
+  return { score, level, snow: level === "High" ? "high" : level === "Medium" ? "moderate" : "low", reasons };
+}
+
+/* ─────────────────────────── accuracy ─────────────────────────── */
+
+/**
+ * A drain simulation predicts where each workload goes. When that node is
+ * later drained for real, the prediction is compared with where the pods
+ * actually landed: the twin's track record, in the open.
+ */
+async function recordPrediction(cluster, node, out, actor) {
+  const st = await loadState();
+  const moves = out.moves.filter((m) => m.to && m.kind !== "vm").map((m) => ({ ns: m.ns, workload: m.workload || m.name, to: m.to, kind: m.kind }));
+  st.predictions = st.predictions.filter((x) => !(x.cluster === cluster && x.node === node && !x.checkedAt));
+  st.predictions.unshift({ id: `P${_deps.now().toString(36)}`, cluster, node, at: new Date(_deps.now()).toISOString(), actor, verdict: out.verdict.level, moves: moves.slice(0, 300) });
+  st.predictions = st.predictions.slice(0, 200);
+  await saveState();
+}
+
+/** Score a prediction against the twin as it is now. Pure. */
+export function scorePrediction(pred, twin) {
+  const node = twin.nodes.find((n) => n.name === pred.node);
+  const left = twin.pods.filter((p) => p.node === pred.node && !p.daemon && !p.mirror).length;
+  if (node && node.schedulable && left) return null;                      // not drained yet
+  let hit = 0, landed = 0;
+  const rows = [];
+  for (const m of pred.moves) {
+    const now = twin.pods.filter((p) => p.ns === m.ns && (p.model === m.workload || p.owner?.name === m.workload || p.name === m.workload || wlabel(p) === m.workload));
+    if (!now.length) { rows.push({ ...m, actual: null, match: null }); continue; }
+    landed++;
+    const ok = now.some((p) => p.node === m.to);
+    if (ok) hit++;
+    rows.push({ ...m, actual: [...new Set(now.map((p) => p.node))].join(", "), match: ok });
+  }
+  // Also right if the prediction was "everything keeps running somewhere".
+  return { landed, hit, placementPct: landed ? Math.round((hit / landed) * 100) : null, rows };
+}
+
+/** Check open predictions on a cluster against the live twin. */
+export async function verifyPredictions(cluster, twin) {
+  const st = await loadState();
+  let changed = 0;
+  for (const p of st.predictions.filter((x) => x.cluster === cluster && !x.checkedAt)) {
+    const r = scorePrediction(p, twin);
+    if (r === null) {
+      if (_deps.now() - Date.parse(p.at) > 30 * 86400000) { p.checkedAt = new Date(_deps.now()).toISOString(); p.expired = true; changed++; }
+      continue;
+    }
+    Object.assign(p, { checkedAt: new Date(_deps.now()).toISOString(), result: { landed: r.landed, hit: r.hit, placementPct: r.placementPct }, rows: r.rows.slice(0, 50) });
+    changed++;
+  }
+  if (changed) await saveState();
+  return accuracy(cluster);
+}
+
+/** The track record: how often the twin put work where the scheduler did. */
+export async function accuracy(cluster = null) {
+  const st = await loadState();
+  const mine = st.predictions.filter((x) => !cluster || x.cluster === cluster);
+  const done = mine.filter((x) => x.result && x.result.landed);
+  const landed = done.reduce((a, x) => a + x.result.landed, 0), hit = done.reduce((a, x) => a + x.result.hit, 0);
+  return {
+    evaluated: done.length, open: mine.filter((x) => !x.checkedAt).length,
+    placementPct: landed ? Math.round((hit / landed) * 100) : null, workloads: landed,
+    recent: done.slice(0, 10).map((x) => ({ id: x.id, node: x.node, at: x.at, checkedAt: x.checkedAt, ...x.result, misses: (x.rows || []).filter((r) => r.match === false).slice(0, 5) })),
+    note: "A prediction is checked once its node has been drained for real: each workload counts as right when it landed on the node the twin named. Kubernetes may also choose another node that fits; that counts as a miss here.",
+  };
+}
+
+/* ─────────────────────────── resilience trend ─────────────────────────── */
+
+/** Score N+1 now, keep a daily trend, and say if it dropped. */
+export async function resilienceCheck(cluster, { critical = process.env.OPS_TWIN_CRITICAL_NAMESPACES || null, fresh = true } = {}) {
+  const twin = await snapshot(cluster, { fresh });
+  const r = resilience(twin, { critical });
+  const st = await loadState();
+  const trend = st.resilience[cluster] || [];
+  const day = new Date(_deps.now()).toISOString().slice(0, 10);
+  const prev = trend[0];
+  const entry = { day, at: twin.at, score: r.score, survivable: r.survivable, workers: r.workers };
+  if (prev?.day === day) trend[0] = entry; else trend.unshift(entry);
+  st.resilience[cluster] = trend.slice(0, 90);
+  await saveState();
+  if (prev && r.score < prev.score && _deps.notify) {
+    try { _deps.notify({ type: "ops-twin", severity: r.score < 100 ? "warning" : "info", title: `Resilience on ${cluster} fell to ${r.score}%`, message: `${r.failing.length} node failure(s) would now cause an outage: ${r.failing.slice(0, 5).map((f) => f.node).join(", ")}. It was ${prev.score}% on ${prev.day}.` }); } catch { /* best effort */ }
+  }
+  return { ...r, trend: st.resilience[cluster] };
+}
+export async function resilienceTrend(cluster) { const st = await loadState(); return st.resilience[cluster] || []; }
+
+/** The compact twin a hub needs from another cluster for a DR check. */
+export function exportTwin(twin) {
+  return {
+    cluster: twin.cluster, at: twin.at,
+    nodes: twin.nodes.map((n) => ({ ...n })), pods: twin.pods.map((p) => ({ ...p, secrets: undefined })), vms: twin.vms, models: twin.models,
+    pdbs: twin.pdbs, racks: twin.racks, sites: twin.sites, volumes: {}, quotas: {}, usageKnown: false, saBindings: [],
+  };
+}
+
+/** Evidence for auditors: the simulation, its risk, and the model behind it. */
+export function evidence(out, { actor = null, ticket = null } = {}) {
+  return [
+    `OPS TWIN — PRE-CHANGE EVIDENCE`,
+    `Generated ${new Date(_deps.now()).toISOString()}${actor ? ` by ${actor}` : ""}${ticket ? ` · change ${ticket}` : ""}`,
+    out.risk ? `Risk score: ${out.risk.score}/100 (${out.risk.level})\n${out.risk.reasons.map((r) => `  +${r.points}  ${r.text}`).join("\n")}` : "",
+    "",
+    report(out),
+    "",
+    "Method: the twin is a read-only copy of the cluster's nodes, pods, disruption budgets, volumes, quotas and GPUs, taken at the time above. The change was replayed with the scheduler's rules; nothing was changed on the cluster.",
+  ].filter((x) => x !== "").join("\n");
+}
 
 /** A plain-text report: for a change request, an export, or AI Chat. */
 export function report(out) {
@@ -809,6 +1224,10 @@ export function report(out) {
   L.push(`Ops Twin — what if: ${SCENARIOS.find((s) => s.id === out.scenario.kind)?.label || out.scenario.kind} (${out.scenario.subject})`);
   L.push(`Cluster: ${out.cluster} · twin read ${out.at}`);
   L.push("", `Verdict: ${out.verdict.title}. ${out.verdict.text}`);
+  if (out.risk) L.push(`Risk: ${out.risk.score}/100 (${out.risk.level})`);
+  if (out.window) L.push(`Window: ${out.window.hours} h · ${out.window.nodesInWindow} nodes fit · ${out.window.windowsNeeded} window(s) needed`);
+  if (out.savings) L.push(`Saves: about ${out.savings.kwhMonth} kWh a month${out.savings.money != null ? `, ${out.savings.currency}${out.savings.money} a month` : ""}`);
+  if (out.sizing) L.push(`Sizing: ${out.sizing.nodesNeeded} more node(s), ${out.sizing.withSpare} with one spare; about ${out.sizing.vmsPerNode} such VMs per node`);
   const k = out.kpis;
   L.push(`Expected downtime: ${k.downtime}${k.minutes ? ` · about ${k.minutes} min` : ""} · moves: ${k.moves}${k.cannotMove ? ` · cannot move: ${k.cannotMove}` : ""}${k.gpusInService ? ` · GPUs in service: ${k.gpusInService}` : ""}${k.powerW != null ? ` · GPU power: ${k.powerW} W` : ""}`);
   if (out.impact.length) { L.push("", "Expected impact:"); for (const i of out.impact) L.push(`- [${i.level === "ok" ? "OK" : i.level === "warn" ? "ACTION" : "STOPS"}] ${i.title}: ${i.text}${i.fix ? ` → Fix: ${i.fix.text}` : ""}`); }
@@ -828,7 +1247,22 @@ export function parseQuestion(twin, q) {
   const rack = Object.keys(twin.racks).filter((r) => r !== "Unassigned").find((r) => new RegExp(`\\brack\\s*${r.toLowerCase().replace(/[^a-z0-9]/g, ".?")}\\b|\\b${r.toLowerCase()}\\b`).test(s));
   const gpu = s.match(/\bgpu[-\s#]?(\d+)\b/);
   const gibM = s.match(/(\d+(?:\.\d+)?)\s*(gib|gb|g)\b/);
+  const hours = s.match(/(\d+(?:\.\d+)?)\s*(h|hr|hrs|hours?)\b/);
+  if (/\b(window|patch)/.test(s) && hours) return { kind: "window", windowHours: Number(hours[1]) };
   if (/\bupgrad/.test(s)) return { kind: "upgrade" };
+  const factor = s.match(/(?:x|×)\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:x|×|times)\b/);
+  if (factor && /\b(peak|traffic|load|sale|month.end|scale)/.test(s)) {
+    const ns = [...new Set(twin.pods.map((p) => p.ns))].filter((n) => s.includes(n.toLowerCase()));
+    return { kind: "peak", factor: Number(factor[1] || factor[2]), namespaces: ns.length ? ns : twin.pods.filter((p) => !/^(openshift|kube-)/.test(p.ns)).map((p) => p.ns).filter((v, i, a) => a.indexOf(v) === i) };
+  }
+  const site = Object.keys(twin.sites || {}).sort((a, b) => b.length - a.length).find((x) => s.includes(x.toLowerCase()));
+  if (site && /\b(site|zone|dc|data ?cent|region|down|fail|lose|outage)/.test(s)) return { kind: "site-fail", site };
+  if (/\b(retire|decommission|switch off|remove)\b/.test(s) && node) return { kind: "retire", nodes: twin.nodes.map((n) => n.name).filter((n) => s.includes(n.toLowerCase())) };
+  if (/\b(compromis|breach|hacked|blast)/.test(s)) {
+    const sa = s.match(/([a-z0-9-]+)\/([a-z0-9-]+)/);
+    if (node) return { kind: "blast", node };
+    if (sa) return { kind: "blast", serviceAccount: `${sa[1]}/${sa[2]}` };
+  }
   if (/\b(migrat|move|bring)\b.*\bvms?\b|\bvms?\b.*\b(fit|add|migrat)/.test(s)) {
     const count = Number(s.match(/(\d+)\s*vms?/)?.[1]) || 10;
     const cpu = Number(s.match(/(\d+)\s*(v?cpus?|cores?)/)?.[1]) || 2;
