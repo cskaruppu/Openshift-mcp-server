@@ -10556,3 +10556,5 @@ code.new { color: #22a06b; }
 .ua-modal-in h3 { margin: 0 0 6px; font: 800 1rem var(--tcs-font); }
 .ua-modal-in p { margin: 0 0 12px; font-size: 0.8rem; color: var(--vc-ink-2); line-height: 1.5; }
 .ua-pw { display: block; font-family: var(--tcs-font-mono); font-size: 1.1rem; padding: 10px 12px; border-radius: 8px; background: var(--vc-surface-2); border: 1px solid var(--vc-line); letter-spacing: .05em; user-select: all; }
+.ua-snowck { display: inline-flex; align-items: center; gap: 6px; color: var(--vc-ink-2); cursor: pointer; }
+.ua-wait { color: var(--vc-med); margin-top: 3px; }

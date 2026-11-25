@@ -6,8 +6,9 @@
 # verb on it. The last rule grants "bind" on the five roles User & Access
 # offers, so the account can give cluster-admin without being cluster-admin.
 #
-# Apply on every cluster you manage (the spoke agent's service account on a
-# spoke, agentic-ai-server on the hub):
+# Apply on every cluster you manage. The bindings name all three accounts the
+# platform may use (hub, spoke agent, Private AI GPU-cluster access); a name
+# that does not exist on a cluster is simply ignored there.
 #   oc apply -f deploy/user-access/rbac.yaml
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -67,7 +68,9 @@ metadata:
   name: tcs-user-access
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: tcs-user-access }
 subjects:
-  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }        # hub
+  - { kind: ServiceAccount, name: agentic-ai-agent, namespace: openshift-mcp }         # spoke agent
+  - { kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access } # Private AI GPU cluster access
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -76,7 +79,9 @@ metadata:
   namespace: openshift-config
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: tcs-user-access-htpasswd }
 subjects:
-  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }        # hub
+  - { kind: ServiceAccount, name: agentic-ai-agent, namespace: openshift-mcp }         # spoke agent
+  - { kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access } # Private AI GPU cluster access
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -85,4 +90,6 @@ metadata:
   namespace: kube-system
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: tcs-user-access-kubeadmin }
 subjects:
-  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }        # hub
+  - { kind: ServiceAccount, name: agentic-ai-agent, namespace: openshift-mcp }         # spoke agent
+  - { kind: ServiceAccount, name: tcs-agentic-ai-hub, namespace: tcs-agentic-ai-access } # Private AI GPU cluster access

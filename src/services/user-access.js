@@ -36,11 +36,29 @@ const ROLE_LABEL = { view: "Viewer", edit: "Developer", admin: "Namespace admin"
 
 let _deps = {
   run: async (_cluster, fn) => fn(),              // run fn with the cluster's API in context
+  // Run one operation on a cluster. The server routes it: to a spoke agent's
+  // own User & Access endpoint, through Private AI cluster access, or through
+  // direct access. The default runs it in-process with run().
+  exec: null,
   ocp: null,                                      // { fetch, post, patch, delete } — context-aware
   now: () => Date.now(),
   audit: () => {},
+  snApproval: null,                               // async (sysId) → "approved" | "rejected" | other
 };
 export function configureUserAccess(deps) { _deps = { ..._deps, ...deps }; }
+const exec = (cluster, op, payload, ctx) => (_deps.exec ? _deps.exec(cluster, op, payload, ctx) : _deps.run(cluster, () => localOp(op, payload)));
+
+/** One operation on the cluster in context. Also what a spoke runs for the hub. */
+export async function localOp(op, p = {}) {
+  switch (op) {
+    case "read": return readCluster();
+    case "grant": return applyGrant(p.q, p.hash || null);
+    case "revoke": return applyRevoke(p.user);
+    case "kubeadmin": return applyRemoveKubeadmin();
+    case "expire": return applyExpire(p.q);
+    default: throw err("Unknown operation");
+  }
+}
 
 /* ─────────────────────────── small helpers ─────────────────────────── */
 
@@ -108,6 +126,11 @@ export async function readCluster() {
     list("/apis/oauth.openshift.io/v1/oauthaccesstokens"),
   ]);
   if (users === null && groups === null && crbs === null) throw err("Could not read users, groups or role bindings: the cluster is unreachable or the platform lacks permission (see deploy/user-access/rbac.yaml)", 502);
+  // Keep only bindings to the roles we show, naming people or groups: a busy
+  // cluster has thousands of service-account bindings that say nothing here.
+  const ROLESET = new Set(ROLES);
+  const human = (b) => ROLESET.has(b.roleRef?.name) && (b.subjects || []).some((s) => (s.kind === "User" || s.kind === "Group") && !isSystem(s.name));
+  const slim = (b) => ({ metadata: { name: b.metadata?.name, namespace: b.metadata?.namespace }, roleRef: b.roleRef, subjects: b.subjects });
   let kubeadmin = null;
   try { kubeadmin = !!(await get("/api/v1/namespaces/kube-system/secrets/kubeadmin")); } catch { kubeadmin = null; }
   const idps = describeIdps(oauth);
@@ -119,7 +142,17 @@ export async function readCluster() {
       htpasswdUsers[p.name] = parseHtpasswd(text).map((r) => r.user);
     } catch { htpasswdUsers[p.name] = null; }
   }
-  return { idps, users: users || [], groups: groups || [], crbs: crbs || [], rbs: rbs || [], identities: identities || [], tokens, kubeadmin, htpasswdUsers };
+  // Last login per user, from tokens, without shipping the tokens themselves.
+  const lastLogin = tokens ? {} : null;
+  for (const t of tokens || []) { const u = t.userName, at = t.metadata?.creationTimestamp; if (u && at && (!lastLogin[u] || at > lastLogin[u])) lastLogin[u] = at; }
+  return {
+    idps,
+    users: (users || []).map((u) => ({ metadata: { name: u.metadata?.name }, identities: u.identities || [] })),
+    groups: (groups || []).map((g) => ({ metadata: { name: g.metadata?.name, labels: g.metadata?.labels || {}, annotations: g.metadata?.annotations || {} }, users: g.users || [] })),
+    crbs: (crbs || []).filter(human).map(slim), rbs: (rbs || []).filter(human).map(slim),
+    identities: [], tokens: lastLogin ? Object.entries(lastLogin).map(([userName, at]) => ({ userName, metadata: { creationTimestamp: at } })) : null,
+    kubeadmin, htpasswdUsers,
+  };
 }
 
 /**
@@ -179,11 +212,11 @@ export function accessOf(raw, { now = Date.now() } = {}) {
 
 /* ─────────────────────────── summary across clusters ─────────────────────────── */
 
-export async function summary(clusters) {
+export async function summary(clusters, ctx = null) {
   const now = _deps.now();
   const per = await Promise.all(clusters.map(async (c) => {
     try {
-      const raw = await _deps.run(c, () => readCluster());
+      const raw = await exec(c, "read", {}, ctx);
       const acc = accessOf(raw, { now });
       return { cluster: c, ok: true, raw, acc };
     } catch (e) { return { cluster: c, ok: false, error: e.message }; }
@@ -318,13 +351,13 @@ export async function rejectRequest(id, actor, note) {
  * Approve and carry out. Returns the request with per-cluster results; for an
  * htpasswd grant, also `password`, shown once and never stored.
  */
-export async function approveRequest(id, actor, { allowSelf = false } = {}) {
+export async function approveRequest(id, actor, { allowSelf = false, ctx = null, via = null } = {}) {
   const st = await load();
   const q = st.requests.find((x) => x.id === id);
   if (!q) throw err("No such request", 404);
   if (q.status !== "pending") throw err(`This request is already ${q.status}`, 409);
-  if (!allowSelf && q.requestedBy && q.requestedBy === actor) throw err("Someone other than the requester must approve", 403);
-  q.status = "running"; q.decidedBy = actor; q.decidedAt = new Date(_deps.now()).toISOString();
+  if (!via && !allowSelf && q.requestedBy && q.requestedBy === actor) throw err("Someone other than the requester must approve (or approve the ServiceNow change)", 403);
+  q.status = "running"; q.decidedBy = via || actor; q.decidedAt = new Date(_deps.now()).toISOString();
   await save();
   let password = null, manifests = null;
   if (q.kind === "grant" && q.delivery !== "direct") {
@@ -336,7 +369,9 @@ export async function approveRequest(id, actor, { allowSelf = false } = {}) {
     q.results = [];
     for (const c of q.clusters) {
       try {
-        const text = await _deps.run(c, () => (q.kind === "grant" ? applyGrant(q, hash) : q.kind === "revoke" ? applyRevoke(q.user) : applyRemoveKubeadmin()));
+        const op = q.kind === "grant" ? "grant" : q.kind === "revoke" ? "revoke" : "kubeadmin";
+        const payload = op === "grant" ? { q: { id: q.id, user: q.user, mode: q.mode, role: q.role, namespace: q.namespace, group: q.group }, hash } : op === "revoke" ? { user: q.user } : {};
+        const text = await exec(c, op, payload, ctx);
         q.results.push({ cluster: c, ok: true, text });
       } catch (e) {
         q.results.push({ cluster: c, ok: false, text: /read-only/i.test(e.message) ? "This cluster is reached through the read-only bridge; changes need its agent credentials or direct access" : e.message.slice(0, 300) });
@@ -347,7 +382,7 @@ export async function approveRequest(id, actor, { allowSelf = false } = {}) {
   q.status = good === q.results.length ? "done" : good ? "partly done" : "failed";
   if (q.kind === "grant" && q.expires && q.delivery === "direct") q.expiryPending = good > 0;
   await save();
-  _deps.audit(`User & Access: ${q.id} approved — ${q.title}: ${q.status}`, { id, results: q.results }, actor);
+  _deps.audit(`User & Access: ${q.id} approved${via ? ` in ${via}` : ""} — ${q.title}: ${q.status}`, { id, results: q.results }, via || actor);
   return { ...q, password, manifests };
 }
 
@@ -356,11 +391,37 @@ export async function getRequest(id) {
   if (!q) throw err("No such request", 404);
   return q;
 }
-export async function setTicket(id, number) {
+export async function setTicket(id, number, sysId = null) {
   const q = await getRequest(id);
   q.ticket = number;
+  if (sysId) q.ticketSysId = sysId;
   await save();
   return q;
+}
+
+/**
+ * Background: a pending request whose ServiceNow change has been approved is
+ * applied; one whose change was rejected is rejected. The ServiceNow approval
+ * is the approval. A password for an htpasswd user is never produced this way:
+ * those need an approver in the platform, who sees it once.
+ */
+export async function serviceNowTick() {
+  if (!_deps.snApproval) return [];
+  const st = await load();
+  const out = [];
+  for (const q of st.requests.filter((x) => x.status === "pending" && x.ticketSysId)) {
+    let a;
+    try { a = await _deps.snApproval(q.ticketSysId); } catch { continue; }
+    if (a === "approved") {
+      if (q.kind === "grant" && q.mode === "htpasswd") { q.snApproved = true; await save(); continue; }
+      await approveRequest(q.id, "servicenow", { via: `ServiceNow ${q.ticket}` });
+      out.push(q.id);
+    } else if (a === "rejected") {
+      await rejectRequest(q.id, `ServiceNow ${q.ticket}`, "Rejected in ServiceNow");
+      out.push(q.id);
+    }
+  }
+  return out;
 }
 
 /* ─────────────────────────── changes on one cluster ─────────────────────────── */
@@ -493,7 +554,7 @@ export async function expireTick() {
   for (const q of st.requests.filter((x) => x.kind === "grant" && x.expiryPending && x.expires && Date.parse(x.expires) <= now)) {
     const results = [];
     for (const r of (q.results || []).filter((x) => x.ok)) {
-      try { results.push({ cluster: r.cluster, ok: true, text: await _deps.run(r.cluster, () => applyExpire(q)) }); }
+      try { results.push({ cluster: r.cluster, ok: true, text: await exec(r.cluster, "expire", { q: { user: q.user, group: q.group } }, null) }); }
       catch (e) { results.push({ cluster: r.cluster, ok: false, text: e.message.slice(0, 200) }); }
     }
     q.expiryPending = results.some((r) => !r.ok);

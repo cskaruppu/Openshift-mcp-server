@@ -23,10 +23,32 @@ the screen says to change them in the directory.
 
 ## Approval
 
-Every change is a request. Operators and Admins can request; only an Admin can
-approve, and not the person who requested it (unless sign-in is off). A request
-can also be raised as a ServiceNow change request. Requests, approvals,
-results per cluster and expiries are in the audit trail.
+Every change is a request. There are two ways to approve it, whichever comes first:
+
+- **In ServiceNow (ITSM).** With "Approve in ServiceNow" ticked (the default),
+  submitting raises a ServiceNow change request. The hub checks it every 2
+  minutes (`USER_ACCESS_SNOW_POLL_MS`): once it is **approved**, the change is
+  applied and recorded as approved by that change; if it is **rejected**, the
+  request is rejected. A pending request can also be sent later with "Send to
+  ServiceNow". Local (htpasswd) users are the exception: after ServiceNow
+  approves, an Admin applies them in the platform, because the one-time
+  password is shown to that person.
+- **In the platform.** An Admin other than the requester presses Approve. With
+  a single administrator, set `USER_ACCESS_ALLOW_SELF_APPROVE=true` (or use the
+  ServiceNow route).
+
+Requests, approvals, results per cluster and expiries are in the audit trail.
+
+## How each cluster is reached
+
+- **A cluster with a spoke agent** does the work itself: the hub calls the
+  agent's `/api/user-access/local/*` endpoint, and the agent uses its own
+  service account. Agents must run this version or later; an older agent is
+  reported as such.
+- **The Private AI GPU cluster** uses the access set up for Private AI.
+- **Other clusters** use stored credentials or the agent's API token, as the
+  rest of the hub does. A cluster reached only through the read-only bridge is
+  reported as not changeable.
 
 ## Delivery
 
@@ -51,8 +73,10 @@ identity provider exists and someone else holds cluster-admin.
 
 ## Permissions
 
-Apply `rbac.yaml` on each cluster to be managed. It includes `bind` on the five
-offered roles, which Kubernetes requires before an account can grant them.
+Apply `rbac.yaml` on each cluster to be managed. It binds the hub, spoke-agent
+and Private AI access service accounts, and includes `bind` on the five offered
+roles, which Kubernetes requires before an account can grant them. Without it a
+cluster shows as "not readable".
 
 ## Not covered
 

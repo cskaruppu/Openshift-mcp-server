@@ -47,11 +47,15 @@ export default function UserAccess({ clusters = [] }) {
   const roleInfo = data?.roles?.find((r) => r.id === f.role);
   const ready = f.user.trim() && f.clusters.length && (roleInfo?.clusterWide || f.namespace.trim());
 
+  const [viaSnow, setViaSnow] = useState(true);
   const submit = async (body) => {
     setBusy("submit");
     try {
       const r = await call("/api/user-access/requests", { method: "POST", body });
-      showToast(`${r.id} submitted for approval`, "ok");
+      // Send it to ServiceNow for approval as well: approved there, it is applied.
+      let t = null;
+      if (viaSnow) t = await call(`/api/user-access/requests/${r.id}/ticket`, { method: "POST", body: {} }).catch((e) => ({ error: e.message }));
+      showToast(t?.number ? `${r.id} sent for approval in ServiceNow (${t.number})` : t?.error ? `${r.id} submitted; ServiceNow: ${t.error}` : `${r.id} submitted for approval`, t?.error ? "err" : "ok");
       if (body.kind === "grant") setF((x) => ({ ...x, user: "", reason: "" }));
       load();
     } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
@@ -163,8 +167,12 @@ export default function UserAccess({ clusters = [] }) {
             </div>
             <div className="ua-acts">
               <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.expires || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
-              <span className="vc-muted ua-small">Approved by an Admin{data.you?.selfApprove ? "" : ", not the requester"}</span>
+              <label className="ua-small ua-snowck"><input type="checkbox" checked={viaSnow} onChange={(e) => setViaSnow(e.target.checked)} /> Approve in ServiceNow</label>
             </div>
+            <p className="ua-hint">{viaSnow
+              ? "A ServiceNow change request is raised; when it is approved there, the change is applied automatically. An Admin can also approve it here."
+              : `Approved here by an Admin${data.you?.selfApprove ? "" : " other than you"}.`}
+              {f.mode === "htpasswd" ? " Local users are applied by an Admin here even after ServiceNow approval, because the password is shown to that person once." : ""}</p>
           </div></div>
         </div>
 
@@ -235,14 +243,19 @@ export default function UserAccess({ clusters = [] }) {
                     <td><span className={"ua-st " + (STATUS_CLASS[r.status] || "")}>{r.status}</span></td>
                     <td><b>{r.id}</b> · {r.title}{r.reason ? <span className="vc-muted"> · {r.reason}</span> : null}
                       {r.results && <div className="ua-small">{r.results.map((x) => <div key={x.cluster} className={x.ok ? "vc-muted" : "ua-flag crit"}>{label(x.cluster)}: {x.text}</div>)}</div>}
-                      {r.expired && <div className="ua-small vc-muted">Expired {ago(r.expired.at)}</div>}</td>
+                      {r.expired && <div className="ua-small vc-muted">Expired {ago(r.expired.at)}</div>}
+                      {r.status === "pending" && <div className="ua-small ua-wait">{
+                        r.snApproved ? `Approved in ServiceNow ${r.ticket}: an Admin applies it here to receive the one-time password.`
+                          : r.ticket ? `Waiting for approval of ${r.ticket} in ServiceNow${data.you?.canApprove && r.requestedBy !== data.you.name ? ", or approve it here" : ""}.`
+                            : r.requestedBy === data.you?.name && !data.you?.selfApprove ? "Waiting for another Admin, or send it to ServiceNow for approval." : "Waiting for an Admin."}</div>}
+                      {r.decidedBy && r.status !== "pending" && <div className="ua-small vc-muted">{r.status === "rejected" ? "Rejected" : "Approved"} by {r.decidedBy}</div>}</td>
                     <td className="ua-small vc-muted">{r.requestedBy} · {ago(r.requestedAt)}{r.ticket ? ` · ${r.ticket}` : ""}</td>
                     <td className="ua-acts2">
                       {r.status === "pending" && data.you?.canApprove && (data.you.selfApprove || r.requestedBy !== data.you.name) && <>
                         <button className="vc-btn primary sm" disabled={!!busy} onClick={() => decide(r.id, "approve")}>{busy === r.id + "approve" ? "Applying…" : "Approve"}</button>
                         <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "reject")}>Reject</button>
                       </>}
-                      {!r.ticket && r.status === "pending" && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "ticket")}>ServiceNow</button>}
+                      {!r.ticket && r.status === "pending" && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "ticket")}>Send to ServiceNow</button>}
                       {r.kind === "grant" && r.mode !== "htpasswd" && <a className="ua-link" href={`/api/user-access/requests/${r.id}/manifest`}>YAML</a>}
                     </td>
                   </tr>

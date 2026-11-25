@@ -2167,14 +2167,46 @@ async function startSSE() {
     // is taken away every 10 minutes.
     try {
       const UA = await import("./services/user-access.js");
+      const SP = await import("./services/spoke-proxy.js");
       UA.configureUserAccess({
         run: runForClusterCtx,
+        // A cluster with a spoke agent does the work itself (its own service
+        // account, same code); otherwise Private AI cluster access, stored
+        // credentials or the agent's API token, as the rest of the hub does.
+        exec: async (cluster, op, payload, ctx) => {
+          if (cluster && cluster !== "local" && MCP_MODE !== "spoke" && SP.hasSpoke(cluster)) {
+            const headers = { "Content-Type": "application/json", Accept: "application/json" };
+            const auth = ctx?.authorization || (process.env.USER_ACCESS_SPOKE_TOKEN ? `Bearer ${process.env.USER_ACCESS_SPOKE_TOKEN}` : "");
+            if (auth) headers.Authorization = auth;
+            let r;
+            try { r = await SP.fedFetch(new URL(`/api/user-access/local/${op}`, SP.getSpokeUrl(cluster)).toString(), { method: "POST", headers, body: JSON.stringify(payload || {}), signal: AbortSignal.timeout(60_000) }); }
+            catch (e) { throw Object.assign(new Error(`The spoke agent on ${cluster} did not answer (${e.message})`), { status: 502 }); }
+            const j = await r.json().catch(() => ({}));
+            if (r.status === 404 && !j.error) throw Object.assign(new Error(`The spoke agent on ${cluster} is an older version without User & Access: redeploy it`), { status: 502 });
+            if (!r.ok) throw Object.assign(new Error(j.error || `The spoke agent on ${cluster} answered ${r.status}`), { status: r.status });
+            return j.result;
+          }
+          try { return await privateAiRun(cluster, () => UA.localOp(op, payload)); }
+          catch (e) {
+            if (/not reachable for remediation|Cluster not found/.test(e.message)) throw Object.assign(new Error(`${cluster} has no spoke agent, Private AI access or stored credentials the hub can use to change it`), { status: 502 });
+            throw e;
+          }
+        },
         ocp: { fetch: ocpFetch, post: ocpPost, patch: ocpPatch, delete: ocpDelete },
         audit: (title, details, username) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: username || "system", source: "user-access" }).catch(() => {}),
+        snApproval: async (sysId) => {
+          const SN = await import("./utils/servicenow-client.js");
+          const r = (await SN.getRecord("change_request", sysId))?.result || {};
+          const approval = String(r.approval || "").toLowerCase();
+          return approval === "approved" ? "approved" : approval === "rejected" || String(r.state) === "4" ? "rejected" : approval || "requested";
+        },
       });
       if (MCP_MODE !== "spoke") {
         const t = setInterval(() => UA.expireTick().catch((e) => console.error("[user-access] expiry:", e.message)), Number(process.env.USER_ACCESS_EXPIRY_TICK_MS) || 600_000);
         if (t.unref) t.unref();
+        // ServiceNow approvals: a change approved in ITSM applies its request.
+        const t2 = setInterval(() => UA.serviceNowTick().catch((e) => console.error("[user-access] ServiceNow:", e.message)), Number(process.env.USER_ACCESS_SNOW_POLL_MS) || 120_000);
+        if (t2.unref) t2.unref();
       }
     } catch (e) { console.error("[user-access] not started:", e.message); }
     // Ops Twin: what-if simulations on a live copy of this cluster (read-only).
@@ -9674,10 +9706,22 @@ spec:
       const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
       try {
         if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "User & Access needs the Operator or Admin role" });
+        const ctx = { authorization: req.headers.authorization || null };
+        // What a cluster runs for the hub: read its access, or apply one approved
+        // change. Changes need the Admin role, as approving does.
+        const lm = url.pathname.match(/^\/api\/user-access\/local\/(read|grant|revoke|kubeadmin|expire)$/);
+        if (lm) {
+          if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+          if (lm[1] !== "read" && !checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing access needs the Admin role" });
+          const body = await readJsonBody(req).catch(() => ({}));
+          const result = await UA.localOp(lm[1], body);
+          if (lm[1] !== "read") logAuditTrailEvent({ type: "action_taken", severity: "info", title: `User & Access (from the hub): ${lm[1]} ${body.user || body.q?.user || ""} — ${String(result).slice(0, 160)}`, details: { op: lm[1] }, username: actor, source: "user-access" }).catch(() => {});
+          return sendJson(res, 200, { result });
+        }
         if (req.method === "GET" && url.pathname === "/api/user-access") {
           const clusters = [...new Set(String(url.searchParams.get("clusters") || "local").split(",").map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._:-]{1,128}$/.test(s)))].slice(0, 50);
-          const out = await UA.summary(clusters.length ? clusters : ["local"]);
-          return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" } });
+          const out = await UA.summary(clusters.length ? clusters : ["local"], ctx);
+          return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true" } });
         }
         const m = url.pathname.match(/^\/api\/user-access\/requests(?:\/(UA-\d{4,})\/(approve|reject|ticket|manifest))?$/);
         if (!m) return sendJson(res, 404, { error: "Unknown User & Access action" });
@@ -9704,13 +9748,13 @@ spec:
             backoutPlan: q.kind === "grant" ? "Remove the person from the platform-managed group on each cluster (User & Access: Remove everywhere)." : "Re-grant access through User & Access.",
           });
           const number = cr?.result?.number || cr?.number || null;
-          if (number) await UA.setTicket(q.id, number);
+          if (number) await UA.setTicket(q.id, number, cr?.result?.sys_id || cr?.sys_id || null);
           logAuditTrailEvent({ type: "action_taken", severity: "info", title: `ServiceNow ${number || "change"} raised for access request ${q.id}`, details: { id: q.id, number }, username: actor, source: "user-access" }).catch(() => {});
           return sendJson(res, 200, { number });
         }
         if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Approving access changes needs the Admin role" });
         if (m[2] === "reject") return sendJson(res, 200, await UA.rejectRequest(m[1], actor, body.note));
-        return sendJson(res, 200, await UA.approveRequest(m[1], actor, { allowSelf: getAuthMode() === "none" }));
+        return sendJson(res, 200, await UA.approveRequest(m[1], actor, { allowSelf: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true", ctx }));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }

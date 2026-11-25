@@ -194,3 +194,39 @@ test("validation", () => {
   assert.equal(UA.validateRequest({ kind: "grant", clusters: ["c"], user: "a@b.com", role: "cluster-admin" }).namespace, null);
   assert.equal(UA.managedGroupName("edit", "payments"), "tcs-edit-payments");
 });
+
+test("ServiceNow approval applies the request; a rejection rejects it; htpasswd still needs a person", async () => {
+  const hub = fakeCluster();
+  setup({ hub });
+  const state = {};
+  UA.configureUserAccess({ snApproval: async (sys) => state[sys] || "requested" });
+  const a = await UA.createRequest({ kind: "grant", clusters: ["hub"], user: "priya", role: "edit", namespace: "payments" }, "admin");
+  const b = await UA.createRequest({ kind: "revoke", clusters: ["hub"], user: "suresh" }, "admin");
+  const c = await UA.createRequest({ kind: "grant", mode: "htpasswd", clusters: ["hub"], user: "lab1", role: "view", namespace: "payments" }, "admin");
+  await UA.setTicket(a.id, "CHG001", "s1"); await UA.setTicket(b.id, "CHG002", "s2"); await UA.setTicket(c.id, "CHG003", "s3");
+  assert.deepEqual(await UA.serviceNowTick(), [], "nothing decided yet");
+  state.s1 = "approved"; state.s2 = "rejected"; state.s3 = "approved";
+  assert.deepEqual((await UA.serviceNowTick()).sort(), [a.id, b.id].sort());
+  const s = await UA.summary(["hub"]);
+  assert.equal(s.requests.find((r) => r.id === a.id).status, "done");
+  assert.equal(s.requests.find((r) => r.id === a.id).decidedBy, "ServiceNow CHG001");
+  assert.equal(s.requests.find((r) => r.id === b.id).status, "rejected");
+  const h = s.requests.find((r) => r.id === c.id);
+  assert.equal(h.status, "pending"); assert.equal(h.snApproved, true);
+  assert.deepEqual(hub.store.get("/apis/user.openshift.io/v1/groups/tcs-edit-payments").users, ["priya"]);
+});
+
+test("operations can be routed elsewhere (as to a spoke agent), and the read leaves out what is not needed", async () => {
+  const hub = fakeCluster();
+  setup({ hub });
+  const seen = [];
+  UA.configureUserAccess({ exec: async (cluster, op, payload) => { seen.push([cluster, op]); return als.run(hub.ocp, () => UA.localOp(op, payload)); } });
+  const s = await UA.summary(["spoke-1"]);
+  assert.equal(s.clusters[0].ok, true);
+  const q = await UA.createRequest({ kind: "grant", clusters: ["spoke-1"], user: "priya", role: "view", namespace: "payments" }, "a");
+  await UA.approveRequest(q.id, "b");
+  assert.deepEqual(seen, [["spoke-1", "read"], ["spoke-1", "grant"]]);
+  const raw = await als.run(hub.ocp, () => UA.readCluster());
+  assert.ok(raw.crbs.every((b) => ["cluster-admin", "cluster-reader"].includes(b.roleRef.name)));
+  assert.equal(JSON.stringify(raw).includes("$2y$"), false, "no password hashes leave the cluster");
+});
