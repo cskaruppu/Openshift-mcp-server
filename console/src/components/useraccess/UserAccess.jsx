@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { showToast } from "../../store/toastStore";
+import UserDetail from "./UserDetail";
+import { Governance, Reviews } from "./Governance";
 
 // Automation Hub → User & Access (services/user-access.js): who can log in to
 // which cluster and with what rights, across every cluster; changes go in as
@@ -30,7 +32,9 @@ export default function UserAccess({ clusters = [] }) {
   const [q, setQ] = useState("");
   const [onlyFlags, setOnlyFlags] = useState(false);
   const [secret, setSecret] = useState(null);       // { user, password, id } shown once
-  const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", delivery: "direct", reason: "" });
+  const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", hours: "", delivery: "direct", reason: "" });
+  const [tab, setTab] = useState("people");
+  const [sel, setSel] = useState(null);
 
   useEffect(() => { fetch("/api/cluster-labels").then((r) => r.json()).then((j) => setLabels(j.labels || {})).catch(() => {}); }, []);
   const label = (c) => (c === "local" ? labels.local || "This cluster" : labels[c] || c);
@@ -98,7 +102,7 @@ export default function UserAccess({ clusters = [] }) {
           <p>Who can log in to which cluster, and with what rights. Add or remove access on many clusters at once; every change is approved before it is applied, and recorded.</p>
         </div>
         <div className="ot-intro-r">
-          <button className={"vc-btn sm" + (onlyFlags ? " primary" : "")} onClick={() => setOnlyFlags((v) => !v)}>{onlyFlags ? "Showing what needs a look" : "Access review"}</button>
+          <button className={"vc-btn sm" + (onlyFlags ? " primary" : "")} onClick={() => { setTab("people"); setOnlyFlags((v) => !v); }}>{onlyFlags ? "Showing what needs a look" : "Needs a look"}</button>
           <button className="vc-btn ghost sm" disabled={loading} onClick={load}>{loading ? "Reading…" : "Refresh"}</button>
         </div>
       </div>
@@ -112,7 +116,16 @@ export default function UserAccess({ clusters = [] }) {
         <div className="ua-kpi"><b>{k.pending}</b><span>requests waiting for approval</span></div>
       </div>
 
-      <div className="ua-grid">
+      <div className="ua-tabs" role="tablist">
+        {[["people", "People and requests"], ["gov", `Governance${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0) ? ` (${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0)})` : ""}`], ["reviews", `Access reviews${(data.reviews || []).filter((r) => r.status === "open").length ? ` (${(data.reviews || []).filter((r) => r.status === "open").length} open)` : ""}`]].map(([v, l]) => (
+          <button key={v} role="tab" aria-selected={tab === v} className={tab === v ? "on" : ""} onClick={() => setTab(v)}>{l}</button>
+        ))}
+      </div>
+      {tab === "gov" && <Governance data={data} label={label} canApprove={!!data.you?.canApprove} busy={busy} clustersParam={all.join(",")} onRequest={submit} onOpenPerson={(n) => setSel(n)}
+        onAccept={async (keys) => { try { await call("/api/user-access/baseline", { method: "POST", body: { keys } }); showToast(`${keys.length} accepted as approved`, "ok"); load(); } catch (e) { showToast(e.message, "err"); } }} />}
+      {tab === "reviews" && <Reviews data={data} label={label} canApprove={!!data.you?.canApprove} clustersParam={all.join(",")} onChanged={load} toast={showToast} />}
+
+      {tab === "people" && <div className="ua-grid">
         {/* ── add access ── */}
         <div className="vc-card ua-add">
           <div className="vgf-label">Add access <span>to one person, on many clusters</span></div>
@@ -148,7 +161,11 @@ export default function UserAccess({ clusters = [] }) {
                 {(data.roles || []).map((r) => <option key={r.id} value={r.id}>{r.label} ({r.id})</option>)}
               </select>
               {!roleInfo?.clusterWide && <input className="ua-in" value={f.namespace} onChange={(e) => setF({ ...f, namespace: e.target.value.trim() })} placeholder="namespace" maxLength={63} />}
-              <input className="ua-in" type="date" value={f.expires} onChange={(e) => setF({ ...f, expires: e.target.value })} aria-label="Access ends on" title="Access ends on (optional)" />
+              <select className="ua-in" value={f.hours ? `h${f.hours}` : f.expires !== "" || f.dur === "date" ? "date" : "none"} onChange={(e) => { const v = e.target.value; setF({ ...f, hours: v.startsWith("h") ? Number(v.slice(1)) : "", expires: v === "date" ? f.expires : "", dur: v }); }} aria-label="How long">
+                <option value="none">No end date</option><option value="date">Until a date…</option>
+                {[1, 2, 4, 8, 24, 72].map((h) => <option key={h} value={`h${h}`}>Temporary: {h} h</option>)}
+              </select>
+              {(f.dur === "date" || f.expires) && <input className="ua-in" type="date" value={f.expires} onChange={(e) => setF({ ...f, expires: e.target.value })} aria-label="Access ends on" />}
             </div>
           </div></div>
           <div className="ua-step"><b className="ua-n">4</b><div>
@@ -162,11 +179,11 @@ export default function UserAccess({ clusters = [] }) {
             <div className="ua-preview">
               {ready ? <>On <b>{f.clusters.length} cluster{f.clusters.length > 1 ? "s" : ""}</b>: {f.mode === "htpasswd" ? <>create a local login for <b>{f.user}</b>, </> : null}add <b>{f.user}</b> to group <b>tcs-{f.role}-{roleInfo?.clusterWide ? "cluster" : f.namespace}</b> and bind it to <b>{f.role}</b>{roleInfo?.clusterWide ? " cluster-wide" : <> in namespace <b>{f.namespace}</b></>}.
                 {f.delivery !== "direct" ? <> Nothing is applied: you get the {f.delivery === "acm" ? "ACM policy" : "manifests"} to apply.</> : null}
-                {f.expires ? <> Access is removed automatically on <b>{f.expires}</b>.</> : null}</>
+                {f.hours ? <> Temporary: removed automatically <b>{f.hours} h</b> after approval.</> : f.expires ? <> Access is removed automatically on <b>{f.expires}</b>.</> : null}</>
                 : "Fill in who, where and the role to see exactly what will change."}
             </div>
             <div className="ua-acts">
-              <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.expires || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
+              <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.hours ? null : f.expires || null, hours: f.hours || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
               <label className="ua-small ua-snowck"><input type="checkbox" checked={viaSnow} onChange={(e) => setViaSnow(e.target.checked)} /> Approve in ServiceNow</label>
             </div>
             <p className="ua-hint">{viaSnow
@@ -186,7 +203,7 @@ export default function UserAccess({ clusters = [] }) {
                 <tbody>
                   {people.slice(0, 80).map((p) => (
                     <tr key={p.name}>
-                      <td><b>{p.name}</b>{p.source && <span className={"ua-src" + (/htpasswd|built-in/.test(p.source) ? " ht" : "")}>{p.source}</span>}{p.lastLogin && <div className="vc-muted ua-small">last login {ago(p.lastLogin)}</div>}</td>
+                      <td><button className="ua-name" onClick={() => setSel(p.name)}>{p.name}</button>{p.disabled && <span className="ua-src ht">disabled</span>}{p.source && <span className={"ua-src" + (/htpasswd|built-in/.test(p.source) ? " ht" : "")}>{p.source}</span>}{p.lastLogin && <div className="vc-muted ua-small">last login {ago(p.lastLogin)}</div>}</td>
                       {okClusters.map((c) => {
                         if (p.builtin) return <td key={c}>{p.kubeadmin?.[c] ? <span className="ua-chip adm">present</span> : <span className="vc-muted">removed</span>}</td>;
                         // One chip per role and scope; the tooltip says how it is given.
@@ -265,13 +282,21 @@ export default function UserAccess({ clusters = [] }) {
             </table>
           </div>
         </div>
-      </div>
+      </div>}
+
+      {sel && (() => {
+        const person = data.people.find((p) => p.name === sel) || { name: sel, clusters: {}, detail: {}, flags: [] };
+        return <UserDetail person={person} data={data} label={label} canApprove={!!data.you?.canApprove} busy={busy}
+          onRequest={(b) => submit(b)} onClose={() => setSel(null)}
+          onCanI={async (b) => { try { return await call("/api/user-access/can-i", { method: "POST", body: b }); } catch (e) { return { error: e.message }; } }}
+          onRotation={async (user, everyDays) => { try { await call("/api/user-access/rotation", { method: "POST", body: { user, everyDays } }); showToast(everyDays ? `Rotation every ${everyDays} days` : "Rotation off", "ok"); load(); } catch (e) { showToast(e.message, "err"); } }} />;
+      })()}
 
       {secret && (
         <div className="ua-modal" role="dialog" aria-modal="true">
           <div className="ua-modal-in">
             <h3>Password for {secret.user}</h3>
-            <p>Shown once, now. It is not stored anywhere; hand it to the person over a secure channel. htpasswd has no self-service password change; to reset it, remove the user and add them again.</p>
+            <p>Shown once, now. It is not stored anywhere; hand it to the person over a secure channel. htpasswd has no self-service password change: use Reset password on the person when it needs changing.</p>
             <code className="ua-pw">{secret.password}</code>
             <div className="ua-acts">
               <button className="vc-btn" onClick={() => navigator.clipboard?.writeText(secret.password).then(() => showToast("Copied", "ok"))}>Copy</button>

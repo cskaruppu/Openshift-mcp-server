@@ -27,9 +27,18 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterrolebindings", "rolebindings"]
     verbs: ["get", "list", "create", "patch", "delete"]
+  # last logins, and ending sessions on Disable, Delete and password reset
   - apiGroups: ["oauth.openshift.io"]
     resources: ["oauthaccesstokens"]
-    verbs: ["list"]
+    verbs: ["list", "delete"]
+  # role descriptions
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get"]
+  # "Can they…?" checks
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get"]

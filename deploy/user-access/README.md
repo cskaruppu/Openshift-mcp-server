@@ -61,6 +61,71 @@ Requests, approvals, results per cluster and expiries are in the audit trail.
   your repository. Local (htpasswd) users can only be applied directly, so a
   password hash never goes into Git or a policy.
 
+## One person: where, what, and lifecycle
+
+Click a name to open their panel:
+
+- **Where they exist** — each cluster, how they log in there (AD, SSO,
+  htpasswd), when their user record was created, active sessions, and whether
+  a local login is locked.
+- **Roles** — every role on every cluster: what it is, where (cluster or
+  namespace), how it is given (a group, or directly), the binding, which
+  request granted it and who approved it, and when it ends. **Remove** takes
+  away just that role (their place in the group, or the direct binding).
+- **What these roles allow** — a plain description of each role, the
+  description OpenShift attaches to it, and the verbs its rules allow.
+- **Can they…?** — a live permission check on a cluster (a
+  SubjectAccessReview with their groups), e.g. "can they delete pods in
+  payments?".
+- **History** — every request about them.
+
+Lifecycle actions, each an approved request:
+
+| Action | What happens on each cluster | Undo |
+|---|---|---|
+| **Remove a role** | Out of that group, or that binding | Grant again |
+| **Disable** | Groups and direct bindings recorded, then removed; local login locked; **active sessions ended** | **Enable** restores exactly what was recorded |
+| **Delete everywhere** (leaver) | All of the above, plus the htpasswd entry, User and Identity objects | None |
+| **Reset password** (local users) | New bcrypt hash in the htpasswd Secret, old sessions ended; the password is shown once to the approver | — |
+| **Temporary access** | A grant that ends 1, 2, 4, 8, 24 or 72 hours after approval | Automatic |
+
+OpenShift has no "disabled user" flag: Disable is this reversible suspension.
+For AD/SSO users, also disable the account in the directory (the panel says
+when they are still in an AD-synced group).
+
+Password rotation: on a local user, "Rotate password every 30–365 days"; the
+Governance tab lists who is due or overdue, with **Reset now**.
+
+## Governance tab
+
+- **Unofficial access** — cluster-admin and admin grants not made through the
+  platform (e.g. `oc adm policy` by hand). **Accept** records one as intended;
+  **Accept all** sets today as the approved state, so only new ones appear;
+  **Request removal** raises a request to take it out.
+- **Separation of duties** — no cluster-admin given directly to a person; no
+  local (htpasswd) cluster-admin on production; approvers do not also hold
+  cluster-admin on production; no standing cluster-admin on every cluster.
+  Production is any cluster name matching `USER_ACCESS_PROD_PATTERN`
+  (default `prod`).
+- **Possible leavers** — logs in through AD but is no longer in any AD-synced
+  group (needs LDAP group sync), with **Disable**.
+- **Privileged service accounts** — cluster-admin or admin outside the
+  platform's own namespaces.
+- **Entitlement report** — CSV for auditors: person, login, cluster, role,
+  scope, how it is given, binding, request, approver, end date.
+
+## Access reviews tab
+
+An Admin starts a review (privileged roles only, or every role) with a due
+date. Reviewers mark each grant **Keep** or **Remove**. Closing turns every
+Remove — and, if chosen, every grant nobody confirmed — into removal requests,
+which are approved like any other.
+
+## Notifications
+
+Requests, approvals, expiries and reviews go to the notification channels set
+up in Settings (Teams, Slack, e-mail) when there are any.
+
 ## Remove everywhere, and kubeadmin
 
 "Remove everywhere" takes a person out of every non-synced group, removes
@@ -82,5 +147,7 @@ cluster shows as "not readable".
 
 Adding or changing identity providers (OAuth config) and LDAP group sync jobs
 are not changed from this screen; it shows which clusters lack company login.
+Failed-login monitoring needs the OpenShift audit logs forwarded (e.g. to
+Loki or a SIEM) and is not part of this screen.
 Last-login dates come from OAuth access tokens and are shown only where the
 platform may list them.

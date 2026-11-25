@@ -10558,3 +10558,27 @@ code.new { color: #22a06b; }
 .ua-pw { display: block; font-family: var(--tcs-font-mono); font-size: 1.1rem; padding: 10px 12px; border-radius: 8px; background: var(--vc-surface-2); border: 1px solid var(--vc-line); letter-spacing: .05em; user-select: all; }
 .ua-snowck { display: inline-flex; align-items: center; gap: 6px; color: var(--vc-ink-2); cursor: pointer; }
 .ua-wait { color: var(--vc-med); margin-top: 3px; }
+
+/* User & Access: tabs, person panel, governance */
+.ua-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--vc-line); }
+.ua-tabs button { font: 700 0.8rem var(--tcs-font); padding: 8px 14px; border: none; background: none; color: var(--vc-ink-2); border-bottom: 2px solid transparent; cursor: pointer; }
+.ua-tabs button.on { color: var(--tcs-blue); border-bottom-color: var(--tcs-blue); }
+.ua-name { border: none; background: none; padding: 0; font: 700 0.8rem var(--tcs-font); color: var(--vc-ink); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.ua-name:hover { color: var(--tcs-blue); }
+.ua-drawer { position: fixed; inset: 0; background: rgba(5, 8, 14, .45); display: flex; justify-content: flex-end; z-index: 1000; }
+.ua-drawer-in { width: min(920px, 96vw); height: 100%; overflow: auto; background: var(--vc-surface); border-left: 1px solid var(--vc-line); padding: 18px 22px 30px; font-family: var(--tcs-font); color: var(--vc-ink); box-sizing: border-box; }
+.ua-dh { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.ua-dh h3 { margin: 0 0 3px; font: 800 1.1rem var(--tcs-font); display: flex; gap: 8px; align-items: center; }
+.ua-dacts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0 4px; }
+.ua-inl { display: inline-block; width: auto; padding: 4px 8px; }
+.ua-roledocs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.ua-roledoc { border: 1px solid var(--vc-line); border-radius: 10px; padding: 10px 12px; background: var(--vc-surface-2); }
+.ua-roledoc p { margin: 6px 0 0; font-size: 0.78rem; line-height: 1.5; }
+.ua-cani { display: grid; grid-template-columns: 1.2fr 0.8fr 1.2fr 1.2fr auto; gap: 6px; align-items: center; margin-bottom: 8px; }
+.ua-flag.ok { color: #1f9d55; }
+.ua-hist, .ua-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 0.78rem; }
+.ua-gov { display: flex; flex-direction: column; gap: 14px; }
+.ua-gov2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+.ua-row2 { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ua-seg-sm button { padding: 3px 9px; font-size: 0.7rem; }
+.ua-gov a.vc-btn { text-decoration: none; display: inline-flex; align-items: center; }

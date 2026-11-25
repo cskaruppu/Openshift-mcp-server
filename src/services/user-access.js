@@ -661,6 +661,12 @@ export async function approveRequest(id, actor, { allowSelf = false, ctx = null,
   return { ...q, password, manifests };
 }
 
+/** Run one read-only operation on a cluster (for the "Can they…?" check). */
+export async function runOn(cluster, op, payload, ctx) {
+  if (op !== "can-i") throw err("Not allowed");
+  return exec(cluster, op, payload, ctx);
+}
+
 export async function getRequest(id) {
   const q = (await load()).requests.find((x) => x.id === id);
   if (!q) throw err("No such request", 404);

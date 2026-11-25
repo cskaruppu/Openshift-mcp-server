@@ -2194,6 +2194,7 @@ async function startSSE() {
         },
         ocp: { fetch: ocpFetch, post: ocpPost, patch: ocpPatch, delete: ocpDelete },
         audit: (title, details, username) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: username || "system", source: "user-access" }).catch(() => {}),
+        notify: (event) => { import("./services/notifications.js").then((NT) => NT.notify(event)).catch(() => {}); },
         snApproval: async (sysId) => {
           const SN = await import("./utils/servicenow-client.js");
           const r = (await SN.getRecord("change_request", sysId))?.result || {};
@@ -9709,17 +9710,49 @@ spec:
         const ctx = { authorization: req.headers.authorization || null };
         // What a cluster runs for the hub: read its access, or apply one approved
         // change. Changes need the Admin role, as approving does.
-        const lm = url.pathname.match(/^\/api\/user-access\/local\/(read|grant|revoke|kubeadmin|expire)$/);
+        const lm = url.pathname.match(/^\/api\/user-access\/local\/(read|grant|revoke|kubeadmin|expire|unbind|unbindsubject|disable|enable|setpass|sessions|can-i)$/);
         if (lm) {
           if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
-          if (lm[1] !== "read" && !checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing access needs the Admin role" });
+          if (!["read", "can-i"].includes(lm[1]) && !checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing access needs the Admin role" });
           const body = await readJsonBody(req).catch(() => ({}));
           const result = await UA.localOp(lm[1], body);
-          if (lm[1] !== "read") logAuditTrailEvent({ type: "action_taken", severity: "info", title: `User & Access (from the hub): ${lm[1]} ${body.user || body.q?.user || ""} — ${String(result).slice(0, 160)}`, details: { op: lm[1] }, username: actor, source: "user-access" }).catch(() => {});
+          if (!["read", "can-i"].includes(lm[1])) logAuditTrailEvent({ type: "action_taken", severity: "info", title: `User & Access (from the hub): ${lm[1]} ${body.user || body.q?.user || ""} — ${String(result?.text ?? result).slice(0, 160)}`, details: { op: lm[1] }, username: actor, source: "user-access" }).catch(() => {});
           return sendJson(res, 200, { result });
         }
+        const clusters = [...new Set(String(url.searchParams.get("clusters") || "local").split(",").map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._:-]{1,128}$/.test(s)))].slice(0, 50);
+        // Entitlement report for auditors.
+        if (req.method === "GET" && url.pathname === "/api/user-access/report.csv") {
+          const sum = await UA.summary(clusters.length ? clusters : ["local"], ctx);
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: "User & Access: entitlement report exported", details: { clusters }, username: actor, source: "user-access" }).catch(() => {});
+          res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="entitlements-${new Date().toISOString().slice(0, 10)}.csv"` });
+          return res.end(UA.entitlementCsv(sum));
+        }
+        const rv = url.pathname.match(/^\/api\/user-access\/reviews(?:\/(AR-\d{3,})(?:\/(decide|close))?)?$/);
+        if (rv) {
+          if (req.method === "GET" && rv[1] && !rv[2]) return sendJson(res, 200, await UA.getReview(rv[1]));
+          if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+          const body = await readJsonBody(req).catch(() => ({}));
+          if (!rv[1]) {
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Starting an access review needs the Admin role" });
+            const sum = await UA.summary(clusters.length ? clusters : ["local"], ctx);
+            return sendJson(res, 200, await UA.createReview(body, sum, actor));
+          }
+          if (rv[2] === "decide") return sendJson(res, 200, await UA.decideReview(rv[1], body.decisions, actor));
+          if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Closing an access review needs the Admin role" });
+          return sendJson(res, 200, await UA.closeReview(rv[1], { removeUnreviewed: !!body.removeUnreviewed }, actor));
+        }
+        if (req.method === "POST" && ["/api/user-access/baseline", "/api/user-access/rotation", "/api/user-access/can-i"].includes(url.pathname)) {
+          const body = await readJsonBody(req).catch(() => ({}));
+          if (url.pathname === "/api/user-access/can-i") {
+            const c = String(body.cluster || "local");
+            if (!/^[A-Za-z0-9._:-]{1,128}$/.test(c) || !UA.validUser(body.user) || !/^[a-z*]{1,20}$/.test(String(body.verb || "")) || !/^[a-z0-9.*-]{1,63}$/.test(String(body.resource || "")) || (body.namespace && !UA.validName(body.namespace))) return sendJson(res, 400, { error: "Give a user, a verb, a resource and optionally a namespace" });
+            return sendJson(res, 200, await UA.runOn(c, "can-i", { user: body.user, verb: body.verb, resource: body.resource, namespace: body.namespace || null, group: String(body.group || "") }, ctx));
+          }
+          if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "This needs the Admin role" });
+          if (url.pathname === "/api/user-access/baseline") return sendJson(res, 200, await UA.acceptBaseline(Array.isArray(body.keys) ? body.keys : [], actor));
+          return sendJson(res, 200, { rotation: await UA.setRotation(body.user, body.everyDays || null, actor) });
+        }
         if (req.method === "GET" && url.pathname === "/api/user-access") {
-          const clusters = [...new Set(String(url.searchParams.get("clusters") || "local").split(",").map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._:-]{1,128}$/.test(s)))].slice(0, 50);
           const out = await UA.summary(clusters.length ? clusters : ["local"], ctx);
           return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true" } });
         }
