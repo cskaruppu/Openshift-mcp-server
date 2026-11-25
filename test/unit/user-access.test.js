@@ -26,6 +26,7 @@ function fakeCluster({ ldapGroup = false, kubeadmin = true, htpasswd = "breakgla
   put("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/admins", { metadata: { name: "admins" }, roleRef: { kind: "ClusterRole", name: "cluster-admin" }, subjects: [{ kind: "Group", name: "platform-admins" }] });
   put("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/karthik-admin", { metadata: { name: "karthik-admin" }, roleRef: { kind: "ClusterRole", name: "cluster-admin" }, subjects: [{ kind: "User", name: "karthik" }] });
   put("/apis/rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings/dev", { metadata: { name: "dev", namespace: "payments" }, roleRef: { kind: "ClusterRole", name: "edit" }, subjects: [{ kind: "Group", name: "payments-dev" }, { kind: "User", name: "suresh" }] });
+  tokens.forEach((t, i) => put(`/apis/oauth.openshift.io/v1/oauthaccesstokens/${t.metadata?.name || `tok${i}`}`, { ...t, metadata: { name: t.metadata?.name || `tok${i}`, ...t.metadata } }));
   const listOf = (prefix, depth) => ({ items: [...store.entries()].filter(([k]) => k.startsWith(prefix) && k.slice(prefix.length).split("/").length === depth).map(([, v]) => v) });
   const notFound = () => { throw new Error("OCP API 404: not found"); };
   const ocp = {
@@ -33,7 +34,8 @@ function fakeCluster({ ldapGroup = false, kubeadmin = true, htpasswd = "breakgla
       if (path === "/apis/user.openshift.io/v1/users") return listOf("/apis/user.openshift.io/v1/users/", 1);
       if (path === "/apis/user.openshift.io/v1/groups") return listOf("/apis/user.openshift.io/v1/groups/", 1);
       if (path === "/apis/user.openshift.io/v1/identities") return { items: [] };
-      if (path === "/apis/oauth.openshift.io/v1/oauthaccesstokens") return { items: tokens };
+      if (path === "/apis/oauth.openshift.io/v1/oauthaccesstokens") return listOf("/apis/oauth.openshift.io/v1/oauthaccesstokens/", 1);
+      if (/\/namespaces\/[^/]+\/rolebindings$/.test(path)) return listOf(path + "/", 1);
       if (path === "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings") return listOf("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/", 1);
       if (path === "/apis/rbac.authorization.k8s.io/v1/rolebindings") return { items: [...store.entries()].filter(([k]) => /\/namespaces\/[^/]+\/rolebindings\/[^/]+$/.test(k)).map(([, v]) => v) };
       return store.has(path) ? JSON.parse(JSON.stringify(store.get(path))) : notFound();
@@ -55,6 +57,7 @@ function setup(clusters) {
   const audit = [];
   UA.configureUserAccess({
     run: async (c, fn) => als.run(clusters[c].ocp, fn),
+    exec: null, snApproval: null, notify: null,
     ocp: ctxOcp,
     now: () => Date.parse("2026-11-25T10:00:00Z"),
     audit: (t) => audit.push(t),
@@ -67,7 +70,8 @@ test("access read: grants through groups and directly, kubeadmin and direct-admi
   setup({ hub: c });
   const raw = await als.run(c.ocp, () => UA.readCluster());
   const a = UA.accessOf(raw, { now: Date.parse("2026-11-25T10:00:00Z") });
-  assert.deepEqual(a.people.rahul.grants, [{ role: "cluster-admin", scope: "cluster", via: "platform-admins" }]);
+  assert.deepEqual(a.people.rahul.grants.map(({ role, scope, via }) => ({ role, scope, via })), [{ role: "cluster-admin", scope: "cluster", via: "platform-admins" }]);
+  assert.equal(a.people.rahul.grants[0].binding.name, "admins");
   assert.equal(a.people.suresh.grants.length, 2, "edit via payments-dev and directly");
   assert.ok(a.flags.some((f) => f.person === "karthik" && /directly/.test(f.text)));
   assert.ok(a.flags.some((f) => f.person === "kubeadmin"));
@@ -229,4 +233,88 @@ test("operations can be routed elsewhere (as to a spoke agent), and the read lea
   const raw = await als.run(hub.ocp, () => UA.readCluster());
   assert.ok(raw.crbs.every((b) => ["cluster-admin", "cluster-reader"].includes(b.roleRef.name)));
   assert.equal(JSON.stringify(raw).includes("$2y$"), false, "no password hashes leave the cluster");
+});
+
+const tok = (userName, name) => ({ userName, metadata: { name, creationTimestamp: "2026-11-24T10:00:00Z" } });
+
+test("remove one role: a direct binding, or the person's place in the group that gives it", async () => {
+  const hub = fakeCluster();
+  setup({ hub });
+  const a = await UA.createRequest({ kind: "remove-role", clusters: ["hub"], user: "suresh", role: "edit", scope: "payments", via: "direct" }, "a");
+  assert.equal((await UA.approveRequest(a.id, "b")).status, "done");
+  assert.deepEqual(hub.store.get("/apis/rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings/dev").subjects, [{ kind: "Group", name: "payments-dev" }]);
+  const b = await UA.createRequest({ kind: "remove-role", clusters: ["hub"], user: "suresh", role: "edit", scope: "payments", via: "payments-dev" }, "a");
+  const out = await UA.approveRequest(b.id, "b");
+  assert.match(out.results[0].text, /removed from payments-dev/);
+  assert.deepEqual(hub.store.get("/apis/user.openshift.io/v1/groups/payments-dev").users, []);
+});
+
+test("disable suspends and ends sessions; enable restores exactly what was there", async () => {
+  const hub = fakeCluster({ htpasswd: "suresh:$2a$10$abc\n", tokens: [tok("suresh", "t1"), tok("suresh", "t2"), tok("rahul", "t3")] });
+  setup({ hub });
+  const d = await UA.createRequest({ kind: "disable", clusters: ["hub"], user: "suresh" }, "a");
+  const out = await UA.approveRequest(d.id, "b");
+  assert.equal(out.status, "done", out.results[0].text);
+  assert.match(out.results[0].text, /2 sessions ended/);
+  assert.deepEqual(hub.store.get("/apis/user.openshift.io/v1/groups/payments-dev").users, []);
+  assert.equal(hub.store.has("/apis/oauth.openshift.io/v1/oauthaccesstokens/t3"), true, "other people's sessions untouched");
+  const ht = () => Buffer.from(hub.store.get("/api/v1/namespaces/openshift-config/secrets/htpass-secret").data.htpasswd, "base64").toString();
+  assert.match(ht(), /^suresh:!/m);
+  const s1 = await UA.summary(["hub"]);
+  assert.equal(s1.people.find((p) => p.name === "suresh").disabled.request, d.id);
+  const e = await UA.createRequest({ kind: "enable", clusters: ["hub"], user: "suresh", fromRequest: d.id }, "a");
+  assert.equal((await UA.approveRequest(e.id, "b")).status, "done");
+  assert.deepEqual(hub.store.get("/apis/user.openshift.io/v1/groups/payments-dev").users, ["suresh"]);
+  assert.ok(hub.store.get("/apis/rbac.authorization.k8s.io/v1/namespaces/payments/rolebindings/dev").subjects.some((x) => x.kind === "User" && x.name === "suresh"));
+  assert.match(ht(), /^suresh:\$2a/m);
+});
+
+test("reset password: new bcrypt hash, sessions ended, refused while disabled", async () => {
+  const hub = fakeCluster({ htpasswd: "lab1:$2a$10$old\n", tokens: [tok("lab1", "t1")] });
+  setup({ hub });
+  const r = await UA.createRequest({ kind: "reset-password", clusters: ["hub"], user: "lab1" }, "a");
+  const out = await UA.approveRequest(r.id, "b");
+  assert.equal(out.status, "done");
+  const row = UA.parseHtpasswd(Buffer.from(hub.store.get("/api/v1/namespaces/openshift-config/secrets/htpass-secret").data.htpasswd, "base64").toString()).find((x) => x.user === "lab1");
+  assert.ok(bcrypt.compareSync(out.password, row.hash));
+  assert.equal(hub.store.has("/apis/oauth.openshift.io/v1/oauthaccesstokens/t1"), false);
+  const missing = await UA.createRequest({ kind: "reset-password", clusters: ["hub"], user: "nobody" }, "a");
+  assert.match((await UA.approveRequest(missing.id, "b")).results[0].text, /no local/);
+});
+
+test("temporary access, unofficial grants, separation of duties, rotation and the entitlement report", async () => {
+  const hub = fakeCluster();
+  setup({ hub });
+  const t = UA.validateRequest({ kind: "grant", clusters: ["hub"], user: "x", role: "cluster-admin", hours: 2 });
+  assert.equal(Date.parse(t.expires) - Date.parse("2026-11-25T10:00:00Z"), 2 * 3600000);
+  let s = await UA.summary(["hub"]);
+  const keys = s.governance.unofficial.map((u) => u.key);
+  assert.ok(s.governance.unofficial.some((u) => u.subject === "karthik"));
+  assert.ok(s.governance.sod.some((x) => x.rule === "direct-admin" && x.person === "karthik"));
+  await UA.acceptBaseline(keys, "rahul");
+  s = await UA.summary(["hub"]);
+  assert.equal(s.governance.unofficial.length, 0);
+  await UA.setRotation("breakglass", 90, "rahul");
+  s = await UA.summary(["hub"]);
+  assert.equal(s.roleDocs["cluster-admin"].label, "Cluster admin");
+  const csv = UA.entitlementCsv(s);
+  assert.match(csv.split("\n")[0], /^person,login,cluster,role/);
+  assert.ok(csv.includes("rahul,AD / LDAP,hub,cluster-admin"));
+});
+
+test("access review: decide, close, and removals become requests", async () => {
+  const hub = fakeCluster();
+  setup({ hub });
+  const s = await UA.summary(["hub"]);
+  const r = await UA.createReview({ name: "Q4 admins", due: "2026-12-31", scope: "privileged" }, s, "rahul");
+  const full = await UA.getReview(r.id);
+  assert.ok(full.items.length >= 2);
+  const karthik = full.items.find((i) => i.person === "karthik");
+  await UA.decideReview(r.id, [{ key: karthik.key, decision: "remove" }], "anita");
+  const closed = await UA.closeReview(r.id, { removeUnreviewed: false }, "anita");
+  assert.equal(closed.status, "closed");
+  assert.equal(closed.requests.length, 1);
+  const q = (await UA.summary(["hub"])).requests.find((x) => x.id === closed.requests[0]);
+  assert.equal(q.kind, "remove-role");
+  assert.equal(q.user, "karthik");
 });

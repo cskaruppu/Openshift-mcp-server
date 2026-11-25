@@ -56,6 +56,13 @@ export async function localOp(op, p = {}) {
     case "revoke": return applyRevoke(p.user);
     case "kubeadmin": return applyRemoveKubeadmin();
     case "expire": return applyExpire(p.q);
+    case "unbind": return applyUnbind(p);
+    case "unbindsubject": return applyUnbindSubject(p);
+    case "disable": return applyDisable(p.user);
+    case "enable": return applyEnable(p.user, p.snapshot);
+    case "setpass": return applySetPassword(p.user, p.hash);
+    case "sessions": return revokeSessions(p.user);
+    case "can-i": return canI(p);
     default: throw err("Unknown operation");
   }
 }
@@ -130,28 +137,59 @@ export async function readCluster() {
   // cluster has thousands of service-account bindings that say nothing here.
   const ROLESET = new Set(ROLES);
   const human = (b) => ROLESET.has(b.roleRef?.name) && (b.subjects || []).some((s) => (s.kind === "User" || s.kind === "Group") && !isSystem(s.name));
-  const slim = (b) => ({ metadata: { name: b.metadata?.name, namespace: b.metadata?.namespace }, roleRef: b.roleRef, subjects: b.subjects });
+  const slim = (b) => ({ metadata: { name: b.metadata?.name, namespace: b.metadata?.namespace, creationTimestamp: b.metadata?.creationTimestamp || null, labels: { [MANAGED]: b.metadata?.labels?.[MANAGED] || undefined }, annotations: { "tcs.io/request": b.metadata?.annotations?.["tcs.io/request"] || undefined } }, roleRef: b.roleRef, subjects: b.subjects });
+  // Service accounts with cluster-admin or admin outside the platform's own namespaces.
+  const privilegedSAs = [];
+  for (const b of [...(crbs || []), ...(rbs || [])]) {
+    if (!["cluster-admin", "admin"].includes(b.roleRef?.name)) continue;
+    for (const sub of b.subjects || []) if (sub.kind === "ServiceAccount" && !/^(openshift|kube)-|^(openshift|kube-system|default)$/.test(sub.namespace || "")) privilegedSAs.push({ namespace: sub.namespace, name: sub.name, role: b.roleRef.name, binding: b.metadata?.name, scope: b.metadata?.namespace || "cluster" });
+  }
+  // What each offered role is, from the cluster itself.
+  const roleDocs = {};
+  await Promise.all(ROLES.map(async (r) => {
+    try {
+      const cr = await get(`/apis/rbac.authorization.k8s.io/v1/clusterroles/${r}`);
+      if (!cr) return;
+      const rules = cr.rules || [];
+      roleDocs[r] = {
+        description: cr.metadata?.annotations?.["openshift.io/description"] || null,
+        rules: rules.length, aggregated: !!cr.aggregationRule,
+        verbs: [...new Set(rules.flatMap((x) => x.verbs || []))].slice(0, 12),
+        resources: [...new Set(rules.flatMap((x) => x.resources || []))].slice(0, 30),
+      };
+    } catch { /* optional */ }
+  }));
   let kubeadmin = null;
   try { kubeadmin = !!(await get("/api/v1/namespaces/kube-system/secrets/kubeadmin")); } catch { kubeadmin = null; }
   const idps = describeIdps(oauth);
   const htpasswdUsers = {};
+  let htpasswdLocked = null;
   for (const p of idps.filter((x) => x.htpasswdSecret)) {
     try {
       const s = await get(`/api/v1/namespaces/openshift-config/secrets/${p.htpasswdSecret}`);
       const text = s?.data?.htpasswd ? Buffer.from(s.data.htpasswd, "base64").toString("utf8") : "";
-      htpasswdUsers[p.name] = parseHtpasswd(text).map((r) => r.user);
+      const rows = parseHtpasswd(text);
+      htpasswdUsers[p.name] = rows.map((r) => r.user);
+      for (const r of rows) if (r.hash.startsWith("!")) (htpasswdLocked ||= []).push(r.user);
     } catch { htpasswdUsers[p.name] = null; }
   }
   // Last login per user, from tokens, without shipping the tokens themselves.
   const lastLogin = tokens ? {} : null;
-  for (const t of tokens || []) { const u = t.userName, at = t.metadata?.creationTimestamp; if (u && at && (!lastLogin[u] || at > lastLogin[u])) lastLogin[u] = at; }
+  const sessions = tokens ? {} : null;
+  const nowMs = Date.now();
+  for (const t of tokens || []) {
+    const u = t.userName, at = t.metadata?.creationTimestamp;
+    if (u && at && (!lastLogin[u] || at > lastLogin[u])) lastLogin[u] = at;
+    const exp = t.expiresIn ? Date.parse(at) + t.expiresIn * 1000 : null;
+    if (u && (!exp || exp > nowMs)) sessions[u] = (sessions[u] || 0) + 1;
+  }
   return {
     idps,
-    users: (users || []).map((u) => ({ metadata: { name: u.metadata?.name }, identities: u.identities || [] })),
+    users: (users || []).map((u) => ({ metadata: { name: u.metadata?.name, creationTimestamp: u.metadata?.creationTimestamp || null }, identities: u.identities || [] })),
     groups: (groups || []).map((g) => ({ metadata: { name: g.metadata?.name, labels: g.metadata?.labels || {}, annotations: g.metadata?.annotations || {} }, users: g.users || [] })),
     crbs: (crbs || []).filter(human).map(slim), rbs: (rbs || []).filter(human).map(slim),
     identities: [], tokens: lastLogin ? Object.entries(lastLogin).map(([userName, at]) => ({ userName, metadata: { creationTimestamp: at } })) : null,
-    kubeadmin, htpasswdUsers,
+    kubeadmin, htpasswdUsers, htpasswdLocked: htpasswdLocked || [], sessions, roleDocs, privilegedSAs,
   };
 }
 
@@ -165,28 +203,37 @@ export function accessOf(raw, { now = Date.now() } = {}) {
   const groupMeta = new Map(raw.groups.map((g) => [g.metadata.name, g]));
   const idpType = new Map((raw.idps || []).map((p) => [p.name, p]));
   const people = {};
-  const person = (n) => (people[n] ||= { grants: [], source: null, lastLogin: null, identities: [] });
+  const person = (n) => (people[n] ||= { grants: [], source: null, lastLogin: null, identities: [], createdAt: null, sessions: 0, locked: false, provider: null });
+  const lockedSet = new Set(raw.htpasswdLocked || []);
   for (const u of raw.users) {
     const p = person(u.metadata.name);
     p.identities = u.identities || [];
+    p.createdAt = u.metadata?.creationTimestamp || null;
+    p.provider = (u.identities || [])[0]?.split(":")[0] || null;
     const prov = (u.identities || [])[0]?.split(":")[0];
     const idp = idpType.get(prov);
     p.source = idp ? (idp.type === "HTPasswd" ? "htpasswd" : idp.label) : prov || null;
   }
-  const add = (subject, role, scope, via) => {
-    if (subject.kind === "User" && !isSystem(subject.name)) person(subject.name).grants.push({ role, scope, via: "direct" });
-    if (subject.kind === "Group" && !isSystem(subject.name)) for (const m of groupUsers.get(subject.name) || []) if (!isSystem(m)) person(m).grants.push({ role, scope, via: subject.name });
+  const add = (subject, role, scope, b) => {
+    const binding = { name: b.metadata?.name, namespace: b.metadata?.namespace || null, managed: b.metadata?.labels?.[MANAGED] === MANAGED_VAL, request: b.metadata?.annotations?.["tcs.io/request"] || null, createdAt: b.metadata?.creationTimestamp || null };
+    if (subject.kind === "User" && !isSystem(subject.name)) person(subject.name).grants.push({ role, scope, via: "direct", binding });
+    if (subject.kind === "Group" && !isSystem(subject.name)) {
+      const synced = !!groupMeta.get(subject.name)?.metadata?.labels?.["openshift.io/ldap.host"];
+      for (const m of groupUsers.get(subject.name) || []) if (!isSystem(m)) person(m).grants.push({ role, scope, via: subject.name, synced, binding });
+    }
   };
   for (const b of raw.crbs) {
     const role = b.roleRef?.name;
     if (b.roleRef?.kind !== "ClusterRole" || !ROLESET.has(role)) continue;
-    for (const s of b.subjects || []) add(s, role, "cluster");
+    for (const s of b.subjects || []) add(s, role, "cluster", b);
   }
   for (const b of raw.rbs) {
     const role = b.roleRef?.name;
     if (!ROLESET.has(role) || CLUSTER_ROLES.has(role)) continue;
-    for (const s of b.subjects || []) add(s, role, b.metadata.namespace);
+    for (const s of b.subjects || []) add(s, role, b.metadata.namespace, b);
   }
+  for (const [n, p] of Object.entries(people)) { p.sessions = raw.sessions?.[n] || 0; p.locked = lockedSet.has(n); }
+  for (const n of lockedSet) person(n).locked = true;
   // Last login: the newest OAuth access token per user (when readable).
   if (raw.tokens) for (const t of raw.tokens) {
     const u = t.userName, at = Date.parse(t.metadata?.creationTimestamp || "");
@@ -206,7 +253,14 @@ export function accessOf(raw, { now = Date.now() } = {}) {
     syncedAt: g.metadata?.annotations?.["openshift.io/ldap.sync-time"] || null,
     managed: g.metadata?.labels?.[MANAGED] === MANAGED_VAL,
   }));
-  void groupMeta;
+  // Possible leavers: logs in through AD/LDAP but is no longer in any group synced from it.
+  const syncedGroups = raw.groups.filter((g) => g.metadata?.labels?.["openshift.io/ldap.host"]);
+  if (syncedGroups.length) {
+    const inSynced = new Set(syncedGroups.flatMap((g) => g.users || []));
+    for (const [n, p] of Object.entries(people)) {
+      if (idpType.get(p.provider)?.type === "LDAP" && !inSynced.has(n) && p.grants.length) flags.push({ level: "warn", person: n, text: "not in any AD-synced group any more (possible leaver)", leaver: true });
+    }
+  }
   return { people, groups, flags, admins: admins.length };
 }
 
@@ -225,9 +279,10 @@ export async function summary(clusters, ctx = null) {
   for (const r of per.filter((x) => x.ok)) {
     for (const [name, p] of Object.entries(r.acc.people)) {
       if (!p.grants.length && !p.identities.length) continue;
-      const row = (people[name] ||= { name, source: null, clusters: {}, lastLogin: null, flags: [] });
+      const row = (people[name] ||= { name, source: null, clusters: {}, detail: {}, lastLogin: null, flags: [] });
       row.source = row.source || p.source;
       row.clusters[r.cluster] = p.grants;
+      row.detail[r.cluster] = { exists: p.identities.length > 0 || !!p.createdAt, createdAt: p.createdAt, provider: p.provider, source: p.source, sessions: p.sessions, locked: p.locked };
       if (p.lastLogin && (!row.lastLogin || p.lastLogin > row.lastLogin)) row.lastLogin = p.lastLogin;
     }
     for (const f of r.acc.flags) if (f.person && people[f.person]) people[f.person].flags.push({ ...f, cluster: r.cluster });
@@ -254,7 +309,20 @@ export async function summary(clusters, ctx = null) {
   const rows = Object.values(people).sort((a, b) => (b.builtin ? 1 : 0) - (a.builtin ? 1 : 0) || a.name.localeCompare(b.name));
   const ok = clusterRows.filter((c) => c.ok);
   const st = await load();
+  const gov = governance(per.filter((x) => x.ok), rows, st, now);
+  for (const r of rows) {
+    const rot = st.rotation?.[r.name];
+    if (rot?.everyDays) {
+      const due = rot.lastSetAt ? Date.parse(rot.lastSetAt) + rot.everyDays * 86400000 : null;
+      r.rotation = { everyDays: rot.everyDays, lastSetAt: rot.lastSetAt || null, dueAt: due ? new Date(due).toISOString() : null, overdue: !due || due < now };
+      if (r.rotation.overdue) r.flags.push({ level: "warn", text: rot.lastSetAt ? "password rotation overdue" : "password never rotated by the platform" });
+    }
+    if (st.disabled?.[r.name]) r.disabled = st.disabled[r.name];
+  }
   return {
+    roleDocs: Object.fromEntries(ROLES.map((role) => [role, { ...ROLE_DOC[role], cluster: per.find((x) => x.ok && x.raw.roleDocs?.[role])?.raw.roleDocs[role] || null }])),
+    governance: gov,
+    reviews: (st.reviews || []).map(reviewSummary),
     at: new Date(now).toISOString(),
     clusters: clusterRows,
     people: rows,
@@ -267,10 +335,171 @@ export async function summary(clusters, ctx = null) {
       kubeadmin: ok.filter((c) => c.kubeadmin).length,
       inactive: rows.filter((r) => r.flags.some((f) => /last login/.test(f.text))).length,
       pending: st.requests.filter((q) => q.status === "pending").length,
+      unofficial: gov.unofficial.length, sod: gov.sod.length, leavers: gov.leavers.length,
     },
-    requests: st.requests.slice(0, 50),
+    requests: st.requests.slice(0, 200),
     roles: ROLES.map((r) => ({ id: r, label: ROLE_LABEL[r], clusterWide: CLUSTER_ROLES.has(r) })),
   };
+}
+
+/* ─────────────────────────── governance ─────────────────────────── */
+
+/** What each offered role lets someone do, in plain words. */
+export const ROLE_DOC = {
+  view: { label: "Viewer", scope: "namespace", text: "See most objects in the namespace: pods, deployments, services, routes, logs. Cannot change anything, and cannot see secrets or who has access." },
+  edit: { label: "Developer", scope: "namespace", text: "Create, change and delete most objects in the namespace, including deployments, services, routes, config maps and secrets. Cannot change roles or who has access." },
+  admin: { label: "Namespace admin", scope: "namespace", text: "Everything a developer can do, plus manage roles and access within the namespace. Cannot change quotas or the namespace itself." },
+  "cluster-reader": { label: "Cluster reader", scope: "cluster", text: "Read most objects in every namespace and cluster settings, including nodes and operators. Cannot change anything or read secrets." },
+  "cluster-admin": { label: "Cluster admin", scope: "cluster", text: "Full control of every object in every namespace and of the cluster itself, including security settings and other people’s access. Give it through a group, and for limited periods." },
+};
+
+const PROD = () => new RegExp(process.env.USER_ACCESS_PROD_PATTERN || "prod", "i");
+export const bindingKey = (cluster, ns, binding, kind, name) => `${cluster}|${ns || ""}|${binding}|${kind}:${name}`;
+
+/**
+ * Unofficial grants, separation-of-duties findings, possible leavers and
+ * privileged service accounts, across the clusters read. Pure.
+ */
+export function governance(okPer, rows, st, now) {
+  void now;
+  const baseline = new Set(st.baseline || []);
+  const unofficial = [];
+  for (const r of okPer) {
+    for (const b of [...r.raw.crbs.map((x) => ({ ...x, cl: true })), ...r.raw.rbs]) {
+      const role = b.roleRef?.name;
+      if (!["cluster-admin", "admin"].includes(role)) continue;
+      if (b.metadata?.labels?.[MANAGED] === MANAGED_VAL) continue;
+      for (const sub of b.subjects || []) {
+        if (!["User", "Group"].includes(sub.kind) || isSystem(sub.name)) continue;
+        const key = bindingKey(r.cluster, b.cl ? null : b.metadata?.namespace, b.metadata?.name, sub.kind, sub.name);
+        if (baseline.has(key)) continue;
+        unofficial.push({ key, cluster: r.cluster, binding: b.metadata?.name, namespace: b.cl ? null : b.metadata?.namespace || null, role, subjectKind: sub.kind, subject: sub.name, createdAt: b.metadata?.creationTimestamp || null });
+      }
+    }
+  }
+  const prod = PROD();
+  const approvers = new Set((st.requests || []).filter((q) => q.decidedBy && !/^ServiceNow /.test(q.decidedBy) && q.status !== "rejected").map((q) => q.decidedBy));
+  const sod = [];
+  for (const p of rows.filter((x) => !x.builtin)) {
+    const adminOn = Object.entries(p.clusters).filter(([, g]) => g.some((x) => x.role === "cluster-admin")).map(([c]) => c);
+    const prodAdmin = adminOn.filter((c) => prod.test(c));
+    const direct = Object.entries(p.clusters).filter(([, g]) => g.some((x) => x.role === "cluster-admin" && x.via === "direct")).map(([c]) => c);
+    if (direct.length) sod.push({ rule: "direct-admin", person: p.name, clusters: direct, text: "cluster-admin given directly to a person, not through a group" });
+    if (prodAdmin.length && /htpasswd/.test(p.source || "")) sod.push({ rule: "local-prod-admin", person: p.name, clusters: prodAdmin, text: "a local (htpasswd) user holds cluster-admin on production" });
+    if (prodAdmin.length && approvers.has(p.name)) sod.push({ rule: "approver-admin", person: p.name, clusters: prodAdmin, text: "approves access requests and also holds cluster-admin on production" });
+    if (okPer.length >= 3 && adminOn.length === okPer.length) sod.push({ rule: "standing-admin", person: p.name, clusters: adminOn, text: "standing cluster-admin on every cluster; prefer temporary elevation" });
+  }
+  const leavers = rows.filter((p) => p.flags.some((f) => f.leaver)).map((p) => ({ person: p.name, clusters: p.flags.filter((f) => f.leaver).map((f) => f.cluster) }));
+  const privilegedSAs = okPer.flatMap((r) => (r.raw.privilegedSAs || []).map((x) => ({ ...x, cluster: r.cluster })));
+  return { unofficial, sod, leavers, privilegedSAs, baselineSize: baseline.size };
+}
+
+/** Accept unofficial grants as approved (they stop being flagged). */
+export async function acceptBaseline(keys, actor) {
+  const list2 = (keys || []).filter((k) => typeof k === "string" && k.length < 600).slice(0, 5000);
+  const st = await load();
+  const set = new Set(st.baseline || []);
+  for (const k of list2) set.add(k);
+  st.baseline = [...set];
+  await save();
+  _deps.audit(`User & Access: ${list2.length} existing grant${list2.length === 1 ? "" : "s"} accepted as approved`, { keys: list2.slice(0, 50) }, actor);
+  return { baseline: st.baseline.length };
+}
+
+/** Password rotation rule for a local user: every N days, or none. */
+export async function setRotation(user, everyDays, actor) {
+  if (!validUser(user)) throw err("Not a valid user name");
+  const st = await load();
+  st.rotation ||= {};
+  if (!everyDays) delete st.rotation[user];
+  else {
+    const d = Number(everyDays);
+    if (![30, 60, 90, 180, 365].includes(d)) throw err("Rotation can be every 30, 60, 90, 180 or 365 days");
+    st.rotation[user] = { ...(st.rotation[user] || {}), everyDays: d };
+  }
+  await save();
+  _deps.audit(`User & Access: password rotation for ${user} ${everyDays ? `every ${everyDays} days` : "turned off"}`, { user, everyDays }, actor);
+  return st.rotation[user] || null;
+}
+
+/* ─────────────────────────── access reviews ─────────────────────────── */
+
+function reviewSummary(r) {
+  return { id: r.id, name: r.name, createdBy: r.createdBy, createdAt: r.createdAt, due: r.due, status: r.status, scope: r.scope, items: r.items.length, decided: r.items.filter((i) => i.decision).length, keep: r.items.filter((i) => i.decision === "keep").length, remove: r.items.filter((i) => i.decision === "remove").length, closedAt: r.closedAt || null, requests: r.requests || [] };
+}
+
+/** Start a review: a snapshot of who has what, for people to confirm or remove. */
+export async function createReview({ name, due, scope = "privileged" }, sum, actor) {
+  const st = await load();
+  st.reviews ||= [];
+  const dueT = Date.parse(due);
+  if (!dueT || dueT <= _deps.now()) throw err("Give a due date in the future");
+  const items = [];
+  for (const p of sum.people.filter((x) => !x.builtin)) {
+    for (const [cluster, grants] of Object.entries(p.clusters)) {
+      for (const g of grants) {
+        if (scope !== "all" && !["cluster-admin", "admin"].includes(g.role)) continue;
+        const key = `${p.name}|${cluster}|${g.role}|${g.scope}|${g.via}`;
+        if (items.some((i) => i.key === key)) continue;
+        items.push({ key, person: p.name, cluster, role: g.role, scope: g.scope, via: g.via, synced: !!g.synced, decision: null });
+      }
+    }
+  }
+  if (!items.length) throw err("Nothing to review in that scope");
+  const r = { id: `AR-${String(st.reviews.length + 1).padStart(3, "0")}`, name: String(name || "Access review").slice(0, 120), createdBy: actor, createdAt: new Date(_deps.now()).toISOString(), due: new Date(dueT).toISOString(), scope: scope === "all" ? "all" : "privileged", status: "open", items: items.slice(0, 3000) };
+  st.reviews.unshift(r);
+  await save();
+  _deps.audit(`User & Access: access review ${r.id} started (${r.items.length} grants)`, { id: r.id }, actor);
+  _deps.notify?.({ type: "access_review", severity: "info", title: `Access review ${r.id} started`, message: `${r.name}: ${r.items.length} grants to confirm by ${r.due.slice(0, 10)}.` });
+  return reviewSummary(r);
+}
+export async function getReview(id) {
+  const r = ((await load()).reviews || []).find((x) => x.id === id);
+  if (!r) throw err("No such review", 404);
+  return r;
+}
+export async function decideReview(id, decisions, actor) {
+  const r = await getReview(id);
+  if (r.status !== "open") throw err("This review is closed", 409);
+  const at = new Date(_deps.now()).toISOString();
+  for (const d of decisions || []) {
+    const it = r.items.find((i) => i.key === d.key);
+    if (it && ["keep", "remove", null].includes(d.decision)) Object.assign(it, { decision: d.decision, by: actor, at });
+  }
+  await save();
+  return reviewSummary(r);
+}
+/** Close: every "remove" (and, if asked, everything not reviewed) becomes a removal request. */
+export async function closeReview(id, { removeUnreviewed = false } = {}, actor) {
+  const r = await getReview(id);
+  if (r.status !== "open") throw err("This review is closed", 409);
+  const out = [];
+  for (const it of r.items.filter((i) => i.decision === "remove" || (removeUnreviewed && !i.decision))) {
+    try {
+      const q = await createRequest({ kind: "remove-role", clusters: [it.cluster], user: it.person, role: it.role, scope: it.scope, via: it.via, reason: `Access review ${r.id}${it.decision ? "" : ": not confirmed by the due date"}` }, actor);
+      out.push(q.id);
+    } catch (e) { out.push(`${it.person}: ${e.message}`); }
+  }
+  Object.assign(r, { status: "closed", closedAt: new Date(_deps.now()).toISOString(), closedBy: actor, requests: out });
+  await save();
+  _deps.audit(`User & Access: access review ${r.id} closed; ${out.length} removal request${out.length === 1 ? "" : "s"} raised`, { id, requests: out }, actor);
+  return reviewSummary(r);
+}
+
+/** Entitlement report: one row per person, cluster and role, with the approval behind it. */
+export function entitlementCsv(sum) {
+  const esc = (v) => { const x = String(v ?? ""); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+  const reqs = sum.requests || [];
+  const rows = [["person", "login", "cluster", "role", "role name", "scope", "given via", "binding", "managed by platform", "request", "approved by", "approved at", "ends"]];
+  for (const p of sum.people) {
+    for (const [cluster, grants] of Object.entries(p.clusters)) {
+      for (const g of grants) {
+        const q = reqs.find((x) => x.kind === "grant" && x.user === p.name && x.role === g.role && (x.namespace || "cluster") === g.scope && x.clusters.includes(cluster) && ["done", "partly done"].includes(x.status));
+        rows.push([p.name, p.detail?.[cluster]?.source || p.source || "", cluster, g.role, ROLE_DOC[g.role]?.label || g.role, g.scope, g.via, g.binding?.name || "", g.binding?.managed ? "yes" : "no", q?.id || g.binding?.request || "", q?.decidedBy || "", q?.decidedAt || "", q?.expires || ""]);
+      }
+    }
+  }
+  return rows.map((r) => r.map(esc).join(",")).join("\n") + "\n";
 }
 
 /* ─────────────────────────── requests ─────────────────────────── */
@@ -294,12 +523,31 @@ export function _resetUserAccess() { _state = { seq: 0, requests: [] }; }
 /** Check and normalise a request body. */
 export function validateRequest(b) {
   const kind = b?.kind;
-  if (!["grant", "revoke", "remove-kubeadmin"].includes(kind)) throw err("Unknown request");
+  if (!["grant", "revoke", "remove-kubeadmin", "remove-role", "remove-binding", "disable", "enable", "reset-password"].includes(kind)) throw err("Unknown request");
   const clusters = [...new Set((Array.isArray(b.clusters) ? b.clusters : []).map(String))].filter((c) => /^[A-Za-z0-9._:-]{1,128}$/.test(c));
   if (!clusters.length) throw err("Pick at least one cluster");
-  if (kind === "remove-kubeadmin") return { kind, clusters, reason: String(b.reason || "").slice(0, 300) };
+  const reason = String(b.reason || "").slice(0, 300);
+  if (kind === "remove-kubeadmin") return { kind, clusters, reason };
+  if (kind === "remove-binding") {
+    if (clusters.length !== 1) throw err("An unofficial grant belongs to one cluster");
+    if (!/^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$/.test(String(b.binding || "")) || !["User", "Group"].includes(b.subjectKind) || !b.subject || (b.namespace && !validName(b.namespace))) throw err("Not a valid binding");
+    return { kind, clusters, binding: String(b.binding), namespace: b.namespace || null, subjectKind: b.subjectKind, subject: String(b.subject).slice(0, 253), role: String(b.role || ""), reason };
+  }
   if (!validUser(b.user)) throw err("Give the person’s OpenShift user name (as their company login shows it, or a new local name)");
-  if (kind === "revoke") return { kind, clusters, user: b.user, reason: String(b.reason || "").slice(0, 300) };
+  if (kind === "revoke" || kind === "disable" || kind === "reset-password") return { kind, clusters, user: b.user, reason };
+  if (kind === "enable") {
+    if (!/^UA-\d{4,}$/.test(String(b.fromRequest || ""))) throw err("Enable restores what a Disable request removed: give that request");
+    return { kind, clusters, user: b.user, fromRequest: b.fromRequest, reason };
+  }
+  if (kind === "remove-role") {
+    const role = String(b.role || "");
+    if (!ROLES.includes(role)) throw err("Pick a role");
+    const scope = String(b.scope || "");
+    if (scope !== "cluster" && !validName(scope)) throw err("Not a valid namespace");
+    const via = String(b.via || "");
+    if (via !== "direct" && !/^[A-Za-z0-9][A-Za-z0-9._@+ -]{0,252}$/.test(via)) throw err("Not a valid group");
+    return { kind, clusters, user: b.user, role, scope, via, reason };
+  }
   const mode = b.mode === "htpasswd" ? "htpasswd" : "directory";
   const role = String(b.role || "");
   if (!ROLES.includes(role)) throw err("Pick a role");
@@ -308,7 +556,11 @@ export function validateRequest(b) {
   const group = b.group ? String(b.group) : managedGroupName(role, namespace);
   if (!validName(group)) throw err("Not a valid group name");
   let expires = null;
-  if (b.expires) {
+  if (b.hours) {
+    const h = Number(b.hours);
+    if (![1, 2, 4, 8, 24, 72].includes(h)) throw err("Temporary access can last 1, 2, 4, 8, 24 or 72 hours");
+    expires = new Date(_deps.now() + h * 3600000).toISOString();
+  } else if (b.expires) {
     const t = Date.parse(b.expires);
     if (!t || t <= _deps.now()) throw err("The expiry date must be in the future");
     if (t > _deps.now() + 366 * 86400000) throw err("Access can be granted for at most a year at a time");
@@ -316,12 +568,19 @@ export function validateRequest(b) {
   }
   const delivery = ["direct", "acm", "gitops"].includes(b.delivery) ? b.delivery : "direct";
   if (mode === "htpasswd" && delivery !== "direct") throw err("Local (htpasswd) users can only be applied directly: their password must never go into Git or a policy");
-  return { kind, clusters, user: b.user, mode, role, namespace, group, expires, delivery, reason: String(b.reason || "").slice(0, 300) };
+  return { kind, clusters, user: b.user, mode, role, namespace, group, expires, hours: b.hours ? Number(b.hours) : null, delivery, reason };
 }
 
 export function describe(q) {
   if (q.kind === "remove-kubeadmin") return `Remove kubeadmin from ${q.clusters.length} cluster${q.clusters.length > 1 ? "s" : ""}`;
-  if (q.kind === "revoke") return `Remove ${q.user} from ${q.clusters.length} cluster${q.clusters.length > 1 ? "s" : ""}`;
+  const on = `${q.clusters.length} cluster${q.clusters.length > 1 ? "s" : ""}`;
+  if (q.kind === "revoke") return `Delete ${q.user} from ${on} (access, login and sessions)`;
+  if (q.kind === "disable") return `Disable ${q.user} on ${on} (access suspended, sessions ended)`;
+  if (q.kind === "enable") return `Enable ${q.user} on ${on} (restore what ${q.fromRequest} removed)`;
+  if (q.kind === "reset-password") return `Reset the local password of ${q.user} on ${on}`;
+  if (q.kind === "remove-role") return `Remove ${ROLE_LABEL[q.role]} (${q.role})${q.scope !== "cluster" ? ` on ${q.scope}` : " cluster-wide"} from ${q.user}${q.via !== "direct" ? ` (via group ${q.via})` : ""} on ${on}`;
+  if (q.kind === "remove-binding") return `Remove ${q.subjectKind.toLowerCase()} ${q.subject} from ${q.role} binding ${q.binding}${q.namespace ? ` in ${q.namespace}` : ""} on ${q.clusters[0]}`;
+  if (q.hours) return `${q.user}: temporary ${ROLE_LABEL[q.role]}${q.namespace ? ` on ${q.namespace}` : ""} for ${q.hours} h on ${on}`;
   return `${q.user}: ${ROLE_LABEL[q.role]}${q.namespace ? ` on namespace ${q.namespace}` : ""} on ${q.clusters.length} cluster${q.clusters.length > 1 ? "s" : ""}${q.expires ? ` until ${q.expires.slice(0, 10)}` : ""}${q.mode === "htpasswd" ? " (local htpasswd login)" : ""}`;
 }
 
@@ -333,6 +592,7 @@ export async function createRequest(body, actor) {
   st.requests = st.requests.slice(0, 500);
   await save();
   _deps.audit(`User & Access: request ${q.id} — ${q.title}`, { id: q.id }, actor);
+  _deps.notify?.({ type: "access_request", severity: ["disable", "revoke"].includes(q.kind) || q.role === "cluster-admin" ? "warning" : "info", title: `Access request ${q.id} waiting for approval`, message: `${q.title}. Requested by ${actor}${q.reason ? `: ${q.reason}` : ""}.` });
   return q;
 }
 
@@ -365,14 +625,21 @@ export async function approveRequest(id, actor, { allowSelf = false, ctx = null,
     q.results = q.clusters.map((c) => ({ cluster: c, ok: true, text: q.delivery === "acm" ? "ACM policy generated for you to apply on the hub" : "Manifests generated for your GitOps repository" }));
   } else {
     let hash = null;
-    if (q.kind === "grant" && q.mode === "htpasswd") { password = generatePassword(); hash = bcrypt.hashSync(password, 10); }
+    if ((q.kind === "grant" && q.mode === "htpasswd") || q.kind === "reset-password") { password = generatePassword(); hash = bcrypt.hashSync(password, 10); }
+    const from = q.kind === "enable" ? st.requests.find((x) => x.id === q.fromRequest && x.kind === "disable" && x.user === q.user) : null;
+    if (q.kind === "enable" && !from) { q.status = "pending"; await save(); throw err(`${q.fromRequest} is not a Disable request for ${q.user}`); }
     q.results = [];
     for (const c of q.clusters) {
       try {
-        const op = q.kind === "grant" ? "grant" : q.kind === "revoke" ? "revoke" : "kubeadmin";
-        const payload = op === "grant" ? { q: { id: q.id, user: q.user, mode: q.mode, role: q.role, namespace: q.namespace, group: q.group }, hash } : op === "revoke" ? { user: q.user } : {};
-        const text = await exec(c, op, payload, ctx);
-        q.results.push({ cluster: c, ok: true, text });
+        const op = { grant: "grant", revoke: "revoke", "remove-kubeadmin": "kubeadmin", "remove-role": "unbind", "remove-binding": "unbindsubject", disable: "disable", enable: "enable", "reset-password": "setpass" }[q.kind];
+        const payload = op === "grant" ? { q: { id: q.id, user: q.user, mode: q.mode, role: q.role, namespace: q.namespace, group: q.group }, hash }
+          : op === "unbind" ? { user: q.user, role: q.role, scope: q.scope, via: q.via }
+            : op === "unbindsubject" ? { binding: q.binding, namespace: q.namespace, subjectKind: q.subjectKind, subject: q.subject }
+              : op === "enable" ? { user: q.user, snapshot: from.results?.find((r) => r.cluster === c)?.snapshot || null }
+                : op === "setpass" ? { user: q.user, hash }
+                  : op === "kubeadmin" ? {} : { user: q.user };
+        const res = await exec(c, op, payload, ctx);
+        q.results.push(typeof res === "object" && res ? { cluster: c, ok: true, text: res.text, ...(res.snapshot ? { snapshot: res.snapshot } : {}) } : { cluster: c, ok: true, text: res });
       } catch (e) {
         q.results.push({ cluster: c, ok: false, text: /read-only/i.test(e.message) ? "This cluster is reached through the read-only bridge; changes need its agent credentials or direct access" : e.message.slice(0, 300) });
       }
@@ -381,7 +648,15 @@ export async function approveRequest(id, actor, { allowSelf = false, ctx = null,
   const good = q.results.filter((r) => r.ok).length;
   q.status = good === q.results.length ? "done" : good ? "partly done" : "failed";
   if (q.kind === "grant" && q.expires && q.delivery === "direct") q.expiryPending = good > 0;
+  if (good && (q.kind === "reset-password" || (q.kind === "grant" && q.mode === "htpasswd"))) {
+    st.rotation ||= {};
+    if (st.rotation[q.user] || q.kind === "reset-password") st.rotation[q.user] = { ...(st.rotation[q.user] || {}), lastSetAt: q.decidedAt };
+  }
+  st.disabled ||= {};
+  if (good && q.kind === "disable") st.disabled[q.user] = { at: q.decidedAt, request: q.id };
+  if (good && (q.kind === "enable" || q.kind === "revoke")) delete st.disabled[q.user];
   await save();
+  _deps.notify?.({ type: "access_change", severity: q.status === "done" ? "info" : "warning", title: `Access ${q.id} ${q.status}`, message: `${q.title}. Approved by ${via || actor}.${q.results.filter((r) => !r.ok).map((r) => ` ${r.cluster}: ${r.text}`).join("")}` });
   _deps.audit(`User & Access: ${q.id} approved${via ? ` in ${via}` : ""} — ${q.title}: ${q.status}`, { id, results: q.results }, via || actor);
   return { ...q, password, manifests };
 }
@@ -413,7 +688,7 @@ export async function serviceNowTick() {
     let a;
     try { a = await _deps.snApproval(q.ticketSysId); } catch { continue; }
     if (a === "approved") {
-      if (q.kind === "grant" && q.mode === "htpasswd") { q.snApproved = true; await save(); continue; }
+      if ((q.kind === "grant" && q.mode === "htpasswd") || q.kind === "reset-password") { if (!q.snApproved) { q.snApproved = true; await save(); } continue; }
       await approveRequest(q.id, "servicenow", { via: `ServiceNow ${q.ticket}` });
       out.push(q.id);
     } else if (a === "rejected") {
@@ -521,6 +796,8 @@ export async function applyRevoke(user) {
     await _deps.ocp.delete(`/apis/user.openshift.io/v1/users/${encodeURIComponent(user)}`);
     done.push("user and identities deleted");
   }
+  const ended = await revokeSessions(user);
+  if (ended) done.push(`${ended} active session${ended > 1 ? "s" : ""} ended`);
   if (!done.length && !kept.length) return `${user} had no access here`;
   return [done.join("; "), kept.length ? `still in AD-synced group${kept.length > 1 ? "s" : ""} ${kept.join(", ")}: remove in the directory` : ""].filter(Boolean).join(". ");
 }
@@ -535,6 +812,140 @@ export async function applyRemoveKubeadmin() {
   if (!admins.length) throw err("No other user has cluster-admin yet: grant it to someone (through a group) first", 409);
   await _deps.ocp.delete("/api/v1/namespaces/kube-system/secrets/kubeadmin");
   return `kubeadmin removed; ${admins.length} other cluster-admin${admins.length > 1 ? "s" : ""} can log in`;
+}
+
+/** End a person's active sessions: delete their OAuth access tokens. Returns how many. */
+export async function revokeSessions(user) {
+  const toks = await list("/apis/oauth.openshift.io/v1/oauthaccesstokens");
+  let n = 0;
+  for (const t of (toks || []).filter((x) => x.userName === user)) {
+    try { await _deps.ocp.delete(`/apis/oauth.openshift.io/v1/oauthaccesstokens/${encodeURIComponent(t.metadata.name)}`); n++; } catch { /* gone */ }
+  }
+  return n;
+}
+
+const bindingPath = (b, ns) => (ns ? `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings/${b}` : `/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${b}`);
+
+/** Take one subject out of one binding; the binding goes when it was the last. */
+export async function applyUnbindSubject({ binding, namespace, subjectKind, subject }) {
+  const path = bindingPath(binding, namespace);
+  const b = await get(path);
+  if (!b) return `binding ${binding} is already gone`;
+  const subs = b.subjects || [];
+  const rest = subs.filter((x) => !(x.kind === subjectKind && x.name === subject));
+  if (rest.length === subs.length) return `${subject} is no longer in ${binding}`;
+  if (rest.length) await _deps.ocp.patch(path, { subjects: rest }, MERGE); else await _deps.ocp.delete(path);
+  return `${subjectKind.toLowerCase()} ${subject} removed from ${binding}${rest.length ? "" : " (binding deleted)"}`;
+}
+
+/** Remove one role from one person: the direct bindings, or their place in the group that gives it. */
+export async function applyUnbind({ user, role, scope, via }) {
+  if (via === "direct") {
+    const ns = scope === "cluster" ? null : scope;
+    const all = await list(ns ? `/apis/rbac.authorization.k8s.io/v1/namespaces/${ns}/rolebindings` : "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings");
+    const hits = (all || []).filter((b) => b.roleRef?.name === role && (b.subjects || []).some((x) => x.kind === "User" && x.name === user));
+    if (!hits.length) return `${user} has no direct ${role} binding${ns ? ` in ${ns}` : ""} here`;
+    const out = [];
+    for (const b of hits) out.push(await applyUnbindSubject({ binding: b.metadata.name, namespace: ns, subjectKind: "User", subject: user }));
+    return out.join("; ");
+  }
+  const g = await get(`/apis/user.openshift.io/v1/groups/${via}`);
+  if (!g || !(g.users || []).includes(user)) return `${user} is no longer in ${via}`;
+  if (g.metadata?.labels?.["openshift.io/ldap.host"]) throw err(`${via} is synced from AD/LDAP: remove ${user} from it in the directory`, 409);
+  await _deps.ocp.patch(`/apis/user.openshift.io/v1/groups/${via}`, { users: g.users.filter((u) => u !== user) }, MERGE);
+  return `${user} removed from ${via}, which gives ${role}${scope !== "cluster" ? ` on ${scope}` : ""}${g.users.length > 1 ? " (other members keep it)" : ""}`;
+}
+
+async function htpasswdEdit(user, fn) {
+  const idps = describeIdps(await get("/apis/config.openshift.io/v1/oauths/cluster")).filter((x) => x.htpasswdSecret);
+  let touched = 0;
+  for (const p of idps) {
+    const s = await get(`/api/v1/namespaces/openshift-config/secrets/${p.htpasswdSecret}`);
+    const rows = parseHtpasswd(s?.data?.htpasswd ? Buffer.from(s.data.htpasswd, "base64").toString("utf8") : "");
+    const i = rows.findIndex((r) => r.user === user);
+    if (i < 0) continue;
+    const next = fn(rows[i].hash);
+    touched++;
+    if (next === rows[i].hash) continue;
+    rows[i] = { user, hash: next };
+    await _deps.ocp.patch(`/api/v1/namespaces/openshift-config/secrets/${p.htpasswdSecret}`, { data: { htpasswd: Buffer.from(rows.map((r) => `${r.user}:${r.hash}`).join("\n") + "\n").toString("base64") } }, MERGE);
+  }
+  return touched;
+}
+
+/**
+ * Disable (suspend): remember the person's groups and direct bindings, take
+ * them away, lock a local login and end sessions. Enable puts it all back.
+ */
+export async function applyDisable(user) {
+  const raw = await readCluster();
+  const acc = accessOf(raw);
+  const others = Object.entries(acc.people).filter(([n, p]) => n !== user && p.grants.some((g) => g.role === "cluster-admin"));
+  if (acc.people[user]?.grants.some((g) => g.role === "cluster-admin") && !others.length && !raw.kubeadmin) throw err(`${user} is the only cluster-admin who can log in here; add another admin first`, 409);
+  const snapshot = { groups: [], bindings: [], synced: [] };
+  for (const g of raw.groups.filter((x) => (x.users || []).includes(user))) {
+    if (g.metadata?.labels?.["openshift.io/ldap.host"]) { snapshot.synced.push(g.metadata.name); continue; }
+    await _deps.ocp.patch(`/apis/user.openshift.io/v1/groups/${g.metadata.name}`, { users: g.users.filter((u) => u !== user) }, MERGE);
+    snapshot.groups.push(g.metadata.name);
+  }
+  for (const b of [...raw.crbs.map((x) => ({ ...x, cl: true })), ...raw.rbs]) {
+    if (!(b.subjects || []).some((x) => x.kind === "User" && x.name === user)) continue;
+    snapshot.bindings.push({ name: b.metadata.name, namespace: b.cl ? null : b.metadata.namespace, role: b.roleRef.name, roleKind: b.roleRef.kind || "ClusterRole" });
+    await applyUnbindSubject({ binding: b.metadata.name, namespace: b.cl ? null : b.metadata.namespace, subjectKind: "User", subject: user });
+  }
+  const locked = await htpasswdEdit(user, (h) => (h.startsWith("!") ? h : `!${h}`));
+  const ended = await revokeSessions(user);
+  const parts = [`${snapshot.groups.length} group${snapshot.groups.length === 1 ? "" : "s"} and ${snapshot.bindings.length} direct binding${snapshot.bindings.length === 1 ? "" : "s"} suspended`];
+  if (locked) parts.push("local login locked");
+  if (ended) parts.push(`${ended} session${ended > 1 ? "s" : ""} ended`);
+  if (snapshot.synced.length) parts.push(`still in AD-synced ${snapshot.synced.join(", ")}: disable the account in AD too`);
+  return { text: parts.join("; "), snapshot };
+}
+
+export async function applyEnable(user, snapshot) {
+  if (!snapshot) throw err("Nothing was recorded for this cluster when it was disabled", 409);
+  const done = [];
+  for (const name of snapshot.groups || []) {
+    const g = await get(`/apis/user.openshift.io/v1/groups/${name}`);
+    if (!g) { await _deps.ocp.post("/apis/user.openshift.io/v1/groups", { apiVersion: "user.openshift.io/v1", kind: "Group", metadata: { name, labels }, users: [user] }); done.push(`${name} recreated`); continue; }
+    if (!(g.users || []).includes(user)) { await _deps.ocp.patch(`/apis/user.openshift.io/v1/groups/${name}`, { users: [...(g.users || []), user] }, MERGE); done.push(`back in ${name}`); }
+  }
+  for (const b of snapshot.bindings || []) {
+    const path = bindingPath(b.name, b.namespace);
+    const cur = await get(path);
+    const subject = { apiGroup: "rbac.authorization.k8s.io", kind: "User", name: user };
+    if (cur) {
+      if (!(cur.subjects || []).some((x) => x.kind === "User" && x.name === user)) await _deps.ocp.patch(path, { subjects: [...(cur.subjects || []), subject] }, MERGE);
+    } else {
+      const body = { apiVersion: "rbac.authorization.k8s.io/v1", kind: b.namespace ? "RoleBinding" : "ClusterRoleBinding", metadata: { name: b.name, ...(b.namespace ? { namespace: b.namespace } : {}), labels }, roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: b.roleKind || "ClusterRole", name: b.role }, subjects: [subject] };
+      await _deps.ocp.post(b.namespace ? `/apis/rbac.authorization.k8s.io/v1/namespaces/${b.namespace}/rolebindings` : "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", body);
+    }
+    done.push(`${b.role} binding ${b.name} restored`);
+  }
+  const unlocked = await htpasswdEdit(user, (h) => (h.startsWith("!") ? h.slice(1) : h));
+  if (unlocked) done.push("local login unlocked");
+  return done.length ? done.join("; ") : "nothing to restore";
+}
+
+/** New password for a local user: the htpasswd entry on this cluster, then end old sessions. */
+export async function applySetPassword(user, hash) {
+  if (!hash) throw err("No password given");
+  let wasLocked = false;
+  const n = await htpasswdEdit(user, (h) => { if (h.startsWith("!")) { wasLocked = true; return h; } return hash; });
+  if (!n) throw err(`${user} has no local (htpasswd) login on this cluster`, 404);
+  if (wasLocked) throw err(`${user} is disabled here; enable them before resetting the password`, 409);
+  const ended = await revokeSessions(user);
+  return `password replaced in the htpasswd Secret${ended ? `; ${ended} old session${ended > 1 ? "s" : ""} ended` : ""}`;
+}
+
+/** Can this person do this? A SubjectAccessReview with their groups. */
+export async function canI({ user, verb, resource, namespace, group = "" }) {
+  const groups = ((await list("/apis/user.openshift.io/v1/groups")) || []).filter((g) => (g.users || []).includes(user)).map((g) => g.metadata.name);
+  const r = await _deps.ocp.post("/apis/authorization.k8s.io/v1/subjectaccessreviews", {
+    apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
+    spec: { user, groups: [...groups, "system:authenticated", "system:authenticated:oauth"], resourceAttributes: { verb, resource, group, ...(namespace ? { namespace } : {}) } },
+  });
+  return { allowed: !!r?.status?.allowed, reason: r?.status?.reason || null, groups };
 }
 
 /** Remove a person from a platform-managed group (expiry). */
@@ -561,6 +972,7 @@ export async function expireTick() {
     q.expired = { at: new Date(now).toISOString(), results };
     out.push(q.id);
     _deps.audit(`User & Access: ${q.id} expired — ${q.user} removed from ${q.group}`, { id: q.id, results }, "system");
+    _deps.notify?.({ type: "access_change", severity: "info", title: `Access ${q.id} expired`, message: `${q.user}: ${q.role}${q.namespace ? ` on ${q.namespace}` : ""} removed on ${results.length} cluster${results.length === 1 ? "" : "s"}.` });
   }
   if (out.length) await save();
   return out;
