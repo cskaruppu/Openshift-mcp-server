@@ -15,12 +15,18 @@ const roleClass = (r) => (r === "cluster-admin" ? "adm" : r === "admin" || r ===
 export default function UserDetail({ person, data, label, canApprove, busy, onRequest, onCanI, onRotation, onClose }) {
   const [ci, setCi] = useState({ cluster: Object.keys(person.detail || person.clusters || {})[0] || "local", verb: "delete", resource: "pods", namespace: "" });
   const [ciRes, setCiRes] = useState(null);
+  // Which clusters the actions apply to: all the person is on, until narrowed.
+  const [pick, setPick] = useState(null);
   const clustersIn = Object.keys({ ...(person.detail || {}), ...person.clusters }).filter((c) => (person.clusters[c] || []).length || person.detail?.[c]?.exists);
   const local = Object.values(person.detail || {}).some((d) => /htpasswd/.test(d.source || "")) || /htpasswd/.test(person.source || "");
   const sessions = Object.values(person.detail || {}).reduce((a, d) => a + (d.sessions || 0), 0);
   const roles = [...new Set(Object.values(person.clusters).flat().map((g) => g.role))];
   const history = (data.requests || []).filter((r) => r.user === person.name);
   const grantReq = (c, g) => history.find((r) => r.kind === "grant" && r.role === g.role && (r.namespace || "cluster") === g.scope && r.clusters.includes(c) && ["done", "partly done"].includes(r.status));
+  const chosen = pick ? clustersIn.filter((c) => pick.includes(c)) : clustersIn;
+  const localOn = (c) => /htpasswd/.test(person.detail?.[c]?.source || "");
+  const chosenLocal = chosen.filter(localOn);
+  const n = (list) => `${list.length} cluster${list.length === 1 ? "" : "s"}`;
   const ask = (body, confirmText) => { if (!confirmText || window.confirm(confirmText)) onRequest({ ...body, user: person.name }); };
 
   return (
@@ -36,10 +42,10 @@ export default function UserDetail({ person, data, label, canApprove, busy, onRe
 
         <div className="ua-dacts">
           {person.disabled
-            ? <button className="vc-btn primary sm" disabled={!!busy} onClick={() => ask({ kind: "enable", clusters: clustersIn, fromRequest: person.disabled.request, reason: "Re-enable" })}>Enable (restore access)</button>
-            : <button className="vc-btn sm" disabled={!!busy || !clustersIn.length} onClick={() => ask({ kind: "disable", clusters: clustersIn, reason: "Suspend access" }, `Disable ${person.name} on ${clustersIn.length} cluster(s)? Their access is suspended and their sessions are ended; Enable restores it.`)}>Disable</button>}
-          {local && !person.disabled && <button className="vc-btn sm" disabled={!!busy} onClick={() => ask({ kind: "reset-password", clusters: clustersIn, reason: "Password reset" })}>Reset password</button>}
-          <button className="vc-btn danger sm" disabled={!!busy} onClick={() => ask({ kind: "revoke", clusters: clustersIn, reason: "Leaver / removal" }, `Delete ${person.name} from ${clustersIn.length} cluster(s)? This removes their access, local login, user record and sessions. It cannot be undone.`)}>Delete everywhere</button>
+            ? <button className="vc-btn primary sm" disabled={!!busy || !chosen.length} onClick={() => ask({ kind: "enable", clusters: chosen, fromRequest: person.disabled.request, reason: "Re-enable" })}>Enable on {n(chosen)}</button>
+            : <button className="vc-btn sm" disabled={!!busy || !chosen.length} onClick={() => ask({ kind: "disable", clusters: chosen, reason: "Suspend access" }, `Disable ${person.name} on ${chosen.join(", ")}? Their access is suspended and their sessions are ended; Enable restores it.`)}>Disable on {n(chosen)}</button>}
+          {local && !person.disabled && <button className="vc-btn sm" disabled={!!busy || !chosenLocal.length} title={chosenLocal.length ? "" : "None of the ticked clusters has a local login for this person"} onClick={() => ask({ kind: "reset-password", clusters: chosenLocal, reason: "Password reset" }, `Reset the local password of ${person.name} on ${chosenLocal.join(", ")} only?`)}>Reset password on {n(chosenLocal)}</button>}
+          <button className="vc-btn danger sm" disabled={!!busy || !chosen.length} onClick={() => ask({ kind: "revoke", clusters: chosen, reason: "Leaver / removal" }, `Delete ${person.name} from ${chosen.join(", ")}? This removes their access, local login, user record and sessions there. It cannot be undone.`)}>{chosen.length === clustersIn.length ? "Delete everywhere" : `Delete from ${n(chosen)}`}</button>
           {local && canApprove && (
             <label className="ua-small vc-muted">Rotate password every{" "}
               <select className="ua-in ua-inl" value={person.rotation?.everyDays || ""} onChange={(e) => onRotation(person.name, e.target.value ? Number(e.target.value) : null)}>
@@ -48,21 +54,23 @@ export default function UserDetail({ person, data, label, canApprove, busy, onRe
             </label>
           )}
         </div>
-        <p className="ua-hint">Each action is a request: approved here by another Admin, or in ServiceNow. Disable keeps a record so Enable puts back exactly what was there; Delete does not.</p>
+        <p className="ua-hint">Actions apply to the clusters ticked under “Where they exist” ({chosen.length ? chosen.map(label).join(", ") : "none ticked"}). Each action is a request: approved here by another Admin, or in ServiceNow. Disable keeps a record so Enable puts back exactly what was there; Delete does not.</p>
 
         <div className="vgf-label">Where they exist</div>
         <table className="ua-t">
-          <thead><tr><th>Cluster</th><th>Login</th><th>Created</th><th>Sessions</th><th>Status</th></tr></thead>
+          <thead><tr><th style={{ width: 40 }}><input type="checkbox" aria-label="All clusters" checked={chosen.length === clustersIn.length && clustersIn.length > 0} onChange={(e) => setPick(e.target.checked ? null : [])} /></th><th>Cluster</th><th>Login</th><th>Created</th><th>Sessions</th><th>Status</th><th /></tr></thead>
           <tbody>
             {Object.keys({ ...(person.detail || {}), ...person.clusters }).map((c) => {
               const d = person.detail?.[c] || {};
               return (
                 <tr key={c}>
+                  <td>{clustersIn.includes(c) && <input type="checkbox" aria-label={`Apply to ${label(c)}`} checked={chosen.includes(c)} onChange={(e) => setPick(e.target.checked ? [...chosen, c] : chosen.filter((x) => x !== c))} />}</td>
                   <td>{label(c)}</td>
                   <td>{d.source || (d.exists ? d.provider : "has not logged in here")}</td>
                   <td>{day(d.createdAt)}</td>
                   <td>{d.sessions ?? 0}</td>
                   <td>{d.locked ? <span className="ua-flag crit">local login locked</span> : (person.clusters[c] || []).length ? <span className="ua-st ok">active</span> : <span className="vc-muted">no roles</span>}</td>
+                  <td>{localOn(c) && !person.disabled && !d.locked && <button className="ua-link" disabled={!!busy} onClick={() => ask({ kind: "reset-password", clusters: [c], reason: "Password reset" }, `Reset the local password of ${person.name} on ${label(c)} only?`)}>Reset here</button>}</td>
                 </tr>
               );
             })}
