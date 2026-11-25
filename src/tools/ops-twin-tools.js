@@ -10,9 +10,11 @@ import { activeClusterContext } from "../utils/openshift-client.js";
 // connection's API URL tells them apart.
 const key = () => `tool:${activeClusterContext()?.apiUrl || "local"}`;
 
-const SCENARIO_HELP = "kind: drain | node-fail | gpu-fail | rack-fail | add-model | upgrade | add-vms. "
-  + "node (drain, node-fail, gpu-fail), card (gpu-fail: index or UUID), rack (rack-fail), "
-  + "gpuGiB + name (add-model), count + cpu + memGiB (add-vms).";
+const SCENARIO_HELP = "kind: drain | node-fail | gpu-fail | rack-fail | site-fail | add-model | upgrade | window | add-vms | peak | retire | blast. "
+  + "node (drain, node-fail, gpu-fail, blast), card (gpu-fail: index or UUID), rack (rack-fail), site (site-fail), "
+  + "gpuGiB + name (add-model), count + cpu + memGiB (add-vms), namespaces + factor (peak, e.g. 3 for ×3), windowHours (window), "
+  + "nodes (retire, comma separated), serviceAccount (blast, namespace/name). critical: namespaces whose apps must not stop (optional). "
+  + "Every result has a risk score 0–100.";
 
 export async function twinOverview() {
   const OT = await import("../services/ops-twin.js");
@@ -32,7 +34,8 @@ export async function twinSimulate(args) {
   const sc = args.question ? OT.parseQuestion(twin, args.question) : { ...args };
   if (!sc?.kind) return { error: "Could not tell which scenario that is. Name a node, a rack, a GPU, or say drain / fails / add a model of N GiB / upgrade / migrate N VMs.", scenarios: OT.SCENARIOS };
   const out = OT.simulate(twin, sc);
-  return { report: OT.report(out), verdict: out.verdict, kpis: out.kpis };
+  out.risk = OT.computeRisk(out, { cluster: twin.cluster, critical: sc.critical });
+  return { report: OT.report(out), verdict: out.verdict, risk: { score: out.risk.score, level: out.risk.level, reasons: out.risk.reasons.map((r) => r.text) }, kpis: out.kpis };
 }
 
 /** For the agent loop (services/tools-registry.js). */
@@ -52,6 +55,8 @@ export const AGENT_TOOLS = [
         question: { type: "string", description: "A plain-English what-if question" },
         kind: { type: "string" }, node: { type: "string" }, card: { type: "string" }, rack: { type: "string" },
         gpuGiB: { type: "number" }, name: { type: "string" }, count: { type: "number" }, cpu: { type: "number" }, memGiB: { type: "number" },
+        site: { type: "string" }, namespaces: { type: "string" }, factor: { type: "number" }, windowHours: { type: "number" },
+        nodes: { type: "string" }, serviceAccount: { type: "string" }, critical: { type: "string" },
       },
       required: [],
     },
@@ -65,6 +70,8 @@ export function registerOpsTwinTools(server) {
   server.tool("twin_simulate", AGENT_TOOLS[1].description, {
     question: z.string().optional(), kind: z.string().optional(), node: z.string().optional(), card: z.string().optional(), rack: z.string().optional(),
     gpuGiB: z.number().optional(), name: z.string().optional(), count: z.number().optional(), cpu: z.number().optional(), memGiB: z.number().optional(),
+    site: z.string().optional(), namespaces: z.string().optional(), factor: z.number().optional(), windowHours: z.number().optional(),
+    nodes: z.string().optional(), serviceAccount: z.string().optional(), critical: z.string().optional(),
   }, async (a) => {
     try { return { content: [{ type: "text", text: JSON.stringify(await twinSimulate(a), null, 2) }] }; }
     catch (e) { return { content: [{ type: "text", text: `Ops Twin: ${e.message}` }], isError: true }; }

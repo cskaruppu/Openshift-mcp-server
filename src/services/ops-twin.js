@@ -930,7 +930,7 @@ function simulatePeak(twin, sc) {
   if (hot.length) impact.push({ level: "warn", title: "By real usage, these nodes would run hot", text: hot.join(", "), fix: { kind: "capacity", text: "Add capacity or spread the busiest apps" } });
   const crit = unplaced > 0;
   return {
-    scenario: { kind: "peak", subject: `×${factor} on ${groups.size} workloads` }, at: twin.at, cluster: twin.cluster,
+    scenario: { kind: "peak", subject: `×${factor} on ${groups.size} workload${groups.size === 1 ? "" : "s"}` }, at: twin.at, cluster: twin.cluster,
     verdict: crit ? { level: "crit", title: `Not ready for ×${factor}`, text: `${unplaced} replicas have nowhere to run; about ${need} more node${need === 1 ? "" : "s"} needed.` }
       : hot.length || quotaHit.size ? { level: "warn", title: `Fits ×${factor}, with cautions`, text: "Requests fit, but see below." } : { level: "ok", title: `Ready for ×${factor}`, text: "Every extra replica fits." },
     kpis: { downtime: crit ? "outage" : "none", moves: moves.length, cannotMove: unplaced, nodesNeeded: need, gpusInService: null, powerW: null, minutes: null },

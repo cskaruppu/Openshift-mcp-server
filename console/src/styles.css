@@ -10587,3 +10587,27 @@ code.new { color: #22a06b; }
 .ua-crn { font-weight: 600; font-size: 0.76rem; color: var(--vc-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ua-filters { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .ua-fsel { min-width: 170px; }
+
+/* Ops Twin: risk, trust, industry scenarios (additive) */
+.ot-risk { margin-top: 10px; border-radius: 10px; padding: 7px 10px; font-size: 0.8rem; border: 1px solid; background: var(--vc-surface); }
+.ot-risk.ok { border-color: color-mix(in srgb, #1f9d55 45%, transparent); }
+.ot-risk.warn { border-color: color-mix(in srgb, #c27c0e 55%, transparent); }
+.ot-risk.crit { border-color: color-mix(in srgb, #d13438 55%, transparent); }
+.ot-risk summary { cursor: pointer; }
+.ot-risk ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; color: var(--vc-ink-2); }
+.ot-risk li span { display: inline-block; min-width: 34px; font-weight: 700; color: var(--vc-ink); }
+.ot-extra { margin: 8px 0 0; font-size: 0.8rem; font-weight: 600; }
+.ot-trust { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.ot-trust > div { border: 1px solid var(--vc-line); border-radius: 10px; padding: 9px 10px; display: flex; flex-direction: column; gap: 2px; }
+.ot-trust b { font-size: 1.35rem; line-height: 1.1; }
+.ot-trust span { font-size: 0.75rem; font-weight: 700; }
+.ot-trust small { font-size: 0.7rem; color: var(--vc-ink-3); }
+.ot-lib { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ot-lb { text-align: left; font: 500 0.72rem var(--tcs-font); color: var(--vc-ink-2); padding: 8px 9px; border-radius: 9px; border: 1px solid var(--vc-line); background: var(--vc-surface); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.ot-lb:hover:not(:disabled) { border-color: var(--tcs-blue); }
+.ot-lb:disabled { opacity: 0.6; cursor: default; }
+.ot-lb em { font-style: normal; font-size: 0.64rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tcs-blue); }
+.ot-lb b { font-size: 0.78rem; color: var(--vc-ink); }
+.ot-pick { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.ot-chk { display: flex !important; flex-direction: row !important; align-items: center; gap: 6px; font-size: 0.78rem; }
+@media (max-width: 640px) { .ot-lib, .ot-trust { grid-template-columns: 1fr; } }

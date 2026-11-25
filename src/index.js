@@ -2221,7 +2221,50 @@ async function startSSE() {
           const o = await Promise.race([getGpuOverview(), new Promise((r) => { const t = setTimeout(() => r(null), 4000); if (t.unref) t.unref(); })]);
           return (o?.gpus || []).map((g) => ({ uuid: g.uuid, powerW: g.powerW ?? null, tempC: g.tempC ?? null }));
         },
+        // Real usage: 95th percentile over 7 days for the 200 busiest pods by
+        // CPU and by memory. Optional; bounded so a slow Prometheus never holds
+        // up a simulation. CPU in millicores, memory in MiB.
+        usage: String(process.env.OPS_TWIN_USAGE || "true").toLowerCase() === "false" ? null : async () => {
+          const PR = await import("./services/prometheus.js");
+          const timeout = new Promise((r) => { const t = setTimeout(() => r(null), 6000); if (t.unref) t.unref(); });
+          const q = (expr) => Promise.race([PR.promQuery(expr).catch(() => null), timeout]);
+          const [cpu, mem] = await Promise.all([
+            q('topk(200, quantile_over_time(0.95, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))[7d:30m]))'),
+            q('topk(200, quantile_over_time(0.95, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",container!="POD"})[7d:30m]))'),
+          ]);
+          if (!cpu?.length && !mem?.length) return null;
+          const out = {};
+          for (const r of cpu || []) { const k = `${r.metric.namespace}/${r.metric.pod}`; (out[k] ||= { cpu: 0, mem: 0 }).cpu = Math.round(Number(r.value?.[1]) * 1000) || 0; }
+          for (const r of mem || []) { const k = `${r.metric.namespace}/${r.metric.pod}`; (out[k] ||= { cpu: 0, mem: 0 }).mem = Math.round(Number(r.value?.[1]) / 1048576) || 0; }
+          return out;
+        },
+        // Accuracy and resilience records: the database when there is one, else a file.
+        store: {
+          get: async (key) => {
+            const DB = await import("./utils/db.js");
+            if (await DB.isEnabled()) { const r = await DB.query("SELECT value FROM kv_store WHERE key = $1", [key]); let v = r?.rows?.[0]?.value; if (typeof v === "string") v = JSON.parse(v); return v || null; }
+            const { readFile } = await import("node:fs/promises");
+            try { return JSON.parse(await readFile(`${process.env.OPS_TWIN_STATE_DIR || "/data"}/mcp-${key}.json`, "utf8")); } catch { return null; }
+          },
+          set: async (key, value) => {
+            const DB = await import("./utils/db.js");
+            const json = JSON.stringify(value);
+            if (await DB.isEnabled()) { await DB.query("INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()", [key, json]); return; }
+            const { writeFile, mkdir } = await import("node:fs/promises");
+            const dir = process.env.OPS_TWIN_STATE_DIR || "/data";
+            await mkdir(dir, { recursive: true }); await writeFile(`${dir}/mcp-${key}.json`, json, "utf8");
+          },
+        },
+        notify: (event) => { import("./services/notifications.js").then((NT) => NT.notify(event)).catch(() => {}); },
       });
+      // Every 6 hours: N+1 resilience score (trend, alert on a drop) and a
+      // check of open predictions against what the scheduler actually did.
+      const otTick = async () => {
+        try { await OT.resilienceCheck("local"); } catch (e) { console.error("[ops-twin] resilience:", e.message); }
+        try { await OT.verifyPredictions("local", await OT.snapshot("local", { fresh: true })); } catch (e) { console.error("[ops-twin] accuracy:", e.message); }
+      };
+      const ot0 = setTimeout(otTick, 120_000); if (ot0.unref) ot0.unref();
+      const ot1 = setInterval(otTick, Number(process.env.OPS_TWIN_TICK_MS) || 6 * 3600_000); if (ot1.unref) ot1.unref();
     } catch (e) { console.error("[ops-twin] not started:", e.message); }
     try {
       const SC = await import("./services/private-ai/scenario.js");
@@ -2708,6 +2751,8 @@ async function startSSE() {
         p === "/api/vm-guard/ticket" ||
         // Ops Twin change requests too: the report travels with the request.
         p === "/api/ops-twin/change" ||
+        // DR failover compares two clusters, so it is worked out on the hub.
+        p === "/api/ops-twin/failover" ||
         // User & Access runs on the hub and reaches each cluster itself.
         p.startsWith("/api/user-access") ||
         p.startsWith("/api/auth");
@@ -9802,7 +9847,54 @@ spec:
       try {
         if (req.method === "GET" && url.pathname === "/api/ops-twin") {
           const twin = await OT.snapshot(otCluster, { fresh: url.searchParams.get("refresh") === "true" });
-          return sendJson(res, 200, { ...OT.overview(twin), scenarios: OT.SCENARIOS, history: OT.history(otCluster), you: { canRaise: checkPermission(req, "write") } });
+          const accuracy = await OT.verifyPredictions("local", twin).catch(() => null);
+          const trend = await OT.resilienceTrend("local").catch(() => []);
+          return sendJson(res, 200, { ...OT.overview(twin), scenarios: OT.SCENARIOS, history: OT.history(otCluster), accuracy, resilience: { trend }, sites: Object.keys(twin.sites || {}), namespaces: [...new Set(twin.pods.map((p) => p.ns))].sort(), usageKnown: twin.usageKnown, guardrail: String(process.env.OPS_TWIN_GUARDRAIL || "true").toLowerCase() !== "false", you: { canRaise: checkPermission(req, "write"), isAdmin: checkPermission(req, "manage") } });
+        }
+        if (req.method === "GET" && url.pathname === "/api/ops-twin/export") {
+          // The compact twin a hub uses for a DR check. No secrets, no bindings.
+          if (!checkPermission(req, "read")) return sendJson(res, 403, { error: "Forbidden" });
+          return sendJson(res, 200, OT.exportTwin(await OT.snapshot(otCluster)));
+        }
+        if (req.method === "GET" && url.pathname === "/api/ops-twin/accuracy") {
+          return sendJson(res, 200, await OT.verifyPredictions("local", await OT.snapshot(otCluster, { fresh: true })));
+        }
+        if (req.method === "POST" && url.pathname === "/api/ops-twin/resilience") {
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          const b = await readJsonBody(req).catch(() => ({}));
+          return sendJson(res, 200, await OT.resilienceCheck("local", { critical: b.critical || process.env.OPS_TWIN_CRITICAL_NAMESPACES || null }));
+        }
+        if (req.method === "POST" && url.pathname === "/api/ops-twin/evidence") {
+          const b = await readJsonBody(req).catch(() => ({}));
+          const out = await OT.run(otCluster, b.scenario, { actor });
+          res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": `attachment; filename="ops-twin-evidence-${otCluster}-${new Date().toISOString().slice(0, 10)}.txt"` });
+          return res.end(OT.evidence(out, { actor, ticket: String(b.ticket || "").slice(0, 40) || null }));
+        }
+        if (req.method === "POST" && url.pathname === "/api/ops-twin/failover") {
+          // Can cluster B take cluster A's workloads? Both twins are read, then compared here.
+          if (enforceRateLimit(req, res, { burst: 3, refillPerSec: 0.05 })) return;
+          const b = await readJsonBody(req).catch(() => ({}));
+          const from = String(b.from || "").slice(0, 128), to = String(b.to || "").slice(0, 128);
+          if (!from || !to || from === to) return sendJson(res, 400, { error: "Pick two different clusters" });
+          const SP = await import("./services/spoke-proxy.js");
+          const twinOf = async (c) => {
+            if (c === "local" || !SP.hasSpoke(c)) {
+              if (c !== "local") throw Object.assign(new Error(`${c} has no spoke agent: DR checks need the agent on both clusters`), { status: 400 });
+              return OT.snapshot("local");
+            }
+            const headers = { Accept: "application/json" };
+            if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+            const r = await SP.fedFetch(new URL("/api/ops-twin/export", SP.getSpokeUrl(c)).toString(), { headers, signal: AbortSignal.timeout(60_000) }).catch((e) => { throw Object.assign(new Error(`${c} did not answer (${e.message})`), { status: 502 }); });
+            if (r.status === 404) throw Object.assign(new Error(`The agent on ${c} is an older version: redeploy it for DR checks`), { status: 502 });
+            if (!r.ok) throw Object.assign(new Error(`${c} answered ${r.status}`), { status: 502 });
+            return r.json();
+          };
+          const [src, dst] = await Promise.all([twinOf(from), twinOf(to)]);
+          src.cluster = from; dst.cluster = to;
+          const out = OT.failover(src, dst, { namespaces: b.namespaces || null, critical: b.critical || null });
+          out.risk = OT.computeRisk(out, { cluster: to, critical: b.critical });
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: `Ops Twin DR check: ${from} → ${to}: ${out.verdict.title}`, details: { from, to, verdict: out.verdict.level }, username: actor, source: "ops-twin" }).catch(() => {});
+          return sendJson(res, 200, { ...out, report: OT.report(out) });
         }
         if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
         if (url.pathname === "/api/ops-twin/change") {
@@ -9815,11 +9907,21 @@ spec:
           const subject = String(b.subject || "").slice(0, 160), title = String(b.verdict || "").slice(0, 80);
           if (!reportText || !subject) return sendJson(res, 400, { error: "Run a simulation first" });
           const level = String(b.level || "warn");
+          const risk = b.risk && Number.isFinite(Number(b.risk.score)) ? { score: Math.max(0, Math.min(100, Math.round(Number(b.risk.score)))), level: String(b.risk.level || "").slice(0, 10) } : null;
+          // Guardrail: a change the twin says would stop something, or scores
+          // High, is not raised unless an Admin overrides it with a reason.
+          const blocked = level === "crit" || (risk && risk.score >= 67);
+          const override = String(b.override || "").trim().slice(0, 300);
+          if (blocked && String(process.env.OPS_TWIN_GUARDRAIL || "true").toLowerCase() !== "false") {
+            if (!override) return sendJson(res, 409, { error: "Guardrail: the twin predicts this change stops something or is high risk. Fix the findings first, or an Admin can override with a reason.", guardrail: true });
+            if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Only an Admin can override the guardrail" });
+            logAuditTrailEvent({ type: "action_taken", severity: "warning", title: `Ops Twin guardrail overridden by ${actor}: ${subject} on ${tc}`, details: { cluster: tc, subject, verdict: title, risk, reason: override }, username: actor, source: "ops-twin" }).catch(() => {});
+          }
           const SN = await import("./utils/servicenow-client.js");
           const cr = await SN.createChangeRequest({
             shortDescription: `${String(b.label || "Change").slice(0, 40)}: ${subject} (${tc}) — Ops Twin: ${title}`,
-            description: `${reportText}\n\nSimulated by Ops Twin (TCS Agentic AI) on a live copy of cluster ${tc}. Raised by ${actor}.`,
-            risk: level === "crit" ? "high" : level === "warn" ? "moderate" : "low",
+            description: `${reportText}\n\nSimulated by Ops Twin (TCS Agentic AI) on a live copy of cluster ${tc}. Raised by ${actor}.${risk ? `\nRisk score: ${risk.score}/100 (${risk.level}).` : ""}${blocked && override ? `\nGuardrail overridden by ${actor}: ${override}` : ""}`,
+            risk: risk ? (risk.score >= 67 ? "high" : risk.score >= 34 ? "moderate" : "low") : level === "crit" ? "high" : level === "warn" ? "moderate" : "low",
             impact: level === "crit" ? "2" : "3",
             justification: "Impact rehearsed on the Ops Twin before the change.",
             implementationPlan: (Array.isArray(b.plan) ? b.plan : []).slice(0, 20).map((s, i) => `${i + 1}. ${String(s).slice(0, 200)}`).join("\n"),
