@@ -1,0 +1,88 @@
+# User & Access (Automation Hub): what the platform's service account needs on
+# EACH cluster where it should change access. Reading alone needs only the
+# first three rules plus "list" on oauthaccesstokens (for last-login dates).
+#
+# Granting a role through a binding requires holding that role, or the "bind"
+# verb on it. The last rule grants "bind" on the five roles User & Access
+# offers, so the account can give cluster-admin without being cluster-admin.
+#
+# Apply on every cluster you manage (the spoke agent's service account on a
+# spoke, agentic-ai-server on the hub):
+#   oc apply -f deploy/user-access/rbac.yaml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tcs-user-access
+  labels:
+    app.kubernetes.io/part-of: tcs-agentic-ai
+rules:
+  - apiGroups: ["config.openshift.io"]
+    resources: ["oauths"]
+    verbs: ["get"]
+  - apiGroups: ["user.openshift.io"]
+    resources: ["users", "groups", "identities"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings", "rolebindings"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["oauth.openshift.io"]
+    resources: ["oauthaccesstokens"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+  # bind the roles User & Access offers
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["view", "edit", "admin", "cluster-reader", "cluster-admin"]
+    verbs: ["bind"]
+---
+# htpasswd Secrets live in openshift-config.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tcs-user-access-htpasswd
+  namespace: openshift-config
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "patch"]
+---
+# Seeing and removing kubeadmin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tcs-user-access-kubeadmin
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["kubeadmin"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tcs-user-access
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: tcs-user-access }
+subjects:
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tcs-user-access-htpasswd
+  namespace: openshift-config
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: tcs-user-access-htpasswd }
+subjects:
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tcs-user-access-kubeadmin
+  namespace: kube-system
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: tcs-user-access-kubeadmin }
+subjects:
+  - { kind: ServiceAccount, name: agentic-ai-server, namespace: openshift-mcp }

@@ -1,0 +1,272 @@
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { showToast } from "../../store/toastStore";
+
+// Automation Hub → User & Access (services/user-access.js): who can log in to
+// which cluster and with what rights, across every cluster; changes go in as
+// requests that an Admin approves before anything touches a cluster.
+
+const ago = (iso) => {
+  if (!iso) return null;
+  const d = Math.round((Date.now() - Date.parse(iso)) / 86400000);
+  return d <= 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`;
+};
+const roleClass = (r) => (r === "cluster-admin" ? "adm" : r === "admin" || r === "edit" ? "dev" : "view");
+const STATUS_CLASS = { pending: "wait", running: "wait", done: "ok", "partly done": "warn", failed: "crit", rejected: "muted" };
+
+async function call(path, { method = "GET", body } = {}) {
+  const r = await fetch(path, { method, credentials: "same-origin", headers: { Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Request failed (${r.status})`);
+  return j;
+}
+
+export default function UserAccess({ clusters = [] }) {
+  const all = useMemo(() => (clusters.length ? clusters : ["local"]), [clusters]);
+  const [labels, setLabels] = useState({});
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [q, setQ] = useState("");
+  const [onlyFlags, setOnlyFlags] = useState(false);
+  const [secret, setSecret] = useState(null);       // { user, password, id } shown once
+  const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", delivery: "direct", reason: "" });
+
+  useEffect(() => { fetch("/api/cluster-labels").then((r) => r.json()).then((j) => setLabels(j.labels || {})).catch(() => {}); }, []);
+  const label = (c) => (c === "local" ? labels.local || "This cluster" : labels[c] || c);
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr(null);
+    try { setData(await call(`/api/user-access?clusters=${encodeURIComponent(all.join(","))}`)); }
+    catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }, [all]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setF((x) => (x.clusters.length ? x : { ...x, clusters: all.slice(0, 1) })); }, [all]);
+
+  const roleInfo = data?.roles?.find((r) => r.id === f.role);
+  const ready = f.user.trim() && f.clusters.length && (roleInfo?.clusterWide || f.namespace.trim());
+
+  const submit = async (body) => {
+    setBusy("submit");
+    try {
+      const r = await call("/api/user-access/requests", { method: "POST", body });
+      showToast(`${r.id} submitted for approval`, "ok");
+      if (body.kind === "grant") setF((x) => ({ ...x, user: "", reason: "" }));
+      load();
+    } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
+  };
+  const decide = async (id, what) => {
+    setBusy(id + what);
+    try {
+      const r = await call(`/api/user-access/requests/${id}/${what}`, { method: "POST", body: {} });
+      if (what === "approve") {
+        showToast(`${id}: ${r.status}`, r.status === "done" ? "ok" : "err");
+        if (r.password) setSecret({ id, user: r.user, password: r.password });
+        if (r.manifests) download(`${id}.yaml`, r.manifests);
+      } else if (what === "ticket") showToast(r.number ? `ServiceNow ${r.number}` : "Change request raised", "ok");
+      else showToast(`${id} rejected`, "ok");
+      load();
+    } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
+  };
+  const download = (name, text) => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/yaml" }));
+    a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  if (!data && !err) return <div className="vgf-empty">{loading ? "Reading users, groups and role bindings from every cluster…" : "No clusters connected yet."}</div>;
+  if (err && !data) return <div className="ot-err">{err}</div>;
+
+  const k = data.kpis;
+  const okClusters = data.clusters.filter((c) => c.ok).map((c) => c.cluster);
+  const people = data.people.filter((p) => (!q || p.name.toLowerCase().includes(q.toLowerCase()) || Object.values(p.clusters).flat().some((g) => (g.scope || "").includes(q) || (g.via || "").includes(q)))
+    && (!onlyFlags || p.flags.length));
+  const pending = data.requests.filter((r) => r.status === "pending");
+  const recent = data.requests.filter((r) => r.status !== "pending").slice(0, 6);
+  const inactive = data.people.filter((p) => p.flags.some((x) => /last login/.test(x.text)));
+
+  return (
+    <div className="ua">
+      <div className="ot-intro">
+        <div>
+          <h3>User &amp; Access</h3>
+          <p>Who can log in to which cluster, and with what rights. Add or remove access on many clusters at once; every change is approved before it is applied, and recorded.</p>
+        </div>
+        <div className="ot-intro-r">
+          <button className={"vc-btn sm" + (onlyFlags ? " primary" : "")} onClick={() => setOnlyFlags((v) => !v)}>{onlyFlags ? "Showing what needs a look" : "Access review"}</button>
+          <button className="vc-btn ghost sm" disabled={loading} onClick={load}>{loading ? "Reading…" : "Refresh"}</button>
+        </div>
+      </div>
+
+      <div className="ua-kpis">
+        <div className="ua-kpi"><b>{k.clusters}</b><span>clusters · {k.companyLogin} with company login{k.reachable < k.clusters ? ` · ${k.clusters - k.reachable} not reachable` : ""}</span></div>
+        <div className="ua-kpi"><b>{k.people}</b><span>people with access</span></div>
+        <div className={"ua-kpi" + (k.directAdmins ? " warn" : "")}><b>{k.clusterAdmins}</b><span>cluster-admins{k.directAdmins ? ` (${k.directAdmins} given directly)` : ""}</span></div>
+        <div className={"ua-kpi" + (k.kubeadmin ? " crit" : "")}><b>{k.kubeadmin}</b><span>clusters still have kubeadmin</span></div>
+        <div className={"ua-kpi" + (k.inactive ? " warn" : "")}><b>{k.inactive}</b><span>not logged in for 90+ days</span></div>
+        <div className="ua-kpi"><b>{k.pending}</b><span>requests waiting for approval</span></div>
+      </div>
+
+      <div className="ua-grid">
+        {/* ── add access ── */}
+        <div className="vc-card ua-add">
+          <div className="vgf-label">Add access <span>to one person, on many clusters</span></div>
+          <div className="ua-step"><b className="ua-n">1</b><div>
+            <p className="ua-sh">Who</p>
+            <div className="ua-seg">
+              <button className={f.mode === "directory" ? "on" : ""} onClick={() => setF({ ...f, mode: "directory" })}>Company login (AD / SSO)</button>
+              <button className={f.mode === "htpasswd" ? "on" : ""} onClick={() => setF({ ...f, mode: "htpasswd", delivery: "direct" })}>Local user (htpasswd)</button>
+            </div>
+            <input className="ua-in" value={f.user} onChange={(e) => setF({ ...f, user: e.target.value.trim() })} placeholder={f.mode === "directory" ? "OpenShift user name, as their company login shows it (e.g. priya.sharma)" : "New local user name (e.g. lab-user1)"} maxLength={128} />
+            <p className="ua-hint">{f.mode === "directory" ? "No password is created; they log in with their company account." : "A password is generated when the request is approved and shown once to the approver. Use for labs and emergency accounts only."}</p>
+          </div></div>
+          <div className="ua-step"><b className="ua-n">2</b><div>
+            <p className="ua-sh">Where</p>
+            <div className="ua-cl">
+              {all.map((c) => {
+                const on = f.clusters.includes(c);
+                const row = data.clusters.find((x) => x.cluster === c);
+                return (
+                  <label key={c} className={"ua-cb" + (on ? " on" : "")}>
+                    <input type="checkbox" checked={on} onChange={() => setF({ ...f, clusters: on ? f.clusters.filter((x) => x !== c) : [...f.clusters, c] })} />
+                    <span>{label(c)}</span>
+                    <small>{row?.ok ? (row.idps.some((p) => p.company) ? "company login" : "htpasswd only") : "not reachable"}</small>
+                  </label>
+                );
+              })}
+            </div>
+          </div></div>
+          <div className="ua-step"><b className="ua-n">3</b><div>
+            <p className="ua-sh">Role and how long</p>
+            <div className="ua-row">
+              <select className="ua-in" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
+                {(data.roles || []).map((r) => <option key={r.id} value={r.id}>{r.label} ({r.id})</option>)}
+              </select>
+              {!roleInfo?.clusterWide && <input className="ua-in" value={f.namespace} onChange={(e) => setF({ ...f, namespace: e.target.value.trim() })} placeholder="namespace" maxLength={63} />}
+              <input className="ua-in" type="date" value={f.expires} onChange={(e) => setF({ ...f, expires: e.target.value })} aria-label="Access ends on" title="Access ends on (optional)" />
+            </div>
+          </div></div>
+          <div className="ua-step"><b className="ua-n">4</b><div>
+            <p className="ua-sh">How it is applied</p>
+            <div className="ua-seg">
+              {[["direct", "Directly, through the agents"], ["acm", "ACM policy"], ["gitops", "GitOps manifests"]].map(([v, l]) => (
+                <button key={v} className={f.delivery === v ? "on" : ""} disabled={f.mode === "htpasswd" && v !== "direct"} onClick={() => setF({ ...f, delivery: v })}>{l}</button>
+              ))}
+            </div>
+            <input className="ua-in" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} placeholder="Reason (optional, goes to the approver and ServiceNow)" maxLength={300} />
+            <div className="ua-preview">
+              {ready ? <>On <b>{f.clusters.length} cluster{f.clusters.length > 1 ? "s" : ""}</b>: {f.mode === "htpasswd" ? <>create a local login for <b>{f.user}</b>, </> : null}add <b>{f.user}</b> to group <b>tcs-{f.role}-{roleInfo?.clusterWide ? "cluster" : f.namespace}</b> and bind it to <b>{f.role}</b>{roleInfo?.clusterWide ? " cluster-wide" : <> in namespace <b>{f.namespace}</b></>}.
+                {f.delivery !== "direct" ? <> Nothing is applied: you get the {f.delivery === "acm" ? "ACM policy" : "manifests"} to apply.</> : null}
+                {f.expires ? <> Access is removed automatically on <b>{f.expires}</b>.</> : null}</>
+                : "Fill in who, where and the role to see exactly what will change."}
+            </div>
+            <div className="ua-acts">
+              <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.expires || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
+              <span className="vc-muted ua-small">Approved by an Admin{data.you?.selfApprove ? "" : ", not the requester"}</span>
+            </div>
+          </div></div>
+        </div>
+
+        <div className="ua-right">
+          {/* ── who has access ── */}
+          <div className="vc-card">
+            <div className="vgf-label">Who has access <span><input className="ua-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search person, namespace or group" /></span></div>
+            <div className="ua-tablewrap">
+              <table className="ua-t">
+                <thead><tr><th>Person</th>{okClusters.map((c) => <th key={c}>{label(c)}</th>)}<th /></tr></thead>
+                <tbody>
+                  {people.slice(0, 80).map((p) => (
+                    <tr key={p.name}>
+                      <td><b>{p.name}</b>{p.source && <span className={"ua-src" + (/htpasswd|built-in/.test(p.source) ? " ht" : "")}>{p.source}</span>}{p.lastLogin && <div className="vc-muted ua-small">last login {ago(p.lastLogin)}</div>}</td>
+                      {okClusters.map((c) => {
+                        if (p.builtin) return <td key={c}>{p.kubeadmin?.[c] ? <span className="ua-chip adm">present</span> : <span className="vc-muted">removed</span>}</td>;
+                        // One chip per role and scope; the tooltip says how it is given.
+                        const by = new Map();
+                        for (const g of p.clusters[c] || []) { const key = `${g.role}|${g.scope}`; by.set(key, [...(by.get(key) || []), g.via]); }
+                        const gs = [...by].map(([key, via]) => { const [role, scope] = key.split("|"); return { role, scope, via }; });
+                        return <td key={c}>{gs.length ? gs.slice(0, 3).map((g, i) => <span key={i} className={"ua-chip " + roleClass(g.role)} title={g.via.map((v) => (v === "direct" ? "given directly" : `via group ${v}`)).join(", ")}>{g.role}{g.scope !== "cluster" ? ` · ${g.scope}` : ""}</span>) : <span className="vc-muted">—</span>}{gs.length > 3 && <span className="vc-muted"> +{gs.length - 3}</span>}</td>;
+                      })}
+                      <td className="ua-flagcell">
+                        {p.flags.slice(0, 1).map((x, i) => <div key={i} className={"ua-flag " + x.level}>{x.text}</div>)}
+                        {p.builtin
+                          ? k.kubeadmin > 0 && <button className="ua-link" disabled={!!busy} onClick={() => submit({ kind: "remove-kubeadmin", clusters: okClusters.filter((c) => p.kubeadmin?.[c]), reason: "Company login in place" })}>Request removal</button>
+                          : <button className="ua-link" disabled={!!busy} onClick={() => { if (window.confirm(`Request removal of ${p.name} from all ${okClusters.length} reachable clusters?`)) submit({ kind: "revoke", clusters: okClusters, user: p.name, reason: p.flags.map((x) => x.text).join("; ") }); }}>Remove everywhere</button>}
+                      </td>
+                    </tr>
+                  ))}
+                  {!people.length && <tr><td colSpan={okClusters.length + 2} className="vc-muted">{onlyFlags ? "Nothing needs a look." : "No one matches."}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {onlyFlags && inactive.length > 0 && (
+              <button className="vc-btn sm" disabled={!!busy} onClick={() => inactive.forEach((p) => submit({ kind: "revoke", clusters: okClusters, user: p.name, reason: "Access review: inactive for 90+ days" }))}>Request removal of {inactive.length} inactive {inactive.length > 1 ? "people" : "person"}</button>
+            )}
+          </div>
+
+          {/* ── login methods ── */}
+          <div className="vc-card">
+            <div className="vgf-label">Login methods per cluster <span>OAuth identity providers</span></div>
+            <div className="ua-idp">
+              {data.clusters.map((c) => (
+                <div key={c.cluster} className="ua-ic">
+                  <b>{label(c.cluster)}</b>
+                  {c.ok ? (<>
+                    <div className="ua-pills">{c.idps.length ? c.idps.map((p) => <span key={p.name} className={"ua-pill " + (p.type === "HTPasswd" ? "ht" : p.type === "OpenID" ? "sso" : "ad")}>{p.label}</span>) : <span className="ua-pill ht">none</span>}</div>
+                    <span className="vc-muted ua-small">
+                      {!c.idps.some((p) => p.company) ? "No company login yet: add an LDAP or OpenID provider to the OAuth config. " : ""}
+                      {c.lastGroupSync ? `Group sync ${ago(c.lastGroupSync)}. ` : ""}
+                      {c.htpasswdDiffers ? `htpasswd differs from ${label(c.htpasswdDiffers.from)} (${c.htpasswdDiffers.users} user${c.htpasswdDiffers.users > 1 ? "s" : ""}). ` : ""}
+                      {c.lastLoginKnown ? "" : "Last logins not readable here. "}
+                    </span>
+                  </>) : <span className="ua-flag crit">Not reachable: {c.error}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── requests ── */}
+          <div className="vc-card">
+            <div className="vgf-label">Requests <span>every change is approved first, and recorded in the audit trail</span></div>
+            <table className="ua-t ua-req">
+              <tbody>
+                {[...pending, ...recent].map((r) => (
+                  <tr key={r.id}>
+                    <td><span className={"ua-st " + (STATUS_CLASS[r.status] || "")}>{r.status}</span></td>
+                    <td><b>{r.id}</b> · {r.title}{r.reason ? <span className="vc-muted"> · {r.reason}</span> : null}
+                      {r.results && <div className="ua-small">{r.results.map((x) => <div key={x.cluster} className={x.ok ? "vc-muted" : "ua-flag crit"}>{label(x.cluster)}: {x.text}</div>)}</div>}
+                      {r.expired && <div className="ua-small vc-muted">Expired {ago(r.expired.at)}</div>}</td>
+                    <td className="ua-small vc-muted">{r.requestedBy} · {ago(r.requestedAt)}{r.ticket ? ` · ${r.ticket}` : ""}</td>
+                    <td className="ua-acts2">
+                      {r.status === "pending" && data.you?.canApprove && (data.you.selfApprove || r.requestedBy !== data.you.name) && <>
+                        <button className="vc-btn primary sm" disabled={!!busy} onClick={() => decide(r.id, "approve")}>{busy === r.id + "approve" ? "Applying…" : "Approve"}</button>
+                        <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "reject")}>Reject</button>
+                      </>}
+                      {!r.ticket && r.status === "pending" && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "ticket")}>ServiceNow</button>}
+                      {r.kind === "grant" && r.mode !== "htpasswd" && <a className="ua-link" href={`/api/user-access/requests/${r.id}/manifest`}>YAML</a>}
+                    </td>
+                  </tr>
+                ))}
+                {!pending.length && !recent.length && <tr><td className="vc-muted">No requests yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {secret && (
+        <div className="ua-modal" role="dialog" aria-modal="true">
+          <div className="ua-modal-in">
+            <h3>Password for {secret.user}</h3>
+            <p>Shown once, now. It is not stored anywhere; hand it to the person over a secure channel. htpasswd has no self-service password change; to reset it, remove the user and add them again.</p>
+            <code className="ua-pw">{secret.password}</code>
+            <div className="ua-acts">
+              <button className="vc-btn" onClick={() => navigator.clipboard?.writeText(secret.password).then(() => showToast("Copied", "ok"))}>Copy</button>
+              <button className="vc-btn primary" onClick={() => setSecret(null)}>I have saved it</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -119,3 +119,15 @@ export function IconTwin({ size = 17 }) {
     </svg>
   );
 }
+
+/** User & Access: a person and a key. */
+export function IconUsers({ size = 17 }) {
+  return (
+    <svg {...base(size)}>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
+      <circle cx="17.5" cy="12.5" r="2" />
+      <path d="M17.5 14.5V20M17.5 17.5h2M17.5 19.5h1.5" />
+    </svg>
+  );
+}

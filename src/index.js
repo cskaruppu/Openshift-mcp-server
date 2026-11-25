@@ -2162,6 +2162,21 @@ async function startSSE() {
       const t0 = setTimeout(tick, 30_000); if (t0.unref) t0.unref();
       const t = setInterval(tick, Number(process.env.VM_GUARD_WATCH_MS) || 300_000); if (t.unref) t.unref();
     } catch (e) { console.error("[vm-guard] not started:", e.message); }
+    // User & Access: who can log in where, and approved changes to it. Runs on
+    // the hub, reaching each cluster the way remediation does; expired access
+    // is taken away every 10 minutes.
+    try {
+      const UA = await import("./services/user-access.js");
+      UA.configureUserAccess({
+        run: runForClusterCtx,
+        ocp: { fetch: ocpFetch, post: ocpPost, patch: ocpPatch, delete: ocpDelete },
+        audit: (title, details, username) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: username || "system", source: "user-access" }).catch(() => {}),
+      });
+      if (MCP_MODE !== "spoke") {
+        const t = setInterval(() => UA.expireTick().catch((e) => console.error("[user-access] expiry:", e.message)), Number(process.env.USER_ACCESS_EXPIRY_TICK_MS) || 600_000);
+        if (t.unref) t.unref();
+      }
+    } catch (e) { console.error("[user-access] not started:", e.message); }
     // Ops Twin: what-if simulations on a live copy of this cluster (read-only).
     // DCGM power and temperature per card are optional enrichment, bounded so a
     // slow Prometheus never holds up a simulation.
@@ -2660,6 +2675,8 @@ async function startSSE() {
         p === "/api/vm-guard/ticket" ||
         // Ops Twin change requests too: the report travels with the request.
         p === "/api/ops-twin/change" ||
+        // User & Access runs on the hub and reaches each cluster itself.
+        p.startsWith("/api/user-access") ||
         p.startsWith("/api/auth");
 
       // Spoke proxy: forward live-data API requests to the spoke's MCP server.
@@ -9644,6 +9661,56 @@ spec:
           case "/api/vm-guard/scan": { const out = await VG.requestScan(vgCluster, ns, name === "*" ? "*" : name); audit(name === "*" ? "VM Guard: disk scan of every VM requested" : `VM ${ns}/${name}: disk scan requested`, out); return sendJson(res, 200, out); }
           default: return sendJson(res, 404, { error: "Unknown VM Guard action" });
         }
+      } catch (e) {
+        return sendJson(res, e.status || 500, { error: e.message });
+      }
+    }
+
+    // User & Access (services/user-access.js). Viewing needs Operator or Admin;
+    // requesting needs Operator or Admin; approving needs Admin, and someone
+    // other than the requester when sign-in is on.
+    if (url.pathname === "/api/user-access" || url.pathname.startsWith("/api/user-access/")) {
+      const UA = await import("./services/user-access.js");
+      const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+      try {
+        if (!checkPermission(req, "write")) return sendJson(res, 403, { error: "User & Access needs the Operator or Admin role" });
+        if (req.method === "GET" && url.pathname === "/api/user-access") {
+          const clusters = [...new Set(String(url.searchParams.get("clusters") || "local").split(",").map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._:-]{1,128}$/.test(s)))].slice(0, 50);
+          const out = await UA.summary(clusters.length ? clusters : ["local"]);
+          return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" } });
+        }
+        const m = url.pathname.match(/^\/api\/user-access\/requests(?:\/(UA-\d{4,})\/(approve|reject|ticket|manifest))?$/);
+        if (!m) return sendJson(res, 404, { error: "Unknown User & Access action" });
+        if (req.method === "GET" && m[2] === "manifest") {
+          const q = await UA.getRequest(m[1]);
+          if (q.kind !== "grant") return sendJson(res, 400, { error: "Only access grants have manifests" });
+          res.writeHead(200, { "Content-Type": "text/yaml; charset=utf-8", "Content-Disposition": `attachment; filename="${q.id}.yaml"` });
+          return res.end(UA.grantManifests({ ...q, delivery: q.delivery === "direct" ? "gitops" : q.delivery }));
+        }
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        if (!m[1]) return sendJson(res, 200, await UA.createRequest(body, actor));
+        if (m[2] === "ticket") {
+          const q = await UA.getRequest(m[1]);
+          if (q.ticket) return sendJson(res, 200, { number: q.ticket, existing: true });
+          const SN = await import("./utils/servicenow-client.js");
+          const cr = await SN.createChangeRequest({
+            shortDescription: `Access request ${q.id}: ${q.title}`.slice(0, 160),
+            description: [`${q.title}.`, `Clusters: ${q.clusters.join(", ")}.`, q.reason ? `Reason: ${q.reason}` : "", `Requested by ${q.requestedBy} in TCS Agentic AI (User & Access).`].filter(Boolean).join("\n"),
+            risk: q.role === "cluster-admin" || q.kind === "remove-kubeadmin" ? "high" : "low", category: "Software",
+            justification: q.reason || "Access change requested through User & Access.",
+            implementationPlan: "Applied by TCS Agentic AI after approval in User & Access; results recorded per cluster.",
+            backoutPlan: q.kind === "grant" ? "Remove the person from the platform-managed group on each cluster (User & Access: Remove everywhere)." : "Re-grant access through User & Access.",
+          });
+          const number = cr?.result?.number || cr?.number || null;
+          if (number) await UA.setTicket(q.id, number);
+          logAuditTrailEvent({ type: "action_taken", severity: "info", title: `ServiceNow ${number || "change"} raised for access request ${q.id}`, details: { id: q.id, number }, username: actor, source: "user-access" }).catch(() => {});
+          return sendJson(res, 200, { number });
+        }
+        if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Approving access changes needs the Admin role" });
+        if (m[2] === "reject") return sendJson(res, 200, await UA.rejectRequest(m[1], actor, body.note));
+        return sendJson(res, 200, await UA.approveRequest(m[1], actor, { allowSelf: getAuthMode() === "none" }));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }
