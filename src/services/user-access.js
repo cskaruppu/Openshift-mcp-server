@@ -63,6 +63,7 @@ export async function localOp(op, p = {}) {
     case "setpass": return applySetPassword(p.user, p.hash);
     case "sessions": return revokeSessions(p.user);
     case "can-i": return canI(p);
+    case "who-can": return whoCan(p);
     default: throw err("Unknown operation");
   }
 }
@@ -276,16 +277,26 @@ export async function summary(clusters, ctx = null) {
     } catch (e) { return { cluster: c, ok: false, error: e.message }; }
   }));
   const people = {};
+  const teams = {};
   for (const r of per.filter((x) => x.ok)) {
     for (const [name, p] of Object.entries(r.acc.people)) {
       if (!p.grants.length && !p.identities.length) continue;
-      const row = (people[name] ||= { name, source: null, clusters: {}, detail: {}, lastLogin: null, flags: [] });
+      const row = (people[name] ||= { name, source: null, clusters: {}, detail: {}, lastLogin: null, flags: [], groups: [] });
       row.source = row.source || p.source;
       row.clusters[r.cluster] = p.grants;
-      row.detail[r.cluster] = { exists: p.identities.length > 0 || !!p.createdAt, createdAt: p.createdAt, provider: p.provider, source: p.source, sessions: p.sessions, locked: p.locked };
+      row.detail[r.cluster] = { exists: p.identities.length > 0 || !!p.createdAt, createdAt: p.createdAt, provider: p.provider, source: p.source, sessions: p.sessions, locked: p.locked, lastLogin: p.lastLogin };
       if (p.lastLogin && (!row.lastLogin || p.lastLogin > row.lastLogin)) row.lastLogin = p.lastLogin;
     }
     for (const f of r.acc.flags) if (f.person && people[f.person]) people[f.person].flags.push({ ...f, cluster: r.cluster });
+    // Group membership, for peer comparisons.
+    for (const g of r.raw.groups || []) {
+      const gn = g.metadata?.name;
+      if (!gn || isSystem(gn)) continue;
+      const t = (teams[gn] ||= { members: new Set(), synced: false, managed: false });
+      t.synced ||= !!g.metadata?.labels?.["openshift.io/ldap.host"];
+      t.managed ||= g.metadata?.labels?.[MANAGED] === MANAGED_VAL;
+      for (const u of g.users || []) { if (isSystem(u)) continue; t.members.add(u); if (people[u] && !people[u].groups.includes(gn)) people[u].groups.push(gn); }
+    }
   }
   // kubeadmin as a row of its own.
   const kube = per.filter((x) => x.ok).map((x) => [x.cluster, x.raw.kubeadmin]);
@@ -304,6 +315,8 @@ export async function summary(clusters, ctx = null) {
       lastGroupSync: synced, admins: r.acc.admins, flags: r.acc.flags.filter((f) => !f.person),
       groups: r.acc.groups.filter((g) => !isSystem(g.name)).map((g) => ({ name: g.name, members: g.members, synced: g.synced, managed: g.managed })),
       lastLoginKnown: !!r.raw.tokens,
+      // kubeadmin logs in as kube:admin, which has no User object.
+      breakglass: { kubeadminSessions: r.raw.sessions?.["kube:admin"] || 0, kubeadminLastLogin: (r.raw.tokens || []).find((t) => t.userName === "kube:admin")?.metadata?.creationTimestamp || null },
     };
   });
   const rows = Object.values(people).sort((a, b) => (b.builtin ? 1 : 0) - (a.builtin ? 1 : 0) || a.name.localeCompare(b.name));
@@ -335,9 +348,11 @@ export async function summary(clusters, ctx = null) {
       kubeadmin: ok.filter((c) => c.kubeadmin).length,
       inactive: rows.filter((r) => r.flags.some((f) => /last login/.test(f.text))).length,
       pending: st.requests.filter((q) => q.status === "pending").length,
+      held: st.requests.filter((q) => q.status === "held").length,
       unofficial: gov.unofficial.length, sod: gov.sod.length, leavers: gov.leavers.length,
     },
     requests: st.requests.slice(0, 200),
+    teams: Object.fromEntries(Object.entries(teams).map(([k, t]) => [k, { members: [...t.members].slice(0, 2000), synced: t.synced, managed: t.managed }])),
     roles: ROLES.map((r) => ({ id: r, label: ROLE_LABEL[r], clusterWide: CLUSTER_ROLES.has(r) })),
   };
 }
@@ -527,10 +542,12 @@ export function validateRequest(b) {
   const clusters = [...new Set((Array.isArray(b.clusters) ? b.clusters : []).map(String))].filter((c) => /^[A-Za-z0-9._:-]{1,128}$/.test(c));
   if (!clusters.length) throw err("Pick at least one cluster");
   const reason = String(b.reason || "").slice(0, 300);
+  if (b.changeRef && !/^[A-Z]{2,8}\d{4,12}$/.test(String(b.changeRef))) throw err("A ticket is a ServiceNow number such as CHG0031234 or INC0012345");
   if (kind === "remove-kubeadmin") return { kind, clusters, reason };
   if (kind === "remove-binding") {
     if (clusters.length !== 1) throw err("An unofficial grant belongs to one cluster");
-    if (!/^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$/.test(String(b.binding || "")) || !["User", "Group"].includes(b.subjectKind) || !b.subject || (b.namespace && !validName(b.namespace))) throw err("Not a valid binding");
+    if (!/^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$/.test(String(b.binding || "")) || !["User", "Group", "ServiceAccount"].includes(b.subjectKind) || !b.subject || (b.namespace && !validName(b.namespace))) throw err("Not a valid binding");
+    if (b.subjectKind === "ServiceAccount" && !/^[a-z0-9-]{1,63}\/[a-z0-9.-]{1,253}$/.test(String(b.subject))) throw err("A service account is namespace/name");
     return { kind, clusters, binding: String(b.binding), namespace: b.namespace || null, subjectKind: b.subjectKind, subject: String(b.subject).slice(0, 253), role: String(b.role || ""), reason };
   }
   if (!validUser(b.user)) throw err("Give the person’s OpenShift user name (as their company login shows it, or a new local name)");
@@ -568,7 +585,7 @@ export function validateRequest(b) {
   }
   const delivery = ["direct", "acm", "gitops"].includes(b.delivery) ? b.delivery : "direct";
   if (mode === "htpasswd" && delivery !== "direct") throw err("Local (htpasswd) users can only be applied directly: their password must never go into Git or a policy");
-  return { kind, clusters, user: b.user, mode, role, namespace, group, expires, hours: b.hours ? Number(b.hours) : null, delivery, reason };
+  return { kind, clusters, user: b.user, mode, role, namespace, group, expires, hours: b.hours ? Number(b.hours) : null, delivery, reason, changeRef: b.changeRef ? String(b.changeRef) : null };
 }
 
 export function describe(q) {
@@ -584,15 +601,89 @@ export function describe(q) {
   return `${q.user}: ${ROLE_LABEL[q.role]}${q.namespace ? ` on namespace ${q.namespace}` : ""} on ${q.clusters.length} cluster${q.clusters.length > 1 ? "s" : ""}${q.expires ? ` until ${q.expires.slice(0, 10)}` : ""}${q.mode === "htpasswd" ? " (local htpasswd login)" : ""}`;
 }
 
-export async function createRequest(body, actor) {
+/**
+ * Guardrails: deps.policy(request, actor) → { risk, findings, decision:
+ * "block" | "auto" | "pending", approvalsNeeded, alternatives }. A blocked
+ * request is held until an Admin overrides it with a reason, it is replaced
+ * by an offered alternative, or its ticket is added.
+ */
+async function applyPolicy(q, actor) {
+  if (!_deps.policy) return null;
+  let ev = null;
+  try { ev = await _deps.policy(q, actor); } catch { return null; }
+  if (!ev) return null;
+  q.policy = { findings: ev.findings || [], decision: ev.decision, alternatives: ev.alternatives || [], at: new Date(_deps.now()).toISOString() };
+  q.risk = ev.risk || null;
+  q.approvalsNeeded = ev.approvalsNeeded || 1;
+  return ev;
+}
+
+export async function createRequest(body, actor, { autoVia = null } = {}) {
   const v = validateRequest(body);
   const st = await load();
   const q = { id: `UA-${String(++st.seq).padStart(4, "0")}`, ...v, status: "pending", requestedBy: actor, requestedAt: new Date(_deps.now()).toISOString(), title: describe(v) };
+  const ev = autoVia ? null : await applyPolicy(q, actor);
+  if (ev?.decision === "block") q.status = "held";
   st.requests.unshift(q);
   st.requests = st.requests.slice(0, 500);
   await save();
-  _deps.audit(`User & Access: request ${q.id} — ${q.title}`, { id: q.id }, actor);
-  _deps.notify?.({ type: "access_request", severity: ["disable", "revoke"].includes(q.kind) || q.role === "cluster-admin" ? "warning" : "info", title: `Access request ${q.id} waiting for approval`, message: `${q.title}. Requested by ${actor}${q.reason ? `: ${q.reason}` : ""}.` });
+  _deps.audit(`User & Access: request ${q.id} — ${q.title}${q.status === "held" ? " (held by policy)" : ""}`, { id: q.id, policy: q.policy?.findings }, actor);
+  if (q.status === "held") {
+    _deps.notify?.({ type: "access_request", severity: "warning", title: `Access request ${q.id} held by policy`, message: `${q.title}. ${q.policy.findings.filter((f) => f.level === "block").map((f) => f.text).join(" ")}` });
+    return q;
+  }
+  const auto = autoVia || (ev?.decision === "auto" && !(q.kind === "grant" && q.mode === "htpasswd") && q.kind !== "reset-password" ? "Policy: low risk" : null);
+  if (auto) return approveRequest(q.id, "policy", { via: auto });
+  _deps.notify?.({ type: "access_request", severity: ["disable", "revoke"].includes(q.kind) || q.role === "cluster-admin" ? "warning" : "info", title: `Access request ${q.id} waiting for approval`, message: `${q.title}. Requested by ${actor}${q.reason ? `: ${q.reason}` : ""}${q.approvalsNeeded > 1 ? ". Needs two approvers." : "."}` });
+  return q;
+}
+
+/** An Admin lets a held request go on to normal approval, with a reason. */
+export async function overrideRequest(id, actor, reason) {
+  const st = await load();
+  const q = st.requests.find((x) => x.id === id);
+  if (!q) throw err("No such request", 404);
+  if (q.status !== "held") throw err("Only a request held by policy can be overridden", 409);
+  const why = String(reason || "").trim().slice(0, 300);
+  if (why.length < 5) throw err("Give a reason for the override");
+  Object.assign(q, { status: "pending", override: { by: actor, at: new Date(_deps.now()).toISOString(), reason: why } });
+  q.approvalsNeeded = Math.max(2, q.approvalsNeeded || 1);
+  await save();
+  _deps.audit(`User & Access: policy overridden on ${q.id} by ${actor}: ${why}`, { id, findings: q.policy?.findings }, actor);
+  _deps.notify?.({ type: "access_request", severity: "warning", title: `Policy overridden on ${q.id}`, message: `${q.title}. ${actor}: ${why}. Needs two approvers.` });
+  return q;
+}
+
+/** Replace a held request by one of the alternatives the policy offered. */
+export async function replaceRequest(id, index, actor) {
+  const st = await load();
+  const q = st.requests.find((x) => x.id === id);
+  if (!q) throw err("No such request", 404);
+  if (q.status !== "held") throw err("Only a held request can be replaced", 409);
+  const alt = q.policy?.alternatives?.[Number(index)];
+  if (!alt) throw err("No such alternative");
+  const made = [];
+  for (const b of alt.bodies) made.push(await createRequest({ ...b, reason: `${b.reason || q.reason || ""} (instead of ${q.id})`.trim() }, q.requestedBy));
+  const st2 = await load();
+  const q2 = st2.requests.find((x) => x.id === id);
+  Object.assign(q2, { status: "replaced", decidedBy: actor, decidedAt: new Date(_deps.now()).toISOString(), replacedBy: made.map((x) => x.id) });
+  await save();
+  _deps.audit(`User & Access: ${q.id} replaced by ${made.map((x) => x.id).join(", ")} (${alt.label})`, { id }, actor);
+  return { replaced: q2, created: made };
+}
+
+/** Add the ticket a held request is waiting for, and check it again. */
+export async function setChangeRef(id, ref, actor) {
+  const st = await load();
+  const q = st.requests.find((x) => x.id === id);
+  if (!q) throw err("No such request", 404);
+  if (!["held", "pending"].includes(q.status)) throw err(`This request is already ${q.status}`, 409);
+  if (!/^[A-Z]{2,8}\d{4,12}$/.test(String(ref || ""))) throw err("A ticket is a ServiceNow number such as CHG0031234");
+  q.changeRef = String(ref);
+  const ev = await applyPolicy(q, actor);
+  if (q.status === "held" && ev && ev.decision !== "block") q.status = "pending";
+  await save();
+  _deps.audit(`User & Access: ticket ${ref} added to ${q.id}`, { id }, actor);
   return q;
 }
 
@@ -600,7 +691,7 @@ export async function rejectRequest(id, actor, note) {
   const st = await load();
   const q = st.requests.find((x) => x.id === id);
   if (!q) throw err("No such request", 404);
-  if (q.status !== "pending") throw err(`This request is already ${q.status}`, 409);
+  if (!["pending", "held"].includes(q.status)) throw err(`This request is already ${q.status}`, 409);
   Object.assign(q, { status: "rejected", decidedBy: actor, decidedAt: new Date(_deps.now()).toISOString(), note: String(note || "").slice(0, 300) });
   await save();
   _deps.audit(`User & Access: ${q.id} rejected`, { id }, actor);
@@ -617,6 +708,18 @@ export async function approveRequest(id, actor, { allowSelf = false, ctx = null,
   if (!q) throw err("No such request", 404);
   if (q.status !== "pending") throw err(`This request is already ${q.status}`, 409);
   if (!via && !allowSelf && q.requestedBy && q.requestedBy === actor) throw err("Someone other than the requester must approve (or approve the ServiceNow change)", 403);
+  // Two approvers for high-risk requests (a ServiceNow approval counts as all).
+  if (!via && (q.approvalsNeeded || 1) > 1) {
+    q.approvals ||= [];
+    if (q.approvals.some((a) => a.by === actor)) throw err("You have already approved this; a second Admin must approve it", 409);
+    q.approvals.push({ by: actor, at: new Date(_deps.now()).toISOString() });
+    if (q.approvals.length < q.approvalsNeeded) {
+      await save();
+      _deps.audit(`User & Access: ${q.id} approved by ${actor} (${q.approvals.length} of ${q.approvalsNeeded})`, { id }, actor);
+      _deps.notify?.({ type: "access_request", severity: "info", title: `Access request ${q.id} needs one more approver`, message: `${q.title}. First approval by ${actor}.` });
+      return { ...q, waiting: true };
+    }
+  }
   q.status = "running"; q.decidedBy = via || actor; q.decidedAt = new Date(_deps.now()).toISOString();
   await save();
   let password = null, manifests = null;
@@ -663,8 +766,14 @@ export async function approveRequest(id, actor, { allowSelf = false, ctx = null,
 
 /** Run one read-only operation on a cluster (for the "Can they…?" check). */
 export async function runOn(cluster, op, payload, ctx) {
-  if (op !== "can-i") throw err("Not allowed");
+  if (!["can-i", "who-can"].includes(op)) throw err("Not allowed");
   return exec(cluster, op, payload, ctx);
+}
+/** End a person's sessions on one cluster now (a security response, not a change of access). */
+export async function endSessions(cluster, user, ctx, actor) {
+  const n = await exec(cluster, "sessions", { user }, ctx);
+  _deps.audit(`User & Access: ${n} session${n === 1 ? "" : "s"} of ${user} ended on ${cluster}`, { cluster, user }, actor);
+  return n;
 }
 
 export async function getRequest(id) {
@@ -838,7 +947,8 @@ export async function applyUnbindSubject({ binding, namespace, subjectKind, subj
   const b = await get(path);
   if (!b) return `binding ${binding} is already gone`;
   const subs = b.subjects || [];
-  const rest = subs.filter((x) => !(x.kind === subjectKind && x.name === subject));
+  const [saNs, saName] = subjectKind === "ServiceAccount" ? String(subject).split("/") : [null, null];
+  const rest = subs.filter((x) => !(subjectKind === "ServiceAccount" ? x.kind === "ServiceAccount" && x.namespace === saNs && x.name === saName : x.kind === subjectKind && x.name === subject));
   if (rest.length === subs.length) return `${subject} is no longer in ${binding}`;
   if (rest.length) await _deps.ocp.patch(path, { subjects: rest }, MERGE); else await _deps.ocp.delete(path);
   return `${subjectKind.toLowerCase()} ${subject} removed from ${binding}${rest.length ? "" : " (binding deleted)"}`;
@@ -952,6 +1062,13 @@ export async function canI({ user, verb, resource, namespace, group = "" }) {
     spec: { user, groups: [...groups, "system:authenticated", "system:authenticated:oauth"], resourceAttributes: { verb, resource, group, ...(namespace ? { namespace } : {}) } },
   });
   return { allowed: !!r?.status?.allowed, reason: r?.status?.reason || null, groups };
+}
+
+/** Who can do this? An OpenShift ResourceAccessReview: users and groups. */
+export async function whoCan({ verb, resource, namespace, group = "" }) {
+  const body = { kind: namespace ? "LocalResourceAccessReview" : "ResourceAccessReview", apiVersion: "authorization.openshift.io/v1", verb, resource, resourceAPIGroup: group, ...(namespace ? { namespace } : {}) };
+  const r = await _deps.ocp.post(namespace ? `/apis/authorization.openshift.io/v1/namespaces/${namespace}/localresourceaccessreviews` : "/apis/authorization.openshift.io/v1/resourceaccessreviews", body);
+  return { users: (r?.users || []).filter((u) => !isSystem(u)), serviceAccounts: (r?.users || []).filter((u) => /^system:serviceaccount:/.test(u)).length, groups: (r?.groups || []).filter((g) => !isSystem(g)) };
 }
 
 /** Remove a person from a platform-managed group (expiry). */

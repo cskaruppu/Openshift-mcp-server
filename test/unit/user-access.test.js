@@ -57,7 +57,7 @@ function setup(clusters) {
   const audit = [];
   UA.configureUserAccess({
     run: async (c, fn) => als.run(clusters[c].ocp, fn),
-    exec: null, snApproval: null, notify: null,
+    exec: null, snApproval: null, notify: null, policy: null,
     ocp: ctxOcp,
     now: () => Date.parse("2026-11-25T10:00:00Z"),
     audit: (t) => audit.push(t),
@@ -317,4 +317,52 @@ test("access review: decide, close, and removals become requests", async () => {
   const q = (await UA.summary(["hub"])).requests.find((x) => x.id === closed.requests[0]);
   assert.equal(q.kind, "remove-role");
   assert.equal(q.user, "karthik");
+});
+
+test("guardrails on requests: held, override with two approvers, alternative, auto-approve", async () => {
+  const c = fakeCluster();
+  setup({ "ocp-prod-01": c, "ocp-dev-01": fakeCluster() });
+  const AI = await import("../../src/services/access-insights.js");
+  UA.configureUserAccess({ policy: async (q) => AI.evaluateRequest(q, {}) });
+  // Standing cluster-admin on production: held.
+  const held = await UA.createRequest({ kind: "grant", user: "meena", clusters: ["ocp-prod-01"], role: "cluster-admin", reason: "debug" }, "meena");
+  assert.equal(held.status, "held");
+  assert.ok(held.policy.findings.some((f) => f.policy === "no-standing-ca-prod"));
+  await assert.rejects(UA.approveRequest(held.id, "admin2", {}), /held/);
+  // Replace it by the 4-hour alternative (still needs its ticket).
+  const rep = await UA.replaceRequest(held.id, 0, "admin2");
+  assert.equal(rep.replaced.status, "replaced");
+  assert.equal(rep.created[0].hours, 4);
+  assert.equal(rep.created[0].status, "held");
+  const withRef = await UA.setChangeRef(rep.created[0].id, "CHG0031234", "meena");
+  assert.equal(withRef.status, "pending");
+  assert.equal(withRef.approvalsNeeded, 2);
+  const one = await UA.approveRequest(withRef.id, "admin2", {});
+  assert.equal(one.waiting, true);
+  await assert.rejects(UA.approveRequest(withRef.id, "admin2", {}), /second Admin/);
+  const two = await UA.approveRequest(withRef.id, "admin3", {});
+  assert.equal(two.status, "done");
+  // Override needs a reason.
+  const h2 = await UA.createRequest({ kind: "grant", user: "x1", clusters: ["ocp-prod-01"], role: "view", namespace: "payments", mode: "htpasswd" }, "a");
+  assert.equal(h2.status, "held");
+  await assert.rejects(UA.overrideRequest(h2.id, "admin2", ""), /reason/);
+  const ov = await UA.overrideRequest(h2.id, "admin2", "Vendor laptop without AD for the audit week");
+  assert.equal(ov.status, "pending");
+  assert.equal(ov.override.by, "admin2");
+  // Low risk, temporary, non-production: approved by policy.
+  const auto = await UA.createRequest({ kind: "grant", user: "neha", clusters: ["ocp-dev-01"], role: "edit", namespace: "payments", hours: 8 }, "neha");
+  assert.equal(auto.status, "done");
+  assert.match(auto.decidedBy, /Policy/);
+  UA.configureUserAccess({ policy: null });
+});
+
+test("service-account bindings can be removed through a request", async () => {
+  const c = fakeCluster();
+  c.store.set("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/builder-admin", { metadata: { name: "builder-admin" }, roleRef: { kind: "ClusterRole", name: "cluster-admin" }, subjects: [{ kind: "ServiceAccount", name: "builder", namespace: "ci" }, { kind: "ServiceAccount", name: "builder", namespace: "other" }] });
+  setup({ local: c });
+  const q = await UA.createRequest({ kind: "remove-binding", clusters: ["local"], binding: "builder-admin", subjectKind: "ServiceAccount", subject: "ci/builder", role: "cluster-admin" }, "a");
+  const r = await UA.approveRequest(q.id, "b", {});
+  assert.equal(r.status, "done");
+  const left = c.store.get("/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/builder-admin").subjects;
+  assert.deepEqual(left.map((s) => s.namespace), ["other"]);
 });

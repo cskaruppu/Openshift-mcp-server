@@ -103,6 +103,7 @@ import { handleIncidentCorrelationAPI, handleTopologyExplainAPI, handleImageAnal
 import { getDeprecatedAPIConsumers } from "./tools/api-consumers.js";
 import { getGpuOverview, getGpuHistory, registerGpuTools } from "./tools/gpu-metrics.js";
 import { registerOpsTwinTools } from "./tools/ops-twin-tools.js";
+import { registerAccessTools } from "./tools/access-tools.js";
 import { remember as fleetRemember, recall as fleetRecall, memoryStats as fleetMemoryStats } from "./services/fleet-memory.js";
 import {
   listActions,
@@ -296,6 +297,7 @@ function createMcpServer() {
     ["registerKubeVirtTools",       registerKubeVirtTools],
     ["registerGpuTools",            registerGpuTools],
     ["registerOpsTwinTools",        registerOpsTwinTools],
+    ["registerAccessTools",         registerAccessTools],
     ["registerNetworkTools",        registerNetworkTools],
     ["registerGenericTools",        registerGenericTools],
     ["registerMustGatherTools",     registerMustGatherTools],
@@ -2202,6 +2204,38 @@ async function startSSE() {
           return approval === "approved" ? "approved" : approval === "rejected" || String(r.state) === "4" ? "rejected" : approval || "requested";
         },
       });
+      // Access insights and guardrails (hub only): usage from the audit log,
+      // suggestions, risk, session alerts, HR feed, policy on every request.
+      if (MCP_MODE !== "spoke") {
+        const AI = await import("./services/access-insights.js");
+        const { kvStore } = await import("./utils/kv-store.js");
+        AI.configureAccessInsights({
+          audit: AI.auditFromEnv(),
+          store: kvStore,
+          notify: (event) => { import("./services/notifications.js").then((NT) => NT.notify(event)).catch(() => {}); },
+          auditLog: (title, details, username) => logAuditTrailEvent({ type: "action_taken", severity: "info", title, details, username: username || "system", source: "user-access" }).catch(() => {}),
+          selfApproveDefault: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true",
+          hrFeed: process.env.ACCESS_HR_FEED_URL ? async () => {
+            const r = await fetch(process.env.ACCESS_HR_FEED_URL, { headers: process.env.ACCESS_HR_FEED_TOKEN ? { Authorization: `Bearer ${process.env.ACCESS_HR_FEED_TOKEN}` } : {}, signal: AbortSignal.timeout(30_000) });
+            if (!r.ok) throw new Error(`HR feed answered ${r.status}`);
+            return /json/.test(r.headers.get("content-type") || "") ? r.json() : r.text();
+          } : null,
+        });
+        UA.configureUserAccess({ policy: (q) => AI.policyHook(q) });
+        // Every 30 minutes: watch logins (alerts, last seen) and refresh the
+        // analysis for guardrails; every 6 hours: the HR feed.
+        const clustersOf = () => String(process.env.ACCESS_INSIGHTS_CLUSTERS || "").split(",").map((x) => x.trim()).filter(Boolean);
+        const lastClusters = () => AI.lastResult()?.sum?.clusters?.map((c) => c.cluster) || clustersOf();
+        const watch = async () => {
+          const cl = lastClusters();
+          if (!cl.length) return;
+          try { await AI.insights(await UA.summary(cl, null)); } catch (e) { console.error("[access-insights]", e.message); }
+        };
+        const w1 = setInterval(watch, Number(process.env.ACCESS_WATCH_MS) || 1_800_000); if (w1.unref) w1.unref();
+        const hrT = async () => { const cl = lastClusters(); if (!cl.length) return; try { await AI.hrTick(await UA.summary(cl, null), { createRequest: UA.createRequest }); } catch (e) { console.error("[access-insights] HR:", e.message); } };
+        const w2 = setInterval(hrT, Number(process.env.ACCESS_HR_TICK_MS) || 21_600_000); if (w2.unref) w2.unref();
+        const w0 = setTimeout(() => { watch().then(hrT); }, 90_000); if (w0.unref) w0.unref();
+      }
       if (MCP_MODE !== "spoke") {
         const t = setInterval(() => UA.expireTick().catch((e) => console.error("[user-access] expiry:", e.message)), Number(process.env.USER_ACCESS_EXPIRY_TICK_MS) || 600_000);
         if (t.unref) t.unref();
@@ -9755,13 +9789,13 @@ spec:
         const ctx = { authorization: req.headers.authorization || null };
         // What a cluster runs for the hub: read its access, or apply one approved
         // change. Changes need the Admin role, as approving does.
-        const lm = url.pathname.match(/^\/api\/user-access\/local\/(read|grant|revoke|kubeadmin|expire|unbind|unbindsubject|disable|enable|setpass|sessions|can-i)$/);
+        const lm = url.pathname.match(/^\/api\/user-access\/local\/(read|grant|revoke|kubeadmin|expire|unbind|unbindsubject|disable|enable|setpass|sessions|can-i|who-can)$/);
         if (lm) {
           if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
-          if (!["read", "can-i"].includes(lm[1]) && !checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing access needs the Admin role" });
+          if (!["read", "can-i", "who-can"].includes(lm[1]) && !checkPermission(req, "manage")) return sendJson(res, 403, { error: "Changing access needs the Admin role" });
           const body = await readJsonBody(req).catch(() => ({}));
           const result = await UA.localOp(lm[1], body);
-          if (!["read", "can-i"].includes(lm[1])) logAuditTrailEvent({ type: "action_taken", severity: "info", title: `User & Access (from the hub): ${lm[1]} ${body.user || body.q?.user || ""} — ${String(result?.text ?? result).slice(0, 160)}`, details: { op: lm[1] }, username: actor, source: "user-access" }).catch(() => {});
+          if (!["read", "can-i", "who-can"].includes(lm[1])) logAuditTrailEvent({ type: "action_taken", severity: "info", title: `User & Access (from the hub): ${lm[1]} ${body.user || body.q?.user || ""} — ${String(result?.text ?? result).slice(0, 160)}`, details: { op: lm[1] }, username: actor, source: "user-access" }).catch(() => {});
           return sendJson(res, 200, { result });
         }
         const clusters = [...new Set(String(url.searchParams.get("clusters") || "local").split(",").map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._:-]{1,128}$/.test(s)))].slice(0, 50);
@@ -9786,6 +9820,75 @@ spec:
           if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Closing an access review needs the Admin role" });
           return sendJson(res, 200, await UA.closeReview(rv[1], { removeUnreviewed: !!body.removeUnreviewed }, actor));
         }
+        // Access insights: suggestions, risk, alerts, guardrails, evidence.
+        if (url.pathname === "/api/user-access/insights" || url.pathname.startsWith("/api/user-access/insights/")) {
+          const AI = await import("./services/access-insights.js");
+          if (req.method === "GET" && url.pathname === "/api/user-access/insights") {
+            const sum = await UA.summary(clusters.length ? clusters : ["local"], ctx);
+            return sendJson(res, 200, { ...(await AI.insights(sum, { refresh: url.searchParams.get("refresh") === "true" })), you: { name: actor, canApprove: checkPermission(req, "manage") } });
+          }
+          if (req.method === "GET" && url.pathname === "/api/user-access/insights/evidence.txt") {
+            const sum = await UA.summary(clusters.length ? clusters : ["local"], ctx);
+            const out = await AI.insights(sum);
+            const pol = await AI.policies();
+            logAuditTrailEvent({ type: "action_taken", severity: "info", title: "Access governance evidence exported", details: { clusters }, username: actor, source: "user-access" }).catch(() => {});
+            res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": `attachment; filename="access-evidence-${new Date().toISOString().slice(0, 10)}.txt"` });
+            return res.end(AI.evidenceText(out, { policies: pol, policyStats: AI.policyStats(sum.requests || []), actor, dismissed: await AI.dismissedList() }));
+          }
+          if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+          if (enforceRateLimit(req, res, { burst: 10, refillPerSec: 0.3 })) return;
+          const body = await readJsonBody(req).catch(() => ({}));
+          if (url.pathname === "/api/user-access/insights/raise") {
+            // One suggestion → its request(s), approved like any other.
+            const sgg = AI.lastSuggestion(String(body.id || ""));
+            if (!sgg) return sendJson(res, 404, { error: "That suggestion has changed; refresh and try again" });
+            const made = [];
+            for (const r of sgg.requests) {
+              try { made.push(await UA.createRequest(r, actor)); } catch (e) { made.push({ error: e.message }); }
+            }
+            return sendJson(res, 200, { created: made });
+          }
+          if (url.pathname === "/api/user-access/insights/dismiss") return sendJson(res, 200, await AI.dismiss(String(body.id || "").slice(0, 40), body.reason, actor, body.title));
+          if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "This needs the Admin role" });
+          if (url.pathname === "/api/user-access/insights/policy") return sendJson(res, 200, await AI.setPolicy(String(body.id || ""), !!body.enabled, actor));
+          if (url.pathname === "/api/user-access/insights/alert") {
+            const a = AI.lastAlert(String(body.id || ""));
+            if (!a) return sendJson(res, 404, { error: "That alert has changed; refresh and try again" });
+            const action = String(body.action || "");
+            if (!a.actions.includes(action) && !["confirmed", "notme", "closed"].includes(action)) return sendJson(res, 400, { error: "Not an action for this alert" });
+            if (action === "end-sessions") {
+              const n = await UA.endSessions(a.cluster, a.user, ctx, actor);
+              await AI.setAlertState(a.id, "ticket", actor, { sessionsEnded: n });
+              return sendJson(res, 200, { text: `${n} session${n === 1 ? "" : "s"} of ${a.user} ended on ${a.cluster}` });
+            }
+            if (action === "remove-kubeadmin") return sendJson(res, 200, { request: await UA.createRequest({ kind: "remove-kubeadmin", clusters: [a.cluster], reason: `Security alert: ${a.title}` }, actor) });
+            if (action === "disable") return sendJson(res, 200, { request: await UA.createRequest({ kind: "disable", user: a.user, clusters: [a.cluster], reason: `Security alert: ${a.title}` }, actor) });
+            if (action === "ask") {
+              import("./services/notifications.js").then((NT) => NT.notify({ type: "access_alert", severity: "warning", title: `Was this you, ${a.user}? ${a.title}`, message: `${a.text} ${a.facts.join("; ")}. ${a.user}: answer in Automation Hub → User & Access → Access insights.` })).catch(() => {});
+              return sendJson(res, 200, await AI.setAlertState(a.id, "asked", actor));
+            }
+            if (action === "incident") {
+              const SN = await import("./utils/servicenow-client.js");
+              const inc = await SN.createIncident({ shortDescription: `Access alert: ${a.title}`.slice(0, 160), description: `${a.text}\n${a.facts.map((f) => `- ${f}`).join("\n")}\nCluster: ${a.cluster}. User: ${a.user}. Raised by ${actor} from TCS Agentic AI (User & Access).`, urgency: a.level === "crit" ? "1" : "2", impact: "2", category: "security" });
+              const number = inc?.result?.number || inc?.number || null;
+              await AI.setAlertState(a.id, "ticket", actor, { ticket: number });
+              return sendJson(res, 200, { number });
+            }
+            if (action === "notme") {
+              await AI.setAlertState(a.id, "notme", actor);
+              const q = a.user === "kube:admin" ? await UA.createRequest({ kind: "remove-kubeadmin", clusters: [a.cluster], reason: `Not recognised: ${a.title}` }, actor) : await UA.createRequest({ kind: "disable", user: a.user, clusters: [a.cluster], reason: `Not recognised: ${a.title}` }, actor);
+              return sendJson(res, 200, { request: q });
+            }
+            return sendJson(res, 200, await AI.setAlertState(a.id, action, actor));
+          }
+          return sendJson(res, 404, { error: "Unknown insights action" });
+        }
+        if (req.method === "POST" && url.pathname === "/api/user-access/who-can") {
+          const body = await readJsonBody(req).catch(() => ({}));
+          const c = String(body.cluster || "local");
+          if (!/^[A-Za-z0-9._:-]{1,128}$/.test(c) || !/^[a-z*]{1,20}$/.test(String(body.verb || "")) || !/^[a-z0-9.*-]{1,63}$/.test(String(body.resource || "")) || (body.namespace && !UA.validName(body.namespace))) return sendJson(res, 400, { error: "Give a verb, a resource and optionally a namespace" });
+          return sendJson(res, 200, await UA.runOn(c, "who-can", { verb: body.verb, resource: body.resource, namespace: body.namespace || null, group: String(body.group || "") }, ctx));
+        }
         if (req.method === "POST" && ["/api/user-access/baseline", "/api/user-access/rotation", "/api/user-access/can-i"].includes(url.pathname)) {
           const body = await readJsonBody(req).catch(() => ({}));
           if (url.pathname === "/api/user-access/can-i") {
@@ -9799,9 +9902,10 @@ spec:
         }
         if (req.method === "GET" && url.pathname === "/api/user-access") {
           const out = await UA.summary(clusters.length ? clusters : ["local"], ctx);
-          return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true" } });
+          const AIs = await import("./services/access-insights.js");
+          return sendJson(res, 200, { ...out, you: { name: actor, canApprove: checkPermission(req, "manage"), selfApprove: getAuthMode() === "none" || (String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true" && !(await AIs.selfApprovalBlocked())) } });
         }
-        const m = url.pathname.match(/^\/api\/user-access\/requests(?:\/(UA-\d{4,})\/(approve|reject|ticket|manifest))?$/);
+        const m = url.pathname.match(/^\/api\/user-access\/requests(?:\/(UA-\d{4,})\/(approve|reject|ticket|manifest|override|replace|ref))?$/);
         if (!m) return sendJson(res, 404, { error: "Unknown User & Access action" });
         if (req.method === "GET" && m[2] === "manifest") {
           const q = await UA.getRequest(m[1]);
@@ -9830,9 +9934,15 @@ spec:
           logAuditTrailEvent({ type: "action_taken", severity: "info", title: `ServiceNow ${number || "change"} raised for access request ${q.id}`, details: { id: q.id, number }, username: actor, source: "user-access" }).catch(() => {});
           return sendJson(res, 200, { number });
         }
+        if (m[2] === "ref") return sendJson(res, 200, await UA.setChangeRef(m[1], String(body.ref || "").trim().toUpperCase(), actor));
         if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Approving access changes needs the Admin role" });
         if (m[2] === "reject") return sendJson(res, 200, await UA.rejectRequest(m[1], actor, body.note));
-        return sendJson(res, 200, await UA.approveRequest(m[1], actor, { allowSelf: getAuthMode() === "none" || String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true", ctx }));
+        if (m[2] === "override") return sendJson(res, 200, await UA.overrideRequest(m[1], actor, body.reason));
+        if (m[2] === "replace") return sendJson(res, 200, await UA.replaceRequest(m[1], Number(body.index) || 0, actor));
+        // Self-approval: allowed without sign-in, or when configured, unless the guardrail forbids it.
+        const AIp = await import("./services/access-insights.js");
+        const allowSelf = getAuthMode() === "none" || (String(process.env.USER_ACCESS_ALLOW_SELF_APPROVE).toLowerCase() === "true" && !(await AIp.selfApprovalBlocked()));
+        return sendJson(res, 200, await UA.approveRequest(m[1], actor, { allowSelf, ctx }));
       } catch (e) {
         return sendJson(res, e.status || 500, { error: e.message });
       }

@@ -39,6 +39,10 @@ rules:
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]
     verbs: ["create"]
+  # "Who can…?" (AI Chat and Access insights)
+  - apiGroups: ["authorization.openshift.io"]
+    resources: ["resourceaccessreviews", "localresourceaccessreviews"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get"]

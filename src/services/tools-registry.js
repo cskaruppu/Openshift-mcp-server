@@ -8,6 +8,7 @@
 
 import { ocpGet, ocpFetch } from "../utils/openshift-client.js";
 import { AGENT_TOOLS as OPS_TWIN_TOOLS } from "../tools/ops-twin-tools.js";
+import { AGENT_TOOLS as ACCESS_TOOLS } from "../tools/access-tools.js";
 
 const MAX_ITEMS = 40;
 
@@ -258,6 +259,8 @@ export const TOOLS = [
   },
   // Ops Twin what-ifs (read-only simulation): tools/ops-twin-tools.js.
   ...OPS_TWIN_TOOLS,
+  // User & Access questions (read-only): tools/access-tools.js.
+  ...ACCESS_TOOLS,
 ];
 
 /**
