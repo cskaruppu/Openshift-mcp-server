@@ -199,3 +199,26 @@ test("HR feed: CSV leavers, movers and joiners; evidence report", () => {
   assert.match(text, /GUARDRAILS/);
   assert.match(text, /PCI DSS 4.0/);
 });
+
+test("emergency accounts are not suggested for disabling when unused", () => {
+  const s = sum();
+  s.people.push({ name: "breakglass", source: "htpasswd", clusters: { "ocp-prod-01": [g("cluster-admin", "cluster")] }, groups: [], lastLogin: ago(300), flags: [], detail: { "ocp-prod-01": { exists: true, createdAt: ago(400), lastLogin: ago(300), sessions: 0 } } });
+  const out = AI.analyze({ sum: s, usage: null, now: NOW });
+  assert.ok(!out.suggestions.some((x) => x.user === "breakglass" && x.kind === "disable"));
+  assert.ok(out.identities.find((i) => i.name === "breakglass").score >= 67, "still shows as high risk");
+});
+
+test("one suggestion for the same change on several clusters", () => {
+  const s = sum();
+  const r = s.people.find((p) => p.name === "rahul");
+  r.clusters["ocp-dev-01"] = [g("cluster-admin", "cluster", "platform-admins")];
+  r.detail["ocp-dev-01"] = { ...r.detail["ocp-prod-01"] };
+  const u = usage();
+  u.rows.push(row("ocp-dev-01", "rahul", "patch", "", "nodes", 1), row("ocp-dev-01", "rahul", "patch", "shop", "deployments", 9));
+  u.privDays.push({ cluster: "ocp-dev-01", user: "rahul", day: "2026-09-12" }, { cluster: "ocp-dev-01", user: "rahul", day: "2026-10-03" });
+  const out = AI.analyze({ sum: s, usage: u, now: NOW });
+  const t = out.suggestions.filter((x) => x.user === "rahul" && x.kind === "temporary");
+  assert.equal(t.length, 1);
+  assert.deepEqual(t[0].clusters.sort(), ["ocp-dev-01", "ocp-prod-01"]);
+  assert.equal(t[0].requests.length, 2);
+});

@@ -285,7 +285,8 @@ export function analyze({ sum, usage = null, obs = {}, dismissed = {}, alertStat
   };
 
   for (const p of people) {
-    if (p.disabled) continue;
+    // Emergency accounts keep their rights unused on purpose: scored and watched, never trimmed.
+    if (p.disabled || BREAKGLASS().includes(p.name)) continue;
     const grants = grantList(p).filter((g) => g.via !== "built-in");
     if (!grants.length) continue;
     const idle = idleOf(p);
@@ -296,8 +297,8 @@ export function analyze({ sum, usage = null, obs = {}, dismissed = {}, alertStat
       return before - scorePerson(q, scoreCtx(q)).score;
     };
 
-    // ── inactive: disable ──
-    if (idle.days >= INACTIVE_DAYS()) {
+    // ── inactive: disable (not the emergency accounts: being unused is their job) ──
+    if (idle.days >= INACTIVE_DAYS() && !BREAKGLASS().includes(p.name)) {
       const where = Object.keys(p.clusters).filter((c) => (p.clusters[c] || []).length || p.detail?.[c]?.exists);
       const synced = grants.filter((g) => g.synced).map((g) => g.via);
       push({
@@ -428,7 +429,7 @@ export function analyze({ sum, usage = null, obs = {}, dismissed = {}, alertStat
 
   // Hints for access reviews: keep or remove, with the reason.
   const reviewHints = {};
-  for (const s of suggestions.filter((x) => x.role)) reviewHints[`${s.user}|${s.clusters[0]}|${s.role}|${s.scope}`] = { suggest: "remove", why: s.why };
+  for (const s of suggestions.filter((x) => x.role)) reviewHints[`${s.user}|${s.clusters[0]}|${s.role}|${s.scope}`] = { suggest: "remove", why: `${s.title}: ${s.why}` };
   for (const p of people) for (const g of grantList(p)) {
     const k = `${p.name}|${g.cluster}|${g.role}|${g.scope}`;
     if (reviewHints[k]) continue;
@@ -440,7 +441,17 @@ export function analyze({ sum, usage = null, obs = {}, dismissed = {}, alertStat
     else if (idle.last) reviewHints[k] = { suggest: "keep", why: `active ${idle.days ? `${idle.days} days ago` : "today"}` };
   }
 
+  // The same suggestion for one person on several clusters is one row.
+  const merged = [];
+  for (const s of suggestions) {
+    const twin = ["temporary", "remove", "downgrade"].includes(s.kind) && merged.find((m) => m.kind === s.kind && m.user === s.user && m.title === s.title && m.why === s.why);
+    if (twin) { twin.clusters.push(...s.clusters); twin.requests.push(...s.requests); twin.delta = Math.max(twin.delta || 0, s.delta || 0); twin.id = hid(twin.id, s.id); }
+    else merged.push({ ...s, clusters: [...s.clusters], requests: [...s.requests] });
+  }
+  suggestions.length = 0;
+  for (const m of merged) if (!(dismissed[m.id] && Date.parse(dismissed[m.id].until) > now)) suggestions.push(m);
   suggestions.sort((a, b) => (b.delta || 0) - (a.delta || 0));
+  kpis.suggestions = suggestions.length;
   return {
     at: iso(now), audit: usage ? { source: usage.source, days, from: usage.from, to: usage.to, clusters: Object.keys(U || {}), error: usage.error || null } : null,
     watching: { since: obs.since || null, days: watchDays }, kpis, suggestions, identities: identities.slice(0, 200), alerts, reviewHints,

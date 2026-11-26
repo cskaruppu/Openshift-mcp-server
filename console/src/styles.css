@@ -10611,3 +10611,71 @@ code.new { color: #22a06b; }
 .ot-pick { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .ot-chk { display: flex !important; flex-direction: row !important; align-items: center; gap: 6px; font-size: 0.78rem; }
 @media (max-width: 640px) { .ot-lib, .ot-trust { grid-template-columns: 1fr; } }
+
+/* User & Access: Access insights and Guardrails (additive) */
+.ai-wrap { display: flex; flex-direction: column; gap: 12px; }
+.ai-src { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--vc-ink-2); }
+.ai-src-r { margin-left: auto; display: flex; gap: 6px; }
+.ai-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; }
+.ai-dot.ok { background: #1f9d55; } .ai-dot.warn { background: #c27c0e; } .ai-dot.crit { background: #d13438; }
+.ai-kpis .ua-kpi.ok b { color: #1f9d55; }
+.ai-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 12px; align-items: start; }
+.ai-side { display: flex; flex-direction: column; gap: 12px; }
+.ai-chips { display: flex; flex-wrap: wrap; gap: 5px; text-transform: none; letter-spacing: 0; }
+.ai-chip { font: 600 0.72rem var(--tcs-font); color: var(--vc-ink-2); border: 1px solid var(--vc-line); background: var(--vc-surface); border-radius: 999px; padding: 3px 9px; cursor: pointer; }
+.ai-chip.on { border-color: var(--tcs-blue); color: var(--vc-ink); background: var(--vc-row-sel); }
+.ai-t td { vertical-align: top; }
+.ai-act { display: inline-block; font-weight: 700; font-size: 0.7rem; padding: 2px 8px; border-radius: 6px; }
+.ai-act.dis { background: color-mix(in srgb, #d13438 15%, transparent); color: #d13438; }
+.ai-act.rm { background: color-mix(in srgb, #e8761c 16%, transparent); color: #c2610f; }
+.ai-act.dn { background: color-mix(in srgb, #c27c0e 16%, transparent); color: #a46a08; }
+.ai-act.sc { background: color-mix(in srgb, #2f7fe0 15%, transparent); color: var(--tcs-blue); }
+.ai-act.jit { background: color-mix(in srgb, #8b5cf6 16%, transparent); color: #7c4ddf; }
+.ai-act.sa { background: var(--vc-surface-2); color: var(--vc-ink-2); }
+.ai-ev { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ai-ev i { font-style: normal; font-size: 0.7rem; color: var(--vc-ink-2); background: var(--vc-surface-2); border: 1px solid var(--vc-line); border-radius: 5px; padding: 1px 6px; }
+.ai-red { font-weight: 700; color: #1f9d55; font-size: 0.8rem; }
+.ai-btns { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.ai-btns-l { justify-content: flex-start; margin-top: 8px; }
+.ai-alert { border-radius: 12px; padding: 12px 14px; border: 1px solid; }
+.ai-alert.crit { border-color: color-mix(in srgb, #d13438 55%, transparent); background: color-mix(in srgb, #d13438 7%, var(--vc-surface)); }
+.ai-alert.warn { border-color: color-mix(in srgb, #c27c0e 50%, transparent); background: color-mix(in srgb, #c27c0e 6%, var(--vc-surface)); }
+.ai-alert h4 { margin: 0 0 4px; font-size: 0.86rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ai-alert p { margin: 0; color: var(--vc-ink-2); font-size: 0.78rem; }
+.ai-alert ul { margin: 6px 0 0 16px; padding: 0; font-size: 0.78rem; line-height: 1.5; }
+.ai-tag { font-size: 0.62rem; font-weight: 800; padding: 2px 6px; border-radius: 5px; letter-spacing: 0.04em; }
+.ai-tag.r { background: #d13438; color: #fff; } .ai-tag.y { background: #e8b225; color: #1a1300; }
+.ai-calm p { margin: 4px 0 0; }
+.ai-rk { display: flex; flex-direction: column; gap: 8px; }
+.ai-rr { display: grid; grid-template-columns: 96px 1fr 32px; gap: 8px; align-items: center; font-size: 0.8rem; }
+.ai-rr b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-bar { height: 7px; border-radius: 4px; background: var(--vc-surface-2); overflow: hidden; }
+.ai-bar i { display: block; height: 100%; border-radius: 4px; }
+.ai-bar i.crit { background: #d13438; } .ai-bar i.warn { background: #e8b225; } .ai-bar i.ok { background: #1f9d55; }
+.ai-s { font-weight: 800; text-align: right; }
+.ai-why { grid-column: 2 / 4; color: var(--vc-ink-3); font-size: 0.7rem; margin-top: -4px; }
+.ai-pol { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.ai-pc { border: 1px solid var(--vc-line); border-radius: 10px; padding: 9px 11px; background: var(--vc-surface-2); display: flex; flex-direction: column; gap: 3px; font-size: 0.76rem; }
+.ai-pc.off { opacity: 0.6; }
+.ai-pc b { font-size: 0.8rem; display: flex; justify-content: space-between; gap: 8px; }
+.ai-pc span { color: var(--vc-ink-2); }
+.ai-pc small { color: var(--vc-ink-3); font-size: 0.68rem; }
+.ai-pc em { font-style: normal; font-size: 0.66rem; font-weight: 700; }
+.ai-pc em.blk { color: #d13438; } .ai-pc em.apr { color: #a46a08; } .ai-pc em.auto { color: #1f9d55; }
+.ai-tgl { position: relative; display: inline-block; width: 30px; height: 17px; flex: none; }
+.ai-tgl input { opacity: 0; width: 0; height: 0; position: absolute; }
+.ai-tgl span { position: absolute; inset: 0; border-radius: 9px; background: var(--vc-line); cursor: pointer; transition: background 0.15s; }
+.ai-tgl span::after { content: ""; position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.ai-tgl input:checked + span { background: var(--tcs-blue); }
+.ai-tgl input:checked + span::after { left: 15px; }
+.ai-tgl input:focus-visible + span { outline: 2px solid var(--tcs-blue); outline-offset: 2px; }
+.ai-ctl { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; font-size: 0.74rem; }
+.ai-ctl div { display: flex; flex-direction: column; gap: 2px; }
+.ai-ctl span { color: var(--vc-ink-2); }
+.ai-alts { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.ai-risk { display: inline-block; margin-top: 3px; font-size: 0.68rem; font-weight: 700; padding: 1px 6px; border-radius: 5px; }
+.ai-risk.crit { background: color-mix(in srgb, #d13438 15%, transparent); color: #d13438; }
+.ai-risk.warn { background: color-mix(in srgb, #c27c0e 16%, transparent); color: #a46a08; }
+.ai-risk.ok { background: color-mix(in srgb, #1f9d55 15%, transparent); color: #1f9d55; }
+@media (max-width: 1100px) { .ai-grid { grid-template-columns: 1fr; } }
+.ai-tw { overflow-x: auto; }

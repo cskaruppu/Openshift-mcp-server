@@ -87,7 +87,7 @@ async function call(path, { method = "GET", body } = {}) {
   return j;
 }
 
-export function Reviews({ data, label, canApprove, clustersParam, onChanged, toast }) {
+export function Reviews({ data, label, canApprove, clustersParam, onChanged, toast, hints = null }) {
   const [open, setOpen] = useState(null);
   const [form, setForm] = useState({ name: `Access review ${new Date().toISOString().slice(0, 7)}`, due: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10), scope: "privileged" });
   const [busy, setBusy] = useState(false);
@@ -141,12 +141,13 @@ export function Reviews({ data, label, canApprove, clustersParam, onChanged, toa
           )}
           <div className="ua-tablewrap">
             <table className="ua-t">
-              <thead><tr><th>Person</th><th>Cluster</th><th>Role</th><th>Where</th><th>Given</th><th>Decision</th></tr></thead>
+              <thead><tr><th>Person</th><th>Cluster</th><th>Role</th><th>Where</th><th>Given</th><th>Suggested</th><th>Decision</th></tr></thead>
               <tbody>
                 {open.items.map((i) => (
                   <tr key={i.key}>
                     <td><b>{i.person}</b></td><td>{label(i.cluster)}</td><td>{i.role}</td><td>{i.scope}</td>
                     <td className="ua-small">{i.via === "direct" ? "directly" : `group ${i.via}`}{i.synced ? " (AD)" : ""}</td>
+                    <td className="ua-small">{(() => { const h = hints?.[`${i.person}|${i.cluster}|${i.role}|${i.scope}`]; return h ? <><span className={"ua-flag " + (h.suggest === "remove" ? "warn" : "ok")}>{h.suggest === "remove" ? "Remove" : "Keep"}</span> <span className="vc-muted">{h.why}</span></> : <span className="vc-muted">—</span>; })()}</td>
                     <td>{open.status === "open"
                       ? <span className="ua-seg ua-seg-sm">
                         <button className={i.decision === "keep" ? "on" : ""} disabled={busy} onClick={() => decide([{ key: i.key, decision: "keep" }])}>Keep</button>

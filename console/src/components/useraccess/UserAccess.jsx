@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { showToast } from "../../store/toastStore";
 import UserDetail from "./UserDetail";
 import { Governance, Reviews } from "./Governance";
+import { InsightsTab, GuardrailsTab } from "./Insights";
 
 // Automation Hub → User & Access (services/user-access.js): who can log in to
 // which cluster and with what rights, across every cluster; changes go in as
@@ -13,7 +14,7 @@ const ago = (iso) => {
   return d <= 0 ? "today" : d === 1 ? "1 day ago" : `${d} days ago`;
 };
 const roleClass = (r) => (r === "cluster-admin" ? "adm" : r === "admin" || r === "edit" ? "dev" : "view");
-const STATUS_CLASS = { pending: "wait", running: "wait", done: "ok", "partly done": "warn", failed: "crit", rejected: "muted" };
+const STATUS_CLASS = { pending: "wait", running: "wait", done: "ok", "partly done": "warn", failed: "crit", rejected: "muted", held: "crit", replaced: "muted" };
 
 async function call(path, { method = "GET", body } = {}) {
   const r = await fetch(path, { method, credentials: "same-origin", headers: { Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -32,7 +33,8 @@ export default function UserAccess({ clusters = [] }) {
   const [q, setQ] = useState("");
   const [onlyFlags, setOnlyFlags] = useState(false);
   const [secret, setSecret] = useState(null);       // { user, password, id } shown once
-  const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", hours: "", delivery: "direct", reason: "" });
+  const [f, setF] = useState({ mode: "directory", user: "", clusters: [], role: "edit", namespace: "", expires: "", hours: "", delivery: "direct", reason: "", changeRef: "" });
+  const [ins, setIns] = useState(null);
   const [tab, setTab] = useState("people");
   const [fc, setFc] = useState("");   // filter: one cluster
   const [sel, setSel] = useState(null);
@@ -47,6 +49,11 @@ export default function UserAccess({ clusters = [] }) {
     finally { setLoading(false); }
   }, [all]);
   useEffect(() => { load(); }, [load]);
+  const loadIns = useCallback(async (refresh = false) => {
+    try { setIns(await call(`/api/user-access/insights?clusters=${encodeURIComponent(all.join(","))}${refresh ? "&refresh=true" : ""}`)); }
+    catch (e) { showToast(`Access insights: ${e.message}`, "err"); }
+  }, [all]);
+  useEffect(() => { if (["insights", "guard", "reviews"].includes(tab) && !ins) loadIns(); }, [tab, ins, loadIns]);
   useEffect(() => { setF((x) => (x.clusters.length ? x : { ...x, clusters: all.slice(0, 1) })); }, [all]);
 
   const roleInfo = data?.roles?.find((r) => r.id === f.role);
@@ -57,18 +64,23 @@ export default function UserAccess({ clusters = [] }) {
     setBusy("submit");
     try {
       const r = await call("/api/user-access/requests", { method: "POST", body });
+      if (r.status === "held") { showToast(`${r.id} held by a guardrail: ${(r.policy?.findings || []).filter((x) => x.level === "block").map((x) => x.text).join(" ")}`, "err"); if (body.kind === "grant") setF((x) => ({ ...x, user: "", reason: "", changeRef: "" })); load(); return; }
+      if (r.status !== "pending") { showToast(`${r.id}: ${r.status} (${r.decidedBy})`, "ok"); load(); return; }
       // Send it to ServiceNow for approval as well: approved there, it is applied.
       let t = null;
       if (viaSnow) t = await call(`/api/user-access/requests/${r.id}/ticket`, { method: "POST", body: {} }).catch((e) => ({ error: e.message }));
-      showToast(t?.number ? `${r.id} sent for approval in ServiceNow (${t.number})` : t?.error ? `${r.id} submitted; ServiceNow: ${t.error}` : `${r.id} submitted for approval`, t?.error ? "err" : "ok");
-      if (body.kind === "grant") setF((x) => ({ ...x, user: "", reason: "" }));
+      showToast(t?.number ? `${r.id} sent for approval in ServiceNow (${t.number})` : t?.error ? `${r.id} submitted; ServiceNow: ${t.error}` : `${r.id} submitted for approval${r.approvalsNeeded > 1 ? " (two approvers)" : ""}`, t?.error ? "err" : "ok");
+      if (body.kind === "grant") setF((x) => ({ ...x, user: "", reason: "", changeRef: "" }));
       load();
     } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
   };
-  const decide = async (id, what) => {
+  const decide = async (id, what, body = {}) => {
     setBusy(id + what);
     try {
-      const r = await call(`/api/user-access/requests/${id}/${what}`, { method: "POST", body: {} });
+      const r = await call(`/api/user-access/requests/${id}/${what}`, { method: "POST", body });
+      if (what === "override" || what === "ref") { showToast(`${id}: ${r.status}${r.approvalsNeeded > 1 ? " (two approvers)" : ""}`, "ok"); load(); return; }
+      if (what === "replace") { showToast(`${id} replaced by ${r.created.map((x) => `${x.id} (${x.status})`).join(", ")}`, "ok"); load(); return; }
+      if (what === "approve" && r.waiting) { showToast(`${id}: your approval is recorded; a second Admin must approve`, "ok"); load(); return; }
       if (what === "approve") {
         showToast(`${id}: ${r.status}`, r.status === "done" ? "ok" : "err");
         if (r.password) setSecret({ id, user: r.user, password: r.password });
@@ -91,8 +103,37 @@ export default function UserAccess({ clusters = [] }) {
   const okClusters = data.clusters.filter((c) => c.ok).map((c) => c.cluster);
   const people = data.people.filter((p) => (!q || p.name.toLowerCase().includes(q.toLowerCase()) || Object.values(p.clusters).flat().some((g) => (g.scope || "").includes(q) || (g.via || "").includes(q)))
     && (!onlyFlags || p.flags.length));
-  const pending = data.requests.filter((r) => r.status === "pending");
-  const recent = data.requests.filter((r) => r.status !== "pending").slice(0, 6);
+  const pending = data.requests.filter((r) => r.status === "pending" || r.status === "held");
+  const recent = data.requests.filter((r) => r.status !== "pending" && r.status !== "held").slice(0, 6);
+  const raise = async (s) => {
+    setBusy(s.id);
+    try {
+      const r = await call("/api/user-access/insights/raise", { method: "POST", body: { id: s.id } });
+      const ok = r.created.filter((x) => x.id), bad = r.created.filter((x) => x.error);
+      showToast(`${ok.map((x) => `${x.id} ${x.status}`).join(", ")}${bad.length ? ` · ${bad.map((x) => x.error).join("; ")}` : ""}`, bad.length ? "err" : "ok");
+      load(); loadIns();
+    } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
+  };
+  const dismissS = async (s) => {
+    const reason = window.prompt(`Dismiss “${s.title}” for ${s.user}? Give the reason (it goes into the evidence; the suggestion comes back in 90 days):`);
+    if (!reason || !reason.trim()) return;
+    try { await call("/api/user-access/insights/dismiss", { method: "POST", body: { id: s.id, reason, title: `${s.user}: ${s.title}` } }); showToast("Dismissed", "ok"); loadIns(); }
+    catch (e) { showToast(e.message, "err"); }
+  };
+  const alertAct = async (a, action) => {
+    if (action === "end-sessions" && !window.confirm(`End every session of ${a.user} on ${label(a.cluster)} now?`)) return;
+    setBusy(a.id + action);
+    try {
+      const r = await call("/api/user-access/insights/alert", { method: "POST", body: { id: a.id, action } });
+      showToast(r.text || (r.number ? `ServiceNow ${r.number}` : r.request ? `${r.request.id} ${r.request.status}` : `Alert ${action}`), "ok");
+      loadIns(); if (r.request) load();
+    } catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
+  };
+  const togglePolicy = async (id, enabled) => {
+    setBusy("pol");
+    try { await call("/api/user-access/insights/policy", { method: "POST", body: { id, enabled } }); await loadIns(); }
+    catch (e) { showToast(e.message, "err"); } finally { setBusy(""); }
+  };
   const inactive = data.people.filter((p) => p.flags.some((x) => /last login/.test(x.text)));
 
   return (
@@ -114,17 +155,19 @@ export default function UserAccess({ clusters = [] }) {
         <div className={"ua-kpi" + (k.directAdmins ? " warn" : "")}><b>{k.clusterAdmins}</b><span>cluster-admins{k.directAdmins ? ` (${k.directAdmins} given directly)` : ""}</span></div>
         <div className={"ua-kpi" + (k.kubeadmin ? " crit" : "")}><b>{k.kubeadmin}</b><span>clusters still have kubeadmin</span></div>
         <div className={"ua-kpi" + (k.inactive ? " warn" : "")}><b>{k.inactive}</b><span>not logged in for 90+ days</span></div>
-        <div className="ua-kpi"><b>{k.pending}</b><span>requests waiting for approval</span></div>
+        <div className={"ua-kpi" + (k.held ? " warn" : "")}><b>{k.pending}</b><span>requests waiting for approval{k.held ? ` · ${k.held} held by guardrails` : ""}</span></div>
       </div>
 
       <div className="ua-tabs" role="tablist">
-        {[["people", "People and requests"], ["gov", `Governance${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0) ? ` (${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0)})` : ""}`], ["reviews", `Access reviews${(data.reviews || []).filter((r) => r.status === "open").length ? ` (${(data.reviews || []).filter((r) => r.status === "open").length} open)` : ""}`]].map(([v, l]) => (
+        {[["people", "People and requests"], ["gov", `Governance${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0) ? ` (${(k.unofficial || 0) + (k.sod || 0) + (k.leavers || 0)})` : ""}`], ["reviews", `Access reviews${(data.reviews || []).filter((r) => r.status === "open").length ? ` (${(data.reviews || []).filter((r) => r.status === "open").length} open)` : ""}`], ["insights", `Access insights${ins ? ` (${ins.kpis.suggestions + ins.kpis.alerts})` : ""}`], ["guard", "Guardrails"]].map(([v, l]) => (
           <button key={v} role="tab" aria-selected={tab === v} className={tab === v ? "on" : ""} onClick={() => setTab(v)}>{l}</button>
         ))}
       </div>
       {tab === "gov" && <Governance data={data} label={label} canApprove={!!data.you?.canApprove} busy={busy} clustersParam={all.join(",")} onRequest={submit} onOpenPerson={(n) => setSel(n)}
         onAccept={async (keys) => { try { await call("/api/user-access/baseline", { method: "POST", body: { keys } }); showToast(`${keys.length} accepted as approved`, "ok"); load(); } catch (e) { showToast(e.message, "err"); } }} />}
-      {tab === "reviews" && <Reviews data={data} label={label} canApprove={!!data.you?.canApprove} clustersParam={all.join(",")} onChanged={load} toast={showToast} />}
+      {tab === "reviews" && <Reviews data={data} label={label} canApprove={!!data.you?.canApprove} clustersParam={all.join(",")} onChanged={load} toast={showToast} hints={ins?.reviewHints} />}
+      {tab === "insights" && <InsightsTab ins={ins} label={label} canApprove={!!data.you?.canApprove} busy={busy} clustersParam={all.join(",")} onRaise={raise} onDismiss={dismissS} onAlert={alertAct} onOpenPerson={(n) => setSel(n)} onRefresh={loadIns} />}
+      {tab === "guard" && <GuardrailsTab ins={ins} canApprove={!!data.you?.canApprove} busy={busy} onToggle={togglePolicy} />}
 
       {tab === "people" && <div className="ua-grid">
         {/* ── add access ── */}
@@ -168,6 +211,7 @@ export default function UserAccess({ clusters = [] }) {
               </select>
               {(f.dur === "date" || f.expires) && <input className="ua-in" type="date" value={f.expires} onChange={(e) => setF({ ...f, expires: e.target.value })} aria-label="Access ends on" />}
             </div>
+            {["admin", "cluster-admin"].includes(f.role) && <input className="ua-in" value={f.changeRef} onChange={(e) => setF({ ...f, changeRef: e.target.value.trim().toUpperCase() })} placeholder="ServiceNow change or incident number (required for admin roles)" maxLength={20} />}
           </div></div>
           <div className="ua-step"><b className="ua-n">4</b><div>
             <p className="ua-sh">How it is applied</p>
@@ -184,7 +228,7 @@ export default function UserAccess({ clusters = [] }) {
                 : "Fill in who, where and the role to see exactly what will change."}
             </div>
             <div className="ua-acts">
-              <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.hours ? null : f.expires || null, hours: f.hours || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
+              <button className="vc-btn primary" disabled={!ready || !!busy} onClick={() => submit({ kind: "grant", ...f, expires: f.hours ? null : f.expires || null, hours: f.hours || null, changeRef: f.changeRef || null })}>{busy === "submit" ? "Submitting…" : "Submit for approval"}</button>
               <label className="ua-small ua-snowck"><input type="checkbox" checked={viaSnow} onChange={(e) => setViaSnow(e.target.checked)} /> Approve in ServiceNow</label>
             </div>
             <p className="ua-hint">{viaSnow
@@ -287,14 +331,26 @@ export default function UserAccess({ clusters = [] }) {
                         r.snApproved ? `Approved in ServiceNow ${r.ticket}: an Admin applies it here to receive the one-time password.`
                           : r.ticket ? `Waiting for approval of ${r.ticket} in ServiceNow${data.you?.canApprove && r.requestedBy !== data.you.name ? ", or approve it here" : ""}.`
                             : r.requestedBy === data.you?.name && !data.you?.selfApprove ? "Waiting for another Admin, or send it to ServiceNow for approval." : "Waiting for an Admin."}</div>}
-                      {r.decidedBy && r.status !== "pending" && <div className="ua-small vc-muted">{r.status === "rejected" ? "Rejected" : "Approved"} by {r.decidedBy}</div>}</td>
-                    <td className="ua-small vc-muted">{r.requestedBy} · {ago(r.requestedAt)}{r.ticket ? ` · ${r.ticket}` : ""}</td>
+                      {r.status === "held" && <div className="ua-small">
+                        {(r.policy?.findings || []).map((x, i) => <div key={i} className={"ua-flag " + (x.level === "block" ? "crit" : x.level === "auto" ? "ok" : "warn")}>{x.text}</div>)}
+                        {(r.policy?.alternatives || []).length > 0 && <div className="ai-alts">Offered instead: {r.policy.alternatives.map((a, i) => <button key={i} className="ua-link" disabled={!!busy} onClick={() => decide(r.id, "replace", { index: i })}>{a.label}</button>)}</div>}
+                        {(r.policy?.findings || []).some((x) => x.needsRef) && <button className="ua-link" disabled={!!busy} onClick={() => { const ref = window.prompt("ServiceNow change or incident number for this request:"); if (ref) decide(r.id, "ref", { ref }); }}>Add ticket number</button>}
+                      </div>}
+                      {r.status === "pending" && (r.policy?.findings || []).filter((x) => x.level === "flag").map((x, i) => <div key={i} className="ua-small ua-flag warn">{x.text}</div>)}
+                      {r.override && <div className="ua-small ua-flag warn">Guardrail overridden by {r.override.by}: {r.override.reason}</div>}
+                      {r.status === "pending" && r.approvalsNeeded > 1 && <div className="ua-small ua-wait">Needs two approvers{r.approvals?.length ? ` · approved by ${r.approvals.map((a) => a.by).join(", ")}` : ""}.</div>}
+                      {r.decidedBy && !["pending", "held"].includes(r.status) && <div className="ua-small vc-muted">{r.status === "rejected" ? "Rejected" : r.status === "replaced" ? `Replaced by ${(r.replacedBy || []).join(", ")}` : "Approved"} by {r.decidedBy}</div>}</td>
+                    <td className="ua-small vc-muted">{r.requestedBy} · {ago(r.requestedAt)}{r.ticket ? ` · ${r.ticket}` : ""}{r.changeRef ? ` · ${r.changeRef}` : ""}{r.risk ? <div><span className={"ai-risk " + (r.risk.level === "High" ? "crit" : r.risk.level === "Medium" ? "warn" : "ok")}>risk {r.risk.score}</span></div> : null}</td>
                     <td className="ua-acts2">
                       {r.status === "pending" && data.you?.canApprove && (data.you.selfApprove || r.requestedBy !== data.you.name) && <>
                         <button className="vc-btn primary sm" disabled={!!busy} onClick={() => decide(r.id, "approve")}>{busy === r.id + "approve" ? "Applying…" : "Approve"}</button>
                         <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "reject")}>Reject</button>
                       </>}
                       {!r.ticket && r.status === "pending" && <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "ticket")}>Send to ServiceNow</button>}
+                      {r.status === "held" && data.you?.canApprove && <>
+                        <button className="vc-btn sm" disabled={!!busy} onClick={() => { const why = window.prompt(`Override the guardrail on ${r.id}? Give the reason (recorded; the request then needs two approvers):`); if (why && why.trim()) decide(r.id, "override", { reason: why }); }}>Override…</button>
+                        <button className="vc-btn ghost sm" disabled={!!busy} onClick={() => decide(r.id, "reject")}>Reject</button>
+                      </>}
                       {r.kind === "grant" && r.mode !== "htpasswd" && <a className="ua-link" href={`/api/user-access/requests/${r.id}/manifest`}>YAML</a>}
                     </td>
                   </tr>

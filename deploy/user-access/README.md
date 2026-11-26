@@ -121,6 +121,117 @@ date. Reviewers mark each grant **Keep** or **Remove**. Closing turns every
 Remove — and, if chosen, every grant nobody confirmed — into removal requests,
 which are approved like any other.
 
+## Access insights
+
+**User & Access → Access insights** compares what people **have** with what
+they **use**, and suggests how to reduce it. Nothing changes until a suggestion
+is raised as a request and approved like any other.
+
+| Suggestion | When | Needs the audit log |
+|---|---|---|
+| **Disable** | No activity on any cluster for 90 days (`ACCESS_INACTIVE_DAYS`) | No: logins are watched every 30 minutes; the audit log makes it exact |
+| **Remove a role** | Granted, but no action in its scope in the window | Yes |
+| **Downgrade** | cluster-admin with only reads → cluster-reader; admin without role changes → edit; edit with only reads → view | Yes |
+| **Narrow the scope** | cluster-admin whose changes are all in 1–3 namespaces → admin or edit there | Yes |
+| **Make temporary** | cluster-admin used cluster-wide on 5 days or fewer (`ACCESS_TEMPORARY_DAYS`) | Yes |
+| **Reduce a service account** | Privileged service account unused, or acting only in its own namespace | Yes |
+| **Review (peers)** | A role that 20% or fewer of the person's team hold | No |
+| **Moved team / new joiner** | From the HR feed | No |
+
+Each suggestion shows its evidence, the risk it removes, and the standards it
+supports. **Dismiss** needs a reason, is kept in the evidence, and the
+suggestion comes back after 90 days. Access granted less than a window ago and
+temporary access are left alone. Emergency accounts (`ACCESS_BREAKGLASS_USERS`,
+default `breakglass`) are never trimmed, only scored and watched. A change to
+an AD-synced group is shown as "remove in AD".
+
+**Risk per identity (0–100):** highest role (production counts more), admin on
+3+ clusters, given directly, given by hand, permanent, local login, inactive,
+unused admin rights, overdue password, open alerts, built-in account.
+
+**Session alerts:** kubeadmin and break-glass logins (always); with the audit
+log, also bulk secret reads, shells in production pods, role bindings made by
+hand, and 10+ failed logins; from login watching, a login at an hour never seen
+before and a first login on a cluster with admin rights. Actions: end sessions
+now (Admin), request kubeadmin removal or a disable, ask the person, open a
+ServiceNow incident, or mark it expected / not recognised (which raises the
+disable or removal).
+
+**Review hints:** access reviews show a suggested Keep or Remove per grant, with
+the reason.
+
+**Evidence:** *Export evidence* gives a text report for auditors: KPIs,
+guardrails and how often they acted, open suggestions with control references,
+dismissals with reasons, alerts and what was done, and the riskiest identities.
+
+### Connecting the audit log
+
+Forward the OpenShift API audit log (ClusterLogForwarder, `audit` input) to a
+log store, then set on the hub:
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `ACCESS_AUDIT_SOURCE` | `loki`, `elasticsearch`, `splunk` | Where the audit log is |
+| `ACCESS_AUDIT_URL` | `https://logging-loki-gateway-http.openshift-logging.svc:8080/api/logs/v1/audit` | For LokiStack, the gateway's audit tenant |
+| `ACCESS_AUDIT_TOKEN` / `_TOKEN_FILE` | — | Bearer token (Loki defaults to the pod's service-account token) |
+| `ACCESS_AUDIT_CLUSTER_FIELD` | `openshift.cluster_id` | Field that says which cluster an event came from |
+| `ACCESS_AUDIT_CLUSTER_MAP` | `{"5f1c…":"ocp-prod-01"}` | That field's values → cluster names in the hub |
+| `ACCESS_AUDIT_DEFAULT_CLUSTER` | `local` | Cluster for events without the field |
+| `ACCESS_AUDIT_DAYS` | `90` | Window (7–180); Loki queries are split into 30-day parts |
+| `ACCESS_AUDIT_ES_INDEX`, `_ES_PREFIX`, `_ES_KEYWORD`, `ACCESS_AUDIT_BASIC` | `audit-*` | Elasticsearch / OpenSearch |
+| `ACCESS_AUDIT_SPLUNK_INDEX` | `openshift_audit` | Splunk |
+
+For LokiStack, the hub's service account needs read access to the `audit`
+tenant (`oc adm policy add-cluster-role-to-user cluster-logging-audit-view -z agentic-ai-server -n openshift-mcp`).
+The Loki reader is tested against LokiStack's API; the Elasticsearch and
+Splunk readers use the field names above and may need the prefix or keyword
+suffix of your index.
+
+Other settings: `ACCESS_ALERT_HOURS` (24), `ACCESS_ALERT_SECRETS` (20),
+`ACCESS_ALERT_FAILED_LOGINS` (10), `ACCESS_AUDIT_CACHE_MS` (15 min),
+`ACCESS_WATCH_MS` (30 min), `ACCESS_INSIGHTS_CLUSTERS` (clusters to watch
+before anyone opens the tab).
+
+## Guardrails
+
+Checked on every request when it is made, before anyone approves it. Each can
+be turned off by an Admin (Guardrails tab).
+
+| Guardrail | Effect |
+|---|---|
+| No standing cluster-admin on production | Held. Offered: 4 hours; or edit for 8 hours in the namespaces the person changed recently |
+| No local users on production | Held. Offered: the same with the company login |
+| Ticket for privileged roles | Held until a ServiceNow number is added (admin, cluster-admin) |
+| Peer check | Flagged when 20% or fewer of the person's team hold it |
+| Two approvers for High risk | Request risk 67+ needs two different Admins (a ServiceNow approval counts as both) |
+| Low risk approves itself | view/edit, non-production, temporary 8 h or less, company login: approved by policy |
+| No self-approval | The approver must not be the requester (default on unless `USER_ACCESS_ALLOW_SELF_APPROVE=true`) |
+| Leavers from HR | Disable on every cluster the day the HR feed marks a leaver |
+
+A held request can take an offered alternative, get its ticket number, or be
+**overridden** by an Admin with a reason; an override then needs two approvers.
+All of it is in the audit trail.
+
+**Request risk (0–100):** role, production, permanent, number of clusters,
+local login, unusual for the team, and the person's own risk.
+
+## HR feed
+
+Set `ACCESS_HR_FEED_URL` (and `ACCESS_HR_FEED_TOKEN`) to a JSON array or CSV
+with `user, status, team, previous team, date` — an export from ServiceNow HR,
+Workday or a directory report. Read every 6 hours (`ACCESS_HR_TICK_MS`):
+leavers are disabled (reversibly) on every cluster they are on; movers get a
+suggestion to remove their old team's access; joiners get the team's starter
+access when `ACCESS_PACKAGES` defines it, e.g.
+`{"app-dev":[{"role":"view","namespace":"payments","clusters":["ocp-dev-01"]}]}`.
+
+## AI Chat
+
+The agent can answer "who can delete pods in payments?" (`access_who_can`, an
+OpenShift ResourceAccessReview), "why does rahul have cluster-admin?"
+(`access_explain`) and "what access can we remove?" (`access_suggestions`).
+They read only; changes stay requests.
+
 ## Notifications
 
 Requests, approvals, expiries and reviews go to the notification channels set
