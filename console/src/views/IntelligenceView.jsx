@@ -7,6 +7,7 @@ import { showToast } from "../store/toastStore";
 import { clusterUrl } from "../api/client";
 import { formatTimestamp } from "../utils/format";
 import { SopRunner } from "../components/SopRunner";
+import { OpsHeader, OpsSide, OPS_SUBS } from "../components/intel/AIOps";
 
 const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
 // How long a closed incident keeps its card — and therefore its CLI transcript
@@ -227,22 +228,40 @@ export function IntelligenceView() {
   // "focused" groups the nav and splits Auto-Detect into Live/History/Policy.
   // "classic" is the original flat 8-tab layout, kept as an instant escape
   // hatch: it is a localStorage flag, so switching back needs no redeploy.
+  // "ops" (AI Operations) is the default: one path from signal to resolution,
+  // four destinations, existing sections underneath. A new storage key so
+  // everyone starts on it; the earlier layouts stay one click away.
   const [layout, setLayout] = useState(() => {
-    try { return localStorage.getItem("intelLayout") || "focused"; } catch { return "focused"; }
+    try { return localStorage.getItem("intelLayoutV3") || "ops"; } catch { return "ops"; }
   });
-  const focused = layout === "focused";
-  const switchLayout = useCallback((next) => {
-    setLayout(next);
-    try { localStorage.setItem("intelLayout", next); } catch { /* private mode */ }
-  }, []);
+  const ops = layout === "ops";
+  const focused = layout === "focused" || ops;
   // Sub-view within Autonomous (focused layout only).
-  const [autoSub, setAutoSub] = useState("live");
+  const [autoSub, setAutoSub] = useState(() => (ops ? "needs" : "live"));
   const [moreOpen, setMoreOpen] = useState(false);
   // Section visibility: classic shows everything stacked (original behaviour);
-  // focused assigns each section to one sub-view.
-  const showSub = useCallback((sub) => !focused || autoSub === sub, [focused, autoSub]);
+  // focused assigns each section to one sub-view; AI Operations splits Live
+  // into "Needs you" (approvals, escalations) and "Active" (detections).
+  const showSub = useCallback((sub, opsAlias) => !focused || autoSub === sub || (!!opsAlias && autoSub === opsAlias), [focused, autoSub]);
 
-  const [activeTab, setActiveTab] = useState("insights");
+  const [activeTab, setActiveTab] = useState(() => (ops ? "autodetect" : "insights"));
+  const [opsTab, setOpsTab] = useState("needs");
+  const [opsSub, setOpsSub] = useState(null);
+  const goOps = useCallback((tab, sub) => {
+    const subs = OPS_SUBS[tab] || [];
+    const s = subs.find((x) => x.key === sub) || subs[0];
+    setOpsTab(tab); setOpsSub(s?.key || null);
+    if (tab === "needs" || !s) { setActiveTab("autodetect"); setAutoSub("needs"); return; }
+    setActiveTab(s.tab);
+    if (s.sub) setAutoSub(s.sub);
+    if (s.sub === "policy") openIncSettings();
+  }, [openIncSettings]);
+  const switchLayout = useCallback((next) => {
+    setLayout(next);
+    try { localStorage.setItem("intelLayoutV3", next); } catch { /* private mode */ }
+    if (next === "ops") goOps("needs");
+    else { setActiveTab("insights"); setAutoSub("live"); }
+  }, [goOps]);
   const [sevFilter, setSevFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [clusterFilterVal, setClusterFilterVal] = useState("all");
@@ -525,6 +544,51 @@ export function IntelligenceView() {
 
   const totalActive = allItems.length;
 
+  // ── AI Operations: the path, the counts and the manager's column ──
+  const needsCount = awaiting.length + escalations.length;
+  const workingCount = liveSessions.filter((x) => x.state !== "awaiting_approval").length;
+  const closedSessions = sessions.filter((x) => x.state === "closed");
+  const detectedCount = detected.length;
+  const selfHealedN = sessData?.selfHealed || 0;
+  const fixedN = closedSessions.filter((x) => !x.selfHealed).length;
+  const opsFlow = [
+    { key: "signals", label: "Signals now", value: allItems.length, sub: `${sevCounts.critical} critical · ${sevCounts.warning} warning`, go: () => goOps("incidents", "signals") },
+    { key: "detected", label: "Incidents detected", value: detectedCount, sub: dStats.correlationSavings ? `correlated · ${dStats.correlationSavings} duplicate tickets avoided` : "correlated from the signals", go: () => goOps("incidents", "active") },
+    { key: "working", label: "Agent working", value: workingCount, sub: "diagnosis, fix or verification", go: () => goOps("needs") },
+    { key: "needs", label: "Needs you", value: needsCount, tone: needsCount ? "need" : "", sub: awaiting.length ? `${awaiting.length} fix${awaiting.length > 1 ? "es" : ""} ready to approve${escalations.length ? ` · ${escalations.length} escalated` : ""}` : escalations.length ? `${escalations.length} repeat fault${escalations.length > 1 ? "s" : ""} escalated` : "nothing waiting", go: () => goOps("needs") },
+    { key: "resolved", label: "Resolved by the agent", value: selfHealedN + fixedN, tone: "ok", sub: `${selfHealedN} healed on their own · ${fixedN} fixed after approval${iStats.avgMTTR != null ? ` · MTTR ${Math.round(iStats.avgMTTR)} min` : ""}`, go: () => goOps("incidents", "history") },
+  ];
+  const opsCounts = {
+    needs: needsCount, incidents: detected.length, prevent: predictions.length,
+    "sub:active": detected.length, "sub:register": iStats.open ?? incidents.length, "sub:signals": allItems.length, "sub:changes": tlEvents.length,
+    "sub:cross": corrData?.correlationCount || 0, "sub:history": changeData?.changes?.length ?? 0, "sub:rules": rules.length, "sub:kb": kbEntries.length,
+  };
+  const opsSide = ops && opsTab === "needs" ? (
+    <OpsSide
+      funnel={[{ label: "Signals", value: allItems.length }, { label: "Incidents", value: detectedCount }, { label: "Needed a person", value: needsCount }]}
+      levels={[
+        { label: "Mean time to resolve", value: iStats.avgMTTR != null ? `${Math.round(iStats.avgMTTR)} min` : "—" },
+        { label: "Incidents this week", value: iStats.incidentsThisWeek ?? "—" },
+        { label: "Healed without a person", value: selfHealedN },
+        { label: "Fixed after approval", value: fixedN },
+        { label: "Duplicate tickets avoided", value: dStats.correlationSavings ?? 0 },
+        { label: "Repeat faults escalated", value: dStats.escalated ?? 0 },
+      ]}
+      predictions={[...predictions].sort((a, b) => (b.score ?? b.riskScore ?? 0) - (a.score ?? a.riskScore ?? 0)).map((p) => ({
+        title: p.target || p.resource || p.title || "Prediction",
+        sub: [p.reason || p.message || p.prediction, p.hoursRemaining != null ? `in about ${p.hoursRemaining} h` : null].filter(Boolean).join(" · "),
+        tone: sevBucket(p.severity || p.risk) === "info" ? "i" : "w",
+      }))}
+      autonomy={[
+        { label: "Raise ServiceNow incidents", level: sessData?.autoActEnabled ? "auto" : "off" },
+        { label: "Close incidents that resolved themselves", level: sessData?.autoActEnabled ? "auto" : "off" },
+        { label: "Close duplicate tickets", level: incSettings?.autoCloseDuplicates ? "auto" : "off" },
+        { label: "Apply a fix to the cluster", level: "approve" },
+      ]}
+      onPrevent={() => goOps("prevent")} onAutomation={() => goOps("automation", "policy")}
+    />
+  ) : null;
+
   if (intelLoading) {
     return (
       <div className="intel">
@@ -549,7 +613,15 @@ export function IntelligenceView() {
   }
 
   return (
-    <div className="intel">
+    <div className={"intel" + (ops ? " aio" : "")}>
+      {ops && (
+        <OpsHeader cluster={cluster} flow={opsFlow} counts={opsCounts} monitoring={monitoring} autoAct={!!sessData?.autoActEnabled}
+          opsTab={opsTab} opsSub={opsSub} onTab={(t) => goOps(t)} onSub={(sb) => goOps(opsTab, sb)}
+          onSettings={() => goOps("automation", "policy")}
+          onRefresh={() => { handleRefresh(); refetchDetect(); refetchSessions(); }}
+          onLayout={() => switchLayout("focused")} />
+      )}
+      {!ops && <>
 
       {/* ═══ HERO ═══ */}
       <div className="intel-hero">
@@ -685,7 +757,17 @@ export function IntelligenceView() {
           onClick={() => switchLayout(focused ? "classic" : "focused")}>
           {focused ? "↩ Classic layout" : "✦ New layout"}
         </button>
+        <button className="intel-tab" style={{ opacity: .9, fontSize: 11 }} title="One path from signal to resolution" onClick={() => switchLayout("ops")}>
+          ✦ AI Operations layout
+        </button>
       </div>
+      </>}
+
+      <div className={opsSide ? "aio-body" : undefined}>
+      <div className={opsSide ? "aio-main" : undefined}>
+      {ops && opsSub === "register" && (iStats.open ?? 0) > incidents.length && (
+        <div className="aio-note">Showing the newest {incidents.length} of {Number(iStats.open).toLocaleString()} open incident records. Records the agent raised close themselves when the fault clears; older duplicates can be linked and closed under Automation → Policy (Link &amp; clean up).</div>
+      )}
 
       {/* ═══ 1. INSIGHTS & ALERTS ═══ */}
       {activeTab === "insights" && (
@@ -829,7 +911,7 @@ export function IntelligenceView() {
       {/* ═══ 1b. AUTONOMOUS DETECTION (SHADOW MODE) ═══ */}
       {activeTab === "autodetect" && (
         <div className="intel-section">
-          <div className="intel-section-head">
+          {!ops && <div className="intel-section-head">
             <div className="intel-section-title">
               <div className="intel-section-icon" style={{ background: "linear-gradient(135deg, #0ea5e9, #6366f1)" }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -843,11 +925,11 @@ export function IntelligenceView() {
               <button className="intel-hero-btn" onClick={openIncSettings}>⚙ Automation Settings</button>
               <button className="intel-hero-btn" onClick={() => refetchDetect()}>Re-scan</button>
             </div>
-          </div>
+          </div>}
 
           {/* Three purposeful sub-views instead of one long scroll:
               Live = what needs me now · History = what we changed · Policy = how it behaves. */}
-          {focused && (
+          {focused && !ops && (
             <div className="intel-tabs" style={{ marginBottom: 14 }}>
               {[
                 { k: "live", label: "Live", count: escalations.length + awaiting.length + visibleDetections.length },
@@ -1015,8 +1097,8 @@ export function IntelligenceView() {
             </div>
           )}
 
-          {/* Shadow-mode banner — the whole point of Phase 1 */}
-          <div style={{
+          {/* Shadow-mode banner — the whole point of Phase 1 (AI Operations shows the mode in its header) */}
+          {(!ops || autoSub === "policy") && <div style={{
             display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
             padding: "10px 14px", borderRadius: 10, marginBottom: 14,
             background: "rgba(14,165,233,.12)", border: "1px solid rgba(14,165,233,.4)", fontSize: 12.5,
@@ -1037,7 +1119,7 @@ export function IntelligenceView() {
                 <span style={{ marginLeft: 10, color: "#4ade80" }}>· {sessData.selfHealed} self-healed</span>
               )}
             </span>
-          </div>
+          </div>}
 
           {detectData?.disabled && (
             <div className="intel-empty">Auto-detection is disabled. Set <code>INCIDENT_AUTO_DETECT=true</code> to enable.</div>
@@ -1100,8 +1182,15 @@ export function IntelligenceView() {
             </div>
           )}
 
+          {ops && autoSub === "needs" && !escalations.length && !inboxSessions.length && (
+            <div className="aio-calm">
+              <b>Nothing needs you right now.</b>
+              <span>{workingCount ? `The agent is working on ${workingCount} incident${workingCount > 1 ? "s" : ""}; ` : ""}fixes that are ready to apply, and faults that keep coming back, appear here first.</span>
+            </div>
+          )}
+
           {/* ── ESCALATIONS — repeat offenders demand attention now ── */}
-          {showSub("live") && escalations.length > 0 && (
+          {showSub("live", "needs") && escalations.length > 0 && (
             <div style={{
               border: "1px solid rgba(220,38,38,.5)", borderRadius: 12, padding: 14, marginBottom: 16,
               background: "rgba(220,38,38,.08)",
@@ -1141,7 +1230,7 @@ export function IntelligenceView() {
           )}
 
           {/* ── APPROVAL INBOX — the single human gate ── */}
-          {showSub("live") && inboxSessions.length > 0 && (
+          {showSub("live", "needs") && inboxSessions.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div className="intel-section-title" style={{ marginBottom: 10 }}>
                 <div>
@@ -1427,7 +1516,7 @@ export function IntelligenceView() {
           )}
 
           {/* Detection KPIs — the numbers that justify threshold tuning */}
-          {showSub("live") && <>
+          {showSub("live", "active") && <>
           <div className="intel-inc-stats">
             <div className="intel-inc-stat" style={{ "--is-c": "#0ea5e9" }}><span>{dStats.detections ?? 0}</span><label>Detections</label></div>
             <div className="intel-inc-stat" style={{ "--is-c": "#8b5cf6" }}><span>{dStats.symptoms ?? 0}</span><label>Raw Symptoms</label></div>
@@ -2271,6 +2360,9 @@ export function IntelligenceView() {
           bottom of all eight tabs. It is a deliberate authoring tool, not triage
           furniture, so it now lives only in Team Playbook (reachable via More). */}
       {activeTab === "playbook" && <SopRunner />}
+      </div>
+      {opsSide}
+      </div>
     </div>
   );
 }
