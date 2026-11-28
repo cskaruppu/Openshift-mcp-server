@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { clusterUrl } from "../../api/client";
+
 // AI Intelligence → "AI Operations" layout: one path from signal to resolution
 // (detect → diagnose → decide → fix → verify), four destinations instead of
 // ten tabs, and the manager's view (noise, service levels, prevention,
@@ -106,5 +109,75 @@ export function OpsSide({ funnel, levels, predictions, autonomy, onPrevent, onAu
         <div className="aio-aut">{autonomy.map((a) => <div key={a.label}><span>{a.label}</span><span className={"aio-lv " + a.level}>{{ auto: "Automatic", approve: "Approval", off: "Off", never: "Never" }[a.level]}</span></div>)}</div>
       </div>
     </aside>
+  );
+}
+
+// Incident register clean-up: preview what would be closed (duplicates of a
+// newer open record, and records with no activity for N days), then close.
+
+export function RegisterCleanup({ cluster, open, shown, canAdmin, onDone }) {
+  const [openPanel, setOpenPanel] = useState(false);
+  const [days, setDays] = useState(7);
+  const [dup, setDup] = useState(true);
+  const [all, setAll] = useState(false);
+  const [pv, setPv] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [done, setDone] = useState(null);
+  const q = (d = days, du = dup, a = all) => `/api/incidents/cleanup?olderThanDays=${d}&duplicates=${du}${a ? "&cluster=all" : ""}`;
+  const preview = async (d = days, du = dup, a = all) => {
+    setBusy(true); setErr(null); setDone(null);
+    try {
+      const r = await fetch(a ? q(d, du, a) : clusterUrl(q(d, du, a), cluster), { credentials: "same-origin", headers: { Accept: "application/json" } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `Preview failed (${r.status})`);
+      setPv(j);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const run = async () => {
+    if (!pv?.toClose) return;
+    if (!window.confirm(`Close ${pv.toClose.toLocaleString()} incident records${all ? " on every cluster" : ""}?\n\n${pv.duplicates} duplicates of a newer open record and ${pv.stale} with no activity for ${days}+ days. ${pv.keep.toLocaleString()} stay open.\n\nThe records are kept as closed, with a note; ServiceNow is not changed.`)) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch(all ? q() : clusterUrl(q(), cluster), { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ olderThanDays: days, duplicates: dup, ...(all ? { cluster: "all" } : {}) }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `Clean-up failed (${r.status})`);
+      setDone(j); setPv(null); onDone?.();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="aio-note aio-clean">
+      <div className="aio-clean-h">
+        <span>Showing the newest {shown} of <b>{Number(open || 0).toLocaleString()}</b> open incident records. Most old ones are duplicates or have had no activity for a long time.</span>
+        <button className="aio-btn" onClick={() => { setOpenPanel((v) => !v); if (!pv) preview(); }}>{openPanel ? "Hide clean-up" : "Clean up the register…"}</button>
+      </div>
+      {openPanel && (
+        <div className="aio-clean-b">
+          <div className="aio-clean-opts">
+            <label>Close records with no activity for
+              <select value={days} onChange={(e) => { const d = Number(e.target.value); setDays(d); preview(d); }}>{[3, 7, 14, 30, 90].map((d) => <option key={d} value={d}>{d} days</option>)}</select>
+            </label>
+            <label><input type="checkbox" checked={dup} onChange={(e) => { setDup(e.target.checked); preview(days, e.target.checked); }} /> and duplicates of a newer open record (the newest stays open)</label>
+            <label><input type="checkbox" checked={all} onChange={(e) => { setAll(e.target.checked); preview(days, dup, e.target.checked); }} /> every cluster</label>
+          </div>
+          {err && <div className="aio-err">{err}</div>}
+          {busy && !pv && <div className="aio-muted">Reading the register…</div>}
+          {pv && (<>
+            <p className="aio-clean-sum"><b>{pv.toClose.toLocaleString()}</b> of {pv.open.toLocaleString()} open records would be closed: {pv.duplicates.toLocaleString()} duplicates, {pv.stale.toLocaleString()} with no activity for {days}+ days. <b>{pv.keep.toLocaleString()}</b> stay open.</p>
+            {pv.groups.length > 0 && (
+              <table className="aio-clean-t">
+                <thead><tr><th>Raised by</th><th>Title</th><th>Records</th><th>Duplicates</th><th>Inactive</th><th>From – to</th></tr></thead>
+                <tbody>{pv.groups.slice(0, 8).map((g, i) => <tr key={i}><td>{g.source}</td><td>{g.title}</td><td><b>{g.count}</b></td><td>{g.duplicates}</td><td>{g.stale}</td><td>{String(g.oldest).slice(0, 10)} – {String(g.newest).slice(0, 10)}</td></tr>)}</tbody>
+              </table>
+            )}
+            <div className="aio-clean-a">
+              <button className="aio-btn primary" disabled={!canAdmin || busy || !pv.toClose} title={canAdmin ? "" : "Needs the Admin role"} onClick={run}>{busy ? "Closing…" : `Close ${pv.toClose.toLocaleString()} records`}</button>
+              <span className="aio-muted">Records are kept as closed with a note and a timeline entry, and recorded in the audit trail. ServiceNow tickets are not changed. Closed records older than 90 days are removed by the normal retention.</span>
+            </div>
+          </>)}
+          {done && <p className="aio-ok">Closed {done.closed.toLocaleString()} records ({done.duplicates} duplicates, {done.stale} inactive). {done.keptOpen.toLocaleString()} remain open.</p>}
+        </div>
+      )}
+    </div>
   );
 }

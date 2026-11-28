@@ -7,7 +7,7 @@ import { showToast } from "../store/toastStore";
 import { clusterUrl } from "../api/client";
 import { formatTimestamp } from "../utils/format";
 import { SopRunner } from "../components/SopRunner";
-import { OpsHeader, OpsSide, OPS_SUBS } from "../components/intel/AIOps";
+import { OpsHeader, OpsSide, OPS_SUBS, RegisterCleanup } from "../components/intel/AIOps";
 
 const SEV = { critical: "#ef4444", warning: "#f59e0b", info: "#3b82f6" };
 // How long a closed incident keeps its card — and therefore its CLI transcript
@@ -50,7 +50,7 @@ export function IntelligenceView() {
     useClusterQuery("/api/alerts", { refetchInterval: 20_000 });
   const { data: incData, refetch: refetchInc } =
     useClusterQuery("/api/incidents?limit=50", { refetchInterval: 30_000 });
-  const { data: incStats } =
+  const { data: incStats, refetch: refetchIncStats } =
     useClusterQuery("/api/incidents/stats?days=30", { refetchInterval: 60_000 });
   const { data: rulesData, refetch: refetchRules } =
     useClusterQuery("/api/intelligence/rules", { refetchInterval: 60_000 });
@@ -765,8 +765,9 @@ export function IntelligenceView() {
 
       <div className={opsSide ? "aio-body" : undefined}>
       <div className={opsSide ? "aio-main" : undefined}>
-      {ops && opsSub === "register" && (iStats.open ?? 0) > incidents.length && (
-        <div className="aio-note">Showing the newest {incidents.length} of {Number(iStats.open).toLocaleString()} open incident records. Records the agent raised close themselves when the fault clears; older duplicates can be linked and closed under Automation → Policy (Link &amp; clean up).</div>
+      {ops && opsSub === "register" && (
+        <RegisterCleanup cluster={cluster} open={iStats.open ?? incidents.length} shown={incidents.length} canAdmin
+          onDone={() => { refetchInc(); refetchIncStats(); }} />
       )}
 
       {/* ═══ 1. INSIGHTS & ALERTS ═══ */}

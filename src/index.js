@@ -10799,6 +10799,27 @@ spec:
       } catch (err) { sendJson(res, 500, { error: err.message }); }
       return;
     }
+    // Register clean-up: close open incident records that are duplicates of a
+    // newer one, or have had no activity for N days. GET previews; POST closes
+    // (Admin). Records are kept as closed, with a note; ServiceNow is not touched.
+    if (url.pathname === "/api/incidents/cleanup") {
+      try {
+        const IM = await import("./services/incident-manager.js");
+        const days = Math.max(1, Math.min(365, parseInt(url.searchParams.get("olderThanDays") || "7", 10) || 7));
+        const dup = url.searchParams.get("duplicates") !== "false";
+        const cl = url.searchParams.get("cluster") || null;
+        if (req.method === "GET") return sendJson(res, 200, await IM.previewCleanup({ olderThanDays: days, duplicates: dup, cluster: cl }));
+        if (req.method !== "POST") return sendJson(res, 405, { error: "Method not allowed" });
+        if (!checkPermission(req, "manage")) return sendJson(res, 403, { error: "Cleaning up the incident register needs the Admin role" });
+        if (enforceRateLimit(req, res, { burst: 2, refillPerSec: 0.02 })) return;
+        const body = await readJsonBody(req).catch(() => ({}));
+        const bd = Math.max(1, Math.min(365, parseInt(body.olderThanDays || days, 10) || 7));
+        const actor = req.user?.name || (getAuthMode() === "none" ? "admin" : "anonymous");
+        const out = await IM.runCleanup({ olderThanDays: bd, duplicates: body.duplicates !== false, cluster: body.cluster || cl, actor });
+        logAuditTrailEvent({ type: "action_taken", severity: "info", title: `Incident register cleaned up: ${out.closed} records closed (${out.duplicates} duplicates, ${out.stale} with no activity for ${bd}+ days)`, details: { ...out, olderThanDays: bd }, username: actor, source: "incident-manager" }).catch(() => {});
+        return sendJson(res, 200, out);
+      } catch (err) { return sendJson(res, 500, { error: err.message }); }
+    }
     if (req.method === "GET" && url.pathname === "/api/incidents/stats") {
       try {
         const days = parseInt(url.searchParams.get("days") || "30", 10);

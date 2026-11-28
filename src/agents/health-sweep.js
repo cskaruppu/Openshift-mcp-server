@@ -51,7 +51,15 @@ async function raise(agentId, code, title, description, severity) {
   const key = `${agentId}|${code}`;
   if (_open.has(key)) return _open.get(key);        // already raised, not again
   try {
-    const { declareIncident } = await import("../services/incident-manager.js");
+    const { declareIncident, findOpenIncident } = await import("../services/incident-manager.js");
+    // The memory above is lost on restart: look in the register too, so a
+    // persistent fault keeps one open incident across restarts.
+    const existing = await findOpenIncident({ title, declaredBy: "agent-health-sweep" }).catch(() => null);
+    if (existing) {
+      const rec = { incidentId: existing.incident_id, raisedAt: existing.created_at };
+      _open.set(key, rec);
+      return rec;
+    }
     const inc = await declareIncident({
       title, description, severity,
       affectedServices: [agentId],

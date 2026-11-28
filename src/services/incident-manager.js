@@ -554,3 +554,122 @@ export async function purgeOldIncidents(retentionDays = DEFAULT_RETENTION_DAYS) 
   }
   return deleted;
 }
+
+/* ─────────────────────────── register clean-up ─────────────────────────── */
+
+const OPEN_STATUSES = ["declared", "triaging", "investigating", "mitigating"];
+const sourceOf = (row) => {
+  let tl = row.timeline;
+  if (typeof tl === "string") { try { tl = JSON.parse(tl); } catch { tl = []; } }
+  return (Array.isArray(tl) && tl[0]?.actor) || "unknown";
+};
+
+async function openRows(cluster) {
+  if (await dbEnabled()) {
+    await ensureSchema();
+    const cf = cluster && cluster !== "all";
+    const res = await dbQuery(
+      `SELECT incident_id, title, severity, status, cluster, created_at, updated_at, timeline->0 AS first
+         FROM incidents WHERE status = ANY($1)${cf ? " AND cluster = $2" : ""}`,
+      cf ? [OPEN_STATUSES, cluster] : [OPEN_STATUSES]
+    );
+    return (res?.rows || []).map((r) => ({ ...r, timeline: r.first ? [typeof r.first === "string" ? JSON.parse(r.first) : r.first] : [] }));
+  }
+  return _ring.filter((e) => OPEN_STATUSES.includes(e.status) && (!cluster || cluster === "all" || (e.cluster || "local") === cluster));
+}
+
+/**
+ * What a clean-up would close. Pure on the rows: an open record is
+ *   - "stale" when nothing happened to it for olderThanDays, or
+ *   - a "duplicate" when a newer open record has the same title, cluster and
+ *     source (the newest one is kept).
+ */
+export function planCleanup(rows, { olderThanDays = 7, duplicates = true, now = Date.now() } = {}) {
+  const cutoff = now - olderThanDays * 86400000;
+  const newest = new Map();
+  for (const r of rows) {
+    const k = `${r.cluster || "local"}|${sourceOf(r)}|${r.title}`;
+    const t = Date.parse(r.created_at);
+    if (!newest.has(k) || t > newest.get(k).t) newest.set(k, { id: r.incident_id, t });
+  }
+  const close = [];
+  for (const r of rows) {
+    const k = `${r.cluster || "local"}|${sourceOf(r)}|${r.title}`;
+    const keep = newest.get(k)?.id === r.incident_id;
+    if (duplicates && !keep) close.push({ id: r.incident_id, why: "duplicate", of: newest.get(k).id, row: r });
+    else if (Date.parse(r.updated_at || r.created_at) < cutoff) close.push({ id: r.incident_id, why: "stale", row: r });
+  }
+  const groups = new Map();
+  for (const c of close) {
+    const k = `${sourceOf(c.row)}|${c.row.title}`;
+    const g = groups.get(k) || { source: sourceOf(c.row), title: c.row.title, count: 0, duplicates: 0, stale: 0, oldest: c.row.created_at, newest: c.row.created_at, clusters: new Set() };
+    g.count++; g[c.why === "duplicate" ? "duplicates" : "stale"]++;
+    if (c.row.created_at < g.oldest) g.oldest = c.row.created_at;
+    if (c.row.created_at > g.newest) g.newest = c.row.created_at;
+    g.clusters.add(c.row.cluster || "local");
+    groups.set(k, g);
+  }
+  return {
+    open: rows.length, toClose: close.length, keep: rows.length - close.length,
+    duplicates: close.filter((c) => c.why === "duplicate").length, stale: close.filter((c) => c.why === "stale").length,
+    groups: [...groups.values()].map((g) => ({ ...g, clusters: [...g.clusters] })).sort((a, b) => b.count - a.count).slice(0, 50),
+    close,
+  };
+}
+
+/** Preview: what would be closed, grouped by source and title. Nothing changes. */
+export async function previewCleanup({ olderThanDays = 7, duplicates = true, cluster = null } = {}) {
+  const p = planCleanup(await openRows(cluster), { olderThanDays, duplicates });
+  delete p.close;
+  return { ...p, olderThanDays, duplicatesIncluded: duplicates };
+}
+
+/**
+ * Close what the plan says, in batches. Records are kept (status "closed",
+ * with a note and a timeline entry), so the history stays; the normal
+ * retention later removes closed records older than 90 days.
+ */
+export async function runCleanup({ olderThanDays = 7, duplicates = true, cluster = null, actor = "system" } = {}) {
+  const plan = planCleanup(await openRows(cluster), { olderThanDays, duplicates });
+  const now = new Date().toISOString();
+  let closed = 0;
+  const noteOf = (c) => (c.why === "duplicate" ? `Closed by register clean-up: duplicate of ${c.of}` : `Closed by register clean-up: no activity for ${olderThanDays}+ days`);
+  if (await dbEnabled()) {
+    for (const why of ["duplicate", "stale"]) {
+      const items = plan.close.filter((c) => c.why === why);
+      for (let i = 0; i < items.length; i += 500) {
+        const batch = items.slice(i, i + 500);
+        const ids = batch.map((c) => c.id);
+        const note = why === "duplicate" ? "Closed by register clean-up: duplicate of a newer open incident" : `Closed by register clean-up: no activity for ${olderThanDays}+ days`;
+        const event = { ts: now, actor, action: "closed", note };
+        const res = await dbQuery(
+          `UPDATE incidents
+              SET status = 'closed', updated_at = $1, resolved_at = COALESCE(resolved_at, $1),
+                  resolution_note = COALESCE(resolution_note, $2), timeline = timeline || $3::jsonb
+            WHERE incident_id = ANY($4) AND status = ANY($5)`,
+          [now, note, JSON.stringify([event]), ids, OPEN_STATUSES]
+        );
+        closed += res?.rowCount ?? 0;
+      }
+    }
+  } else {
+    for (const c of plan.close) {
+      const e = _ring.find((x) => x.incident_id === c.id);
+      if (!e || !OPEN_STATUSES.includes(e.status)) continue;
+      Object.assign(e, { status: "closed", updated_at: now, resolved_at: e.resolved_at || now, resolution_note: e.resolution_note || noteOf(c) });
+      e.timeline = [...(e.timeline || []), { ts: now, actor, action: "closed", note: noteOf(c) }];
+      closed++;
+    }
+  }
+  return { closed, duplicates: plan.duplicates, stale: plan.stale, keptOpen: plan.keep, groups: plan.groups.slice(0, 10) };
+}
+
+/** An open incident with this title from this source, if any (so a restart does not raise it again). */
+export async function findOpenIncident({ title, declaredBy, cluster = "local" }) {
+  const rows = (await openRows(cluster)).filter((r) => r.title === title && (!declaredBy || sourceOf(r) === declaredBy));
+  rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  return rows[0] || null;
+}
+
+/** For tests: seed the in-memory register. */
+export function _seedIncidentsForTest(rows) { _ring.length = 0; _ring.push(...rows); }
